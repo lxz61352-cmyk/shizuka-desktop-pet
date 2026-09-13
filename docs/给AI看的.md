@@ -133,7 +133,8 @@
 - **周期提醒**：数据存 `data/recurring.json`（`self.recurs`）；`freq` = daily / weekly / workday，`time` = `HH:MM`，`weekday` = 0-6（周一=0）。识别：`_classify_intent` 出现「每天/每日/每周/每星期/工作日」→ `action=add_recurring`，`_handle_add_recurring` 落库（缺内容/时间会追问，走 `self._pending_recur`）。触发：`_reminder_loop` 每 20 秒调 `_check_recurs()`，到点且当天未触发则提醒（错过超过 4 小时不再补）；`_parse_hhmm` 解析「9点/下午3点半/09:00」。
 - **待办窗口双页签**：`show_todos` 里「待办 / 周期待办」两个页签（`_show_todo_tab` 切换 `_todo_page`/`_recur_page`）；周期页 `_build_recur_rows` 可编辑内容/频率/时间/星期、暂停、删除。
 - **使用时长统计**：`data/usage.json`（`{"days": {日期: {exe: 秒}}}`，保留最近 14 天）。`_usage_loop` 每 5 秒采样一次前台程序（`get_foreground_app`）累加时长；`_system_idle_seconds()` 连续无键鼠超过 `USAGE_AWAY_MIN`（默认 5 分钟）时视为**离开、暂停统计**，但若 `_audio_peak()` 检测到正在放音频（看视频/听歌）则不算离开。面板：菜单「时长统计」→ `show_usage()`（各应用时长条形图 + 合计，底部可改离开阈值并写入 `settings.json` 的 `usage_away_min`）。日报：`_maybe_daily_report()` 在 `_foreground_loop` 里小概率触发一次「今天你都在忙什么」小总结（当天一次、需累计 ≥20 分钟）。
-- **自动检查更新**：`check_latest_release()` 读 GitHub 仓库 `UPDATE_REPO` 的最新 **Release**，与 `APP_VERSION` 比较；启动后台检查一次。菜单「检查更新」正常显示「已是最新版本咯~」、有更新显示「·有更新·」；**左键**检查/更新（点击弹窗显示 Release 说明，确认后 `_download_and_update()` 下载 zip、解压，生成 `.bat`：等本进程退出 → `robocopy /E /XD data` 覆盖 → 重启 → 清理），**右键** `_confirm_toggle_update()` 可停止/重新接收更新（存 `settings.json` 的 `update_disabled`，禁用后该行显示「已禁用更新」、启动不再检查）。
+- **自动检查更新**：`check_latest_release()` 读 GitHub 仓库 `UPDATE_REPO` 的最新 **Release**，与 `APP_VERSION` 比较；启动后台检查一次。菜单「检查更新」正常显示「已是最新版本咯~」、有更新显示「·有更新·」；**左键**检查/更新（点击弹窗显示 Release 说明，确认后 `_download_and_update()` 下载 zip、解压，生成 `.bat`：等本进程退出 → `robocopy /E /XD data voice_model experiments /XF api_key.txt` 覆盖 → 重启 → 清理），**右键** `_confirm_toggle_update()` 可停止/重新接收更新（存 `settings.json` 的 `update_disabled`，禁用后该行显示「已禁用更新」、启动不再检查）。
+  - **更新包**：Release 附件优先选名字带 `update` 的 zip（`tools/make_update_zip.py` 生成，排除 `voice_model`/`data`/`experiments`，约 70MB），这样更新不会重下 328MB 音色模型、也不会覆盖用户数据；找不到才退回第一个 zip。
   - **注意**：更新提示只跟 **GitHub Release** 有关，普通 commit 不会触发；要发新版就建一个带 tag 和 zip 附件的 Release。
 
 ---
