@@ -2445,6 +2445,7 @@ class DeskPet:
         self._autostart_on = is_autostart_on()
         self._update_info = None                    # (has_update, version, url, notes)
         self._update_mark = None
+        self._update_disabled = bool(self._settings.get("update_disabled", False))
         self._last_clip = ""
         self._clip_after = None
         self._reminder_after = None
@@ -5261,6 +5262,27 @@ class DeskPet:
             canvas.pack(fill="both", expand=True)
             bind_wheel_scroll(win, canvas)
             self._build_usage_rows(inner)
+            # 离开阈值设置
+            setrow = tk.Frame(win, bg="#2b2b3a")
+            setrow.pack(fill="x", padx=12, pady=(6, 0))
+            tk.Label(setrow, text="离开阈值：", bg="#2b2b3a", fg="#9a9ab0").pack(side="left")
+            thr = tk.IntVar(value=int(getattr(self, "_usage_away_min", USAGE_AWAY_MIN)))
+            tk.Spinbox(setrow, from_=1, to=USAGE_AWAY_MAX_MIN, textvariable=thr, width=4,
+                       bg="#3a3a4e", fg="#e8e8f0", buttonbackground="#4a4a62",
+                       insertbackground="#ffffff", relief="flat").pack(side="left")
+            tk.Label(setrow, text="分钟（连续无操作超过它就暂停统计）",
+                     bg="#2b2b3a", fg="#9a9ab0").pack(side="left")
+
+            def save_thr():
+                try:
+                    v = max(1, min(USAGE_AWAY_MAX_MIN, int(thr.get())))
+                except Exception:
+                    v = USAGE_AWAY_MIN
+                self._usage_away_min = v
+                self._save_settings()
+                self.say("好，超过 %d 分钟没动静就当你离开啦。" % v)
+
+            tk.Button(setrow, text="保存", width=6, command=save_thr).pack(side="left", padx=8)
             tk.Button(win, text="关闭", width=8, command=self._close_usage_window).pack(pady=8)
             win.protocol("WM_DELETE_WINDOW", self._close_usage_window)
             x = self.pet.winfo_rootx() + self.pet.winfo_width() + 8
@@ -5310,6 +5332,8 @@ class DeskPet:
 
     # ================= 自动检查更新 =================
     def _check_update_async(self):
+        if getattr(self, "_update_disabled", False):
+            return
         def work():
             info = check_latest_release()
             self._ui(lambda: self._apply_update_info(info))
@@ -5325,7 +5349,9 @@ class DeskPet:
             return
         info = self._update_info
         try:
-            if info and info[0]:
+            if getattr(self, "_update_disabled", False):
+                m.config(text="已禁用更新", fg="#8a8a8a")
+            elif info and info[0]:
                 m.config(text="·有更新·", fg="#c0392b")
             else:
                 m.config(text="已是最新版本咯~", fg="#7a7a7a")
@@ -5333,6 +5359,9 @@ class DeskPet:
             pass
 
     def _on_update_click(self):
+        if getattr(self, "_update_disabled", False):
+            self.say("更新检查已经关掉啦，想重新打开的话在「检查更新」上右键。")
+            return
         info = self._update_info
         if info and info[0] and info[2]:
             self._confirm_update(info)
@@ -5345,6 +5374,46 @@ class DeskPet:
                 except Exception:
                     pass
             self._check_update_async()
+
+    def _confirm_toggle_update(self):
+        """右键「检查更新」：停止 / 重新接收更新的确认窗口。"""
+        disable = not getattr(self, "_update_disabled", False)
+        try:
+            win = tk.Toplevel(self.root)
+            win.title("停止接收更新" if disable else "重新接收更新")
+            win.attributes("-topmost", True)
+            win.configure(bg="#2b2b3a")
+            tk.Label(win, text=("确定要停止接收更新吗？" if disable else "要开启更新吗？"),
+                     bg="#2b2b3a", fg="#e8e8f0",
+                     font=("Microsoft YaHei", 12, "bold")).pack(padx=22, pady=(16, 8))
+            body = ("停止接收更新后，您仍可以在更新按钮的位置上再次右键开始更新。"
+                    "此设置适合有使用经验，想要自己修改程序的用户，"
+                    "但更改程序后再进行更新会覆盖掉更改的内容，请谨慎选择。") if disable else \
+                   ("开启更新后，程序发现新版本会自动下载并覆盖安装；"
+                    "如果您自己修改过程序内容，更新会覆盖掉您的修改，请确认后再开启。")
+            tk.Label(win, text=body, bg="#2b2b3a", fg="#9a9ab0", wraplength=360,
+                     justify="left", anchor="w").pack(padx=22, pady=(0, 12))
+            bar = tk.Frame(win, bg="#2b2b3a")
+            bar.pack(pady=(0, 16))
+
+            def do_it():
+                self._update_disabled = disable
+                self._settings["update_disabled"] = disable
+                self._save_settings()
+                if not disable:
+                    self._check_update_async()
+                self._refresh_update_mark()
+                win.destroy()
+                self.say("好，以后就不自动检查更新了。" if disable else "好，更新检查重新开起来了。")
+
+            tk.Button(bar, text=("确定停止" if disable else "确定开启"), width=10,
+                      command=do_it).pack(side="left", padx=6)
+            tk.Button(bar, text="取消", width=10, command=win.destroy).pack(side="left", padx=6)
+            win.update_idletasks()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry("+%d+%d" % ((sw - win.winfo_width()) // 2, (sh - win.winfo_height()) // 2))
+        except Exception:
+            pass
 
     def _confirm_update(self, info):
         has, ver, url, notes = info
@@ -5948,16 +6017,13 @@ class DeskPet:
             w.bind("<Button-1>", toggle)
 
     def _add_menu_update(self, win):
-        """检查更新：正常显示「已是最新版本咯~」，检测到更新显示「·有更新·」。"""
+        """检查更新：左键检查/更新；右键可停止或重新接收更新。"""
         row, lbl, mark = self._menu_row(win, "检查更新")
-        info = self._update_info
-        if info and info[0]:
-            mark.config(text="·有更新·", fg="#c0392b")
-        else:
-            mark.config(text="已是最新版本咯~", fg="#7a7a7a")
         self._update_mark = mark
+        self._refresh_update_mark()
         for w in (row, lbl, mark):
             w.bind("<Button-1>", lambda e, ww=win: self.select_item(ww, self._on_update_click))
+            w.bind("<Button-3>", lambda e, ww=win: self.select_item(ww, self._confirm_toggle_update))
 
     def _add_menu_option(self, win, text, options, get_key, set_key):
         """二级选项行：悬停展开 options=[(key,label)...]；get_key() 当前值，set_key(key) 应用。"""
@@ -6176,6 +6242,7 @@ class DeskPet:
             "gsv_dir": self._settings.get("gsv_dir") or gsv_dir(),
             "usage_track": bool(getattr(self, "_usage_on", True)),
             "usage_away_min": int(getattr(self, "_usage_away_min", USAGE_AWAY_MIN)),
+            "update_disabled": bool(getattr(self, "_update_disabled", False)),
         }
         self._settings.update(data)
         with _FILE_LOCK:
