@@ -7094,18 +7094,17 @@ class DeskPet:
             char_right = pet_x + bx2 * s
             char_top = pet_y + by1 * s
             char_h = (by2 - by1) * s
-            # 位置：排在齿轮图标正下方，和三个按钮同宽、同一列（自动适应按钮在左/右）
+            # 位置：排在最上面那个按钮（待办）的正上方，和三个按钮同宽、同一列
             gap = max(3, int(btn * 0.12))
             try:
-                gx = self.gear.winfo_rootx()
-                gy = self.gear.winfo_rooty()
-                gw = self.gear.winfo_width() or btn
-                gh = self.gear.winfo_height() or btn
-                cx = gx + gw / 2
-                cy = gy + gh + gap + size / 2
+                tx = self.todobtn.winfo_rootx()
+                ty = self.todobtn.winfo_rooty()
+                tw = self.todobtn.winfo_width() or btn
+                cx = tx + tw / 2
+                cy = ty - gap - size / 2
             except Exception:
                 cx = char_right + size * 0.5
-                cy = char_top + char_h * 0.80
+                cy = char_top + char_h * 0.20
             x = int(cx - size / 2)
             y = int(cy - size / 2)
             sw = win.winfo_screenwidth()
