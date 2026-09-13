@@ -127,6 +127,15 @@
 - 后台线程统一经主线程队列 `_ui`/`_poll_ui` 操作 Tk。锁：`_FILE_LOCK`（文件写）、`_hist_lock`、`_chat_lock`、`_MCI_LOCKS`（每别名一把）、`_render_lock`、`get_client`/`get_memory` 双检锁。
 - 设置持久化在 `data/settings.json`（`_save_settings`）；API Key 存 **Windows 凭据管理器**（`_cred_write`/`_cred_read`/`_cred_delete`，目标 `ShizukaDeskPet/api_key`，系统加密、绑定当前用户），**程序目录不留 Key 文件**；旧版 `api_key.txt` 首次启动自动迁移进凭据管理器并删除（`_migrate_api_key` / `_read_legacy_key_file`）。数据文件读坏时先备份 `.bad-<时间戳>` 再重建，防清空。
 
+### 11. 开机自启 / 周期提醒 / 使用时长 / 自动更新
+
+- **开机自启**：`autostart_command()` / `is_autostart_on()` / `set_autostart(on)` 读写注册表 `HKCU\...\Run` 下的 `ShizukaDeskPet`；菜单「开机自动启动」开关。
+- **周期提醒**：数据存 `data/recurring.json`（`self.recurs`）；`freq` = daily / weekly / workday，`time` = `HH:MM`，`weekday` = 0-6（周一=0）。识别：`_classify_intent` 出现「每天/每日/每周/每星期/工作日」→ `action=add_recurring`，`_handle_add_recurring` 落库（缺内容/时间会追问，走 `self._pending_recur`）。触发：`_reminder_loop` 每 20 秒调 `_check_recurs()`，到点且当天未触发则提醒（错过超过 4 小时不再补）；`_parse_hhmm` 解析「9点/下午3点半/09:00」。
+- **待办窗口双页签**：`show_todos` 里「待办 / 周期待办」两个页签（`_show_todo_tab` 切换 `_todo_page`/`_recur_page`）；周期页 `_build_recur_rows` 可编辑内容/频率/时间/星期、暂停、删除。
+- **使用时长统计**：`data/usage.json`（`{"days": {日期: {exe: 秒}}}`，保留最近 14 天）。`_usage_loop` 每 5 秒采样一次前台程序（`get_foreground_app`）累加时长；`_system_idle_seconds()` 连续无键鼠超过 `USAGE_AWAY_MIN`（默认 5 分钟，可调）时视为**离开、暂停统计**，但若 `_audio_peak()` 检测到正在放音频（看视频/听歌）则不算离开。面板：菜单「时长统计」→ `show_usage()`（各应用时长条形图 + 合计）。日报：`_maybe_daily_report()` 在 `_foreground_loop` 里小概率触发一次「今天你都在忙什么」小总结（当天一次、需累计 ≥20 分钟）。
+- **自动检查更新**：`check_latest_release()` 读 GitHub 仓库 `UPDATE_REPO` 的最新 **Release**，与 `APP_VERSION` 比较；启动后台检查一次。菜单「检查更新」正常显示「已是最新版本咯~」、有更新显示「·有更新·」；点击弹窗显示 Release 说明，确认后 `_download_and_update()` 下载 Release 里的 zip、解压，并生成一个 `.bat`：等本进程退出 → `robocopy /E /XD data` 覆盖安装目录 → 重启 → 清理临时目录。
+  - **注意**：更新提示只跟 **GitHub Release** 有关，普通 commit 不会触发；要发新版就建一个带 tag 和 zip 附件的 Release。
+
 ---
 
 ## 五、数据文件
@@ -154,6 +163,10 @@
 - **修复聊天口癖**：模型老爱用「哦，……啊」「呵呵」起手；提示词压不住，改为在输出侧加确定性兜底 `clean_reply_style()`，对所有回复统一去起手语气词（含历史喂回也清理，减少自我模仿）。
 - **音量统一**：提示音/音乐统一降到 85%（`850/1000`）。
 - **语音朗读改为「自动检测」**：应用保留语音能力，启动时自动寻找本机 GPT-SoVITS；装了就能用（参考音色随包），没装则菜单显示「未检测到 gpt-sovits，语音功能暂时无法使用」，可点击手动指定目录，不影响其他功能。GPT-SoVITS 本体约 14GB，不随包发布。
+- **新增开机自动启动**：菜单开关，写注册表 Run 键。
+- **新增周期提醒**：识别「每天/每周/工作日」类文本 → 定期提醒；与待办同窗口、分「待办 / 周期待办」两个页签，可编辑频率/时间/星期。
+- **新增使用时长统计**：每 5 秒采样前台程序累计时长；连续无键鼠超过阈值（默认 5 分钟、可调）且无音频播放时视为离开、暂停统计；菜单「时长统计」打开面板查看今日各应用时长；小概率触发「今天你都在忙什么」小日报。
+- **新增自动检查更新**：启动后台检查 GitHub Release，菜单显示「已是最新版本咯~」或「·有更新·」，点击可下载并自动替换、重启。
 
 ### 2026-09-12（0.4.x 收尾）
 
