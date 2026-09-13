@@ -913,12 +913,16 @@ def check_latest_release(timeout=15):
             data = json.loads(r.read().decode("utf-8", "ignore"))
         tag = (data.get("tag_name") or data.get("name") or "").strip()
         notes = (data.get("body") or "").strip()
+        zips = [a for a in (data.get("assets") or [])
+                if (a.get("name") or "").lower().endswith(".zip")]
         url = ""
-        for a in data.get("assets") or []:
-            name = (a.get("name") or "").lower()
-            if name.endswith(".zip"):
+        # 优先选名字里带 update 的小包（不含音色大模型/用户数据）；否则取第一个 zip
+        for a in zips:
+            if "update" in (a.get("name") or "").lower():
                 url = a.get("browser_download_url") or ""
                 break
+        if not url and zips:
+            url = zips[0].get("browser_download_url") or ""
         return (_ver_tuple(tag) > _ver_tuple(APP_VERSION), tag.lstrip("vV"), url, notes)
     except Exception:
         return (False, "", "", "")
@@ -1562,6 +1566,7 @@ USAGE_REPORT_MIN = 20          # 累计使用满这么多分钟才可能触发�
 # ---------------- 自动检查更新 ----------------
 UPDATE_REPO = "lxz61352-cmyk/shizuka-desktop-pet"   # GitHub 仓库（owner/repo）
 UPDATE_API = "https://api.github.com/repos/%s/releases/latest" % UPDATE_REPO
+PENDING_UPDATE_FILE = os.path.join(DATA_DIR, "_pending_update.json")   # 更新重启后要展示的更新日志
 
 
 def _sound_log(msg):
@@ -5446,9 +5451,9 @@ class DeskPet:
             self.say("这个版本没有可下载的压缩包，去仓库手动下载一下吧。")
             return
         self.say("好，我这就去下载新版本，下载好会自动重启～")
-        threading.Thread(target=self._download_and_update, args=(url,), daemon=True).start()
+        threading.Thread(target=self._download_and_update, args=(url, ver, notes), daemon=True).start()
 
-    def _download_and_update(self, url):
+    def _download_and_update(self, url, ver="", notes=""):
         import tempfile
         import shutil as _sh
         import zipfile as _zip
@@ -5469,6 +5474,12 @@ class DeskPet:
                     break
             if not src:
                 raise RuntimeError("压缩包里没找到 Shizuka.exe")
+            # 记下更新日志，重启后弹一次
+            try:
+                with open(PENDING_UPDATE_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"version": ver, "notes": notes}, f, ensure_ascii=False)
+            except Exception:
+                pass
             dst = ROOT_DIR
             bat = os.path.join(tmp, "_update.bat")
             pid = os.getpid()
@@ -5478,7 +5489,7 @@ class DeskPet:
                 f.write("@echo off\r\n")
                 f.write(":wait\r\n")
                 f.write('tasklist /FI "PID eq %d" | find "%d" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)\r\n' % (pid, pid))
-                f.write('robocopy "%s" "%s" /E /XD data /XF api_key.txt /R:2 /W:1 >nul\r\n' % (src, dst))
+                f.write('robocopy "%s" "%s" /E /XD data voice_model experiments /XF api_key.txt /R:2 /W:1 >nul\r\n' % (src, dst))
                 f.write('start "" %s\r\n' % restart)
                 f.write('rmdir /S /Q "%s"\r\n' % tmp)
             _sp.Popen(["cmd", "/c", bat], creationflags=0x08000000, close_fds=True)
@@ -5486,6 +5497,38 @@ class DeskPet:
             self._ui(self.quit)
         except Exception:
             self._ui(lambda: self.say("更新失败了呢……可以到仓库手动下载新版本。"))
+
+    def _show_update_done(self):
+        """更新重启后：弹一次更新日志，然后删掉标记文件。"""
+        try:
+            if not os.path.exists(PENDING_UPDATE_FILE):
+                return
+            with open(PENDING_UPDATE_FILE, "r", encoding="utf-8-sig") as f:
+                d = json.load(f)
+            ver = (d.get("version") or "").strip()
+            notes = (d.get("notes") or "").strip()
+            try:
+                os.remove(PENDING_UPDATE_FILE)
+            except Exception:
+                pass
+            win = tk.Toplevel(self.root)
+            win.title("更新完成")
+            win.attributes("-topmost", True)
+            win.configure(bg="#2b2b3a")
+            tk.Label(win, text=("已更新到 v%s" % ver) if ver else "更新完成",
+                     bg="#2b2b3a", fg="#e8e8f0",
+                     font=("Microsoft YaHei", 12, "bold")).pack(padx=22, pady=(16, 8))
+            txt = tk.Text(win, width=54, height=12, bg="#3a3a4e", fg="#e8e8f0",
+                          relief="flat", wrap="word")
+            txt.insert("1.0", notes or "（这个版本没有写更新说明）")
+            txt.config(state="disabled")
+            txt.pack(padx=22, pady=6)
+            tk.Button(win, text="知道啦", width=10, command=win.destroy).pack(pady=(0, 16))
+            win.update_idletasks()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry("+%d+%d" % ((sw - win.winfo_width()) // 2, (sh - win.winfo_height()) // 2))
+        except Exception:
+            pass
 
     # ---------- 设置 API Key ----------
     def _migrate_api_key(self):
@@ -5902,7 +5945,7 @@ class DeskPet:
         # 轮询鼠标：点菜单外任意位置即关闭（能捕获桌面/其他程序上的点击）
         win.after(120, lambda: self._poll_menu_outside(win))
 
-    def _menu_row(self, win, text, width=12):
+    def _menu_row(self, win, text, width=16):
         """菜单一行：左文字 + 右勾选位（宽度固定，保证对齐）"""
         row = tk.Frame(win, bg="#f0f0f0")
         row.pack(fill="x")
@@ -5910,11 +5953,11 @@ class DeskPet:
                        padx=18, pady=4, anchor="w", width=width)
         lbl.pack(side="left")
         mark = tk.Label(row, text="", bg="#f0f0f0", fg="#2a7a2a",
-                        padx=10, pady=4, width=6, anchor="e")
+                        padx=10, pady=4, width=14, anchor="e")
         mark.pack(side="right")
         return row, lbl, mark
 
-    def _add_menu_item(self, win, text, cmd, width=12):
+    def _add_menu_item(self, win, text, cmd, width=16):
         row, lbl, mark = self._menu_row(win, text, width)
         for w in (row, lbl, mark):
             w.bind("<Button-1>", lambda e, c=cmd, ww=win: self.select_item(ww, c))
@@ -5923,13 +5966,13 @@ class DeskPet:
         """背景音乐控制：随播放状态显示 播放 / 暂停 / 继续 / 结束。"""
         st = getattr(self, "_music_state", "stopped")
         if st == "playing":
-            self._add_menu_item(win, "暂停播放", self._music_pause, width=14)
-            self._add_menu_item(win, "结束播放", self._music_stop, width=14)
+            self._add_menu_item(win, "暂停播放", self._music_pause)
+            self._add_menu_item(win, "结束播放", self._music_stop)
         elif st == "paused":
-            self._add_menu_item(win, "继续播放", self._music_resume, width=14)
-            self._add_menu_item(win, "结束播放", self._music_stop, width=14)
+            self._add_menu_item(win, "继续播放", self._music_resume)
+            self._add_menu_item(win, "结束播放", self._music_stop)
         else:
-            self._add_menu_item(win, "播放 i wanna", self._music_play, width=14)
+            self._add_menu_item(win, "播放 i wanna", self._music_play, width=18)
 
     def _add_menu_toggle(self, win, text, attr):
         row, lbl, mark = self._menu_row(win, text)
@@ -8345,6 +8388,8 @@ class DeskPet:
         self.root.after(IDLE_CHECK_MS, self._idle_loop)
         # 启动摘要（扫描待办并提醒；等问候播完）
         self.root.after(9000, self._startup_summary)
+        # 若刚更新过：重启后弹一次更新日志
+        self.root.after(10000, self._show_update_done)
         try:
             self.root.mainloop()
         except KeyboardInterrupt:
