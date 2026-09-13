@@ -788,6 +788,142 @@ def run_installer():
     return lnk
 
 
+# ---------------- 开机自启动（注册表 Run 键） ----------------
+def autostart_command():
+    """开机自启动要执行的命令行。"""
+    if getattr(sys, "frozen", False):
+        return '"%s"' % sys.executable
+    return '"%s" "%s"' % (_find_pythonw(), os.path.join(APP_DIR, "run_pet.py"))
+
+
+def is_autostart_on():
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG) as k:
+            val, _ = winreg.QueryValueEx(k, AUTOSTART_NAME)
+            return bool(val)
+    except Exception:
+        return False
+
+
+def set_autostart(on):
+    """写入/删除开机自启动。成功返回 True。"""
+    try:
+        import winreg
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG) as k:
+            if on:
+                winreg.SetValueEx(k, AUTOSTART_NAME, 0, winreg.REG_SZ, autostart_command())
+            else:
+                try:
+                    winreg.DeleteValue(k, AUTOSTART_NAME)
+                except FileNotFoundError:
+                    pass
+        return True
+    except Exception:
+        return False
+
+
+# ---------------- 是否正在播放音频（用于「离开」判定时放行视频/音乐） ----------------
+def _audio_peak():
+    """默认播放设备的峰值音量（0~1）。失败返回 0.0。"""
+    try:
+        import uuid
+
+        class GUID(ctypes.Structure):
+            _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                        ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+        def g(s):
+            u = uuid.UUID(s)
+            gg = GUID()
+            gg.Data1 = u.time_low
+            gg.Data2 = u.time_mid
+            gg.Data3 = u.time_hi_version
+            for i in range(8):
+                gg.Data4[i] = u.bytes[8 + i]
+            return gg
+
+        CLSID_ENUM = g("BCDE0395-E52F-467C-8E3D-C4579291692E")
+        IID_ENUM = g("A95664D2-9614-4F35-A746-DE8DB63617E6")
+        IID_METER = g("C02216F6-8C67-4B5B-9D00-D008E73E0064")
+        ole32 = ctypes.windll.ole32
+        try:
+            ole32.CoInitialize(None)
+        except Exception:
+            pass
+        enumerator = ctypes.c_void_p()
+
+        def _release(obj):
+            try:
+                if not obj:
+                    return
+                v = ctypes.cast(obj, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+                ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)(v[2])(obj)
+            except Exception:
+                pass
+
+        if ole32.CoCreateInstance(ctypes.byref(CLSID_ENUM), None, 1,
+                                  ctypes.byref(IID_ENUM), ctypes.byref(enumerator)) != 0:
+            return 0.0
+        device = ctypes.c_void_p()
+        meter = ctypes.c_void_p()
+        try:
+            vt = ctypes.cast(enumerator, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            get_default = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_int,
+                                             ctypes.c_int, ctypes.POINTER(ctypes.c_void_p))(vt[4])
+            if get_default(enumerator, 0, 0, ctypes.byref(device)) != 0:
+                return 0.0
+            dvt = ctypes.cast(device, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            activate = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(GUID),
+                                          wintypes.DWORD, ctypes.c_void_p,
+                                          ctypes.POINTER(ctypes.c_void_p))(dvt[3])
+            if activate(device, ctypes.byref(IID_METER), 1, None, ctypes.byref(meter)) != 0:
+                return 0.0
+            mvt = ctypes.cast(meter, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p))).contents
+            get_peak = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
+                                          ctypes.POINTER(ctypes.c_float))(mvt[3])
+            peak = ctypes.c_float()
+            if get_peak(meter, ctypes.byref(peak)) != 0:
+                return 0.0
+            return float(peak.value)
+        finally:
+            _release(meter)
+            _release(device)
+            _release(enumerator)
+    except Exception:
+        return 0.0
+
+
+# ---------------- 自动检查更新（GitHub Release） ----------------
+def _ver_tuple(s):
+    out = []
+    for p in re.split(r"[.\-+]", (s or "").strip().lstrip("vV")):
+        m = re.match(r"\d+", p)
+        out.append(int(m.group()) if m else 0)
+    return tuple(out) if out else (0,)
+
+
+def check_latest_release(timeout=15):
+    """返回 (是否有更新, 最新版本号, 下载地址, 更新说明)。失败返回 (False, '', '', '')。"""
+    try:
+        import urllib.request
+        req = urllib.request.Request(UPDATE_API, headers={
+            "User-Agent": "ShizukaDeskPet", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8", "ignore"))
+        tag = (data.get("tag_name") or data.get("name") or "").strip()
+        notes = (data.get("body") or "").strip()
+        url = ""
+        for a in data.get("assets") or []:
+            name = (a.get("name") or "").lower()
+            if name.endswith(".zip"):
+                url = a.get("browser_download_url") or ""
+                break
+        return (_ver_tuple(tag) > _ver_tuple(APP_VERSION), tag.lstrip("vV"), url, notes)
+    except Exception:
+        return (False, "", "", "")
+
+
 # ---------------- 记忆系统 ----------------
 MEMORY_FILE = os.path.join(CHARACTER_DATA_DIR, "memory.json")
 MEMORY_TTL_DAYS = 25          # 记忆超过该天数未引用则进入淘汰
@@ -1404,6 +1540,28 @@ VINYL_SIZE_RATIO = 1.0     # 唱片直径 ≈ 按钮尺寸 × 此系数
 VINYL_SPIN_DEG = 1.1       # 每帧旋转角度（越小转得越慢）
 VINYL_FRAME_MS = 50        # 旋转帧间隔
 VINYL_FADE_MS = 320        # 淡入/淡出时长
+
+# ---------------- 周期提醒 ----------------
+RECUR_FILE = os.path.join(CHARACTER_DATA_DIR, "recurring.json")
+RECUR_FREQS = ("daily", "weekly", "workday")
+RECUR_FREQ_LABEL = {"daily": "每天", "weekly": "每周", "workday": "工作日"}
+WEEKDAY_CN = ["一", "二", "三", "四", "五", "六", "日"]   # 周一=0 … 周日=6
+
+# ---------------- 开机自启动（注册表 Run 键）----------------
+AUTOSTART_REG = r"Software\Microsoft\Windows\CurrentVersion\Run"
+AUTOSTART_NAME = "ShizukaDeskPet"
+
+# ---------------- 使用时长统计 ----------------
+USAGE_FILE = os.path.join(CHARACTER_DATA_DIR, "usage.json")
+USAGE_SAMPLE_MS = 5000         # 每 5 秒采样一次前台窗口
+USAGE_KEEP_DAYS = 14           # 只保留最近多少天的统计
+USAGE_AWAY_MIN = 5             # 连续无键鼠操作超过这么多分钟视为「离开」，暂停统计
+USAGE_AWAY_MAX_MIN = 60        # 自定义上限（分钟）
+USAGE_REPORT_MIN = 20          # 累计使用满这么多分钟才可能触发日报
+
+# ---------------- 自动检查更新 ----------------
+UPDATE_REPO = "lxz61352-cmyk/shizuka-desktop-pet"   # GitHub 仓库（owner/repo）
+UPDATE_API = "https://api.github.com/repos/%s/releases/latest" % UPDATE_REPO
 
 
 def _sound_log(msg):
@@ -2175,6 +2333,7 @@ class DeskPet:
         self._chat_was_open = False      # 隐藏时聊天框是否开着（用于恢复）
         self._pending_reminders = []     # 折叠时触发、待打开角色时补说的提醒
         self._pending_todo = None        # 待补充明确时间的待办：{"content": ...}
+        self._pending_recur = None       # 待补充的周期提醒：{"content":..., "freq":...}
         self._last_foreground = None     # 上次感知到的前台程序（进程名）
         self._last_proactive = time.time()   # 上次主动评论的时间（初始=启动时刻，避免一启动就评论）
         self._idle_chat_count = 0             # 本轮空闲已主动搭话次数（用户活动后重置）
@@ -2271,6 +2430,21 @@ class DeskPet:
 
         # 待办 / 提醒 / 剪贴板状态
         self.todos = self._load_todos()
+        self.recurs = self._load_recurs()          # 周期提醒
+        self._recur_focus_id = None
+        # 使用时长统计
+        self._usage = self._load_usage()
+        self._usage_after = None
+        self._usage_last_save = 0.0
+        self._usage_away = False
+        self._usage_report_date = ""
+        self._usage_away_min = int(self._settings.get("usage_away_min") or USAGE_AWAY_MIN)
+        self._usage_on = bool(self._settings.get("usage_track", True))
+        self._usage_win = None
+        # 开机自启动 / 自动更新
+        self._autostart_on = is_autostart_on()
+        self._update_info = None                    # (has_update, version, url, notes)
+        self._update_mark = None
         self._last_clip = ""
         self._clip_after = None
         self._reminder_after = None
@@ -3418,6 +3592,25 @@ class DeskPet:
             my_conv = self._conv_id
             threading.Thread(target=self._resolve_pending_todo, args=(text, my_conv), daemon=True).start()
             return
+        # 有补充中的周期提醒：根据缺内容还是缺时间处理
+        if self._pending_recur is not None:
+            pending = self._pending_recur
+            self._pending_recur = None
+            content = pending.get("content") or text.strip()
+            hhmm = pending.get("time") or self._parse_hhmm(text)
+            if not content:
+                self._pending_recur = pending
+                self.open_chat_input()
+                self.say("嗯？要定期提醒你做什么呢？")
+                return
+            if not hhmm:
+                self._pending_recur = {"content": content, "freq": pending.get("freq", "daily"),
+                                       "time": None, "weekday": pending.get("weekday")}
+                self.open_chat_input()
+                self.say("好，几点提醒你呢？（比如「9点」「下午3点」）")
+                return
+            self._save_recur_and_confirm(content, pending.get("freq", "daily"), hhmm, pending.get("weekday"))
+            return
         # 显式记忆：命中"记住/别忘"等指令 → 交给模型解析成条目（尽量保留原文）后确认
         if any(k in text for k in EXPLICIT_MEMORY_KEYWORDS):
             self._dot_win = None
@@ -3445,11 +3638,15 @@ class DeskPet:
         prompt = (
             "现在的时间是 %s。请判断用户这句话属于以下哪一类，并只输出 JSON，不要多余文字。\n"
             "用户说：“%s”\n"
-            "输出格式：{\"action\": \"add_todo\" | \"query_todo\" | \"query_memory\" | \"delete_todo\" | \"complete_todo\" | \"weather\" | \"news\" | \"chat\", "
+            "输出格式：{\"action\": \"add_todo\" | \"add_recurring\" | \"query_todo\" | \"query_memory\" | \"delete_todo\" | \"complete_todo\" | \"weather\" | \"news\" | \"chat\", "
             "\"content\": \"要做的事\", \"when\": \"YYYY-MM-DD HH:MM:SS\" 或 null, "
-            "\"on_boot\": true/false, \"time_specified\": true/false, \"content_clear\": true/false}\n"
+            "\"on_boot\": true/false, \"time_specified\": true/false, \"content_clear\": true/false, "
+            "\"freq\": \"daily\" | \"weekly\" | \"workday\" 或 null, \"weekday\": 0-6 或 null, \"time\": \"HH:MM\" 或 null}\n"
             "分类规则：\n"
-            "- add_todo：用户在设置提醒/待办（如“提醒我2小时后打电话”“记一下明天买牛奶”）。"
+            "- add_recurring：用户要设置**周期性**提醒，出现「每天/每日/每周/每星期/每礼拜/工作日」等字样时（如“每天9点提醒我喝水”“每周一10点开会”“工作日早上9点打卡”）。"
+            "此时填 content（要做的事）、freq（daily=每天 / weekly=每周 / workday=工作日）、time（HH:MM）、"
+            "weekday（weekly 时填 0-6，周一=0…周日=6；否则 null）。"
+            "- add_todo：用户在设置**一次性**提醒/待办（如“提醒我2小时后打电话”“记一下明天买牛奶”）。"
             "填 content（去掉“提醒我/记一下”等前缀，只留事情本身）。"
             "时间必须落到**具体钟点**才算明确：如“9点”“下午3点半”“2小时后”“半小时后”→ time_specified=true，"
             "并按此算出绝对时间填 when；"
@@ -3510,6 +3707,10 @@ class DeskPet:
         if action == "add_todo":
             self._close_think_bubble()
             self._handle_add_todo(result, original)
+            return
+        if action == "add_recurring":
+            self._close_think_bubble()
+            self._handle_add_recurring(result, original)
             return
         if action == "weather":
             # 保持"加载中"气泡，后台取详细天气再回答
@@ -4415,7 +4616,7 @@ class DeskPet:
                 pass
 
     def show_todos(self, event=None):
-        """查看待办：可编辑列表（编号 - 内容 - 时间描述 - 绝对时间）。"""
+        """待办 / 周期待办（同一窗口，两个页签）。"""
         if getattr(self, "_todo_win", None) is not None:
             try:
                 self._todo_win.destroy()
@@ -4423,45 +4624,44 @@ class DeskPet:
                 pass
             self._todo_win = None
         try:
-            W, H = 680, 380
+            W, H = 700, 430
             win = tk.Toplevel(self.root)
-            win.withdraw()   # 先隐藏，避免显示时闪一下
+            win.withdraw()
             win.title("静香 · 待办")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
             self._todo_win = win
 
-            head = tk.Frame(win, bg="#2b2b3a")
-            head.pack(fill="x", padx=8, pady=(8, 2))
-            tk.Label(head, text="编号", width=4, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
-            tk.Label(head, text="内容", bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left", fill="x", expand=True)
-            tk.Label(head, text="时间描述", width=14, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
-            tk.Label(head, text="绝对时间", width=18, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
-            tk.Label(head, text="操作", width=13, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+            tabbar = tk.Frame(win, bg="#2b2b3a")
+            tabbar.pack(fill="x", padx=8, pady=(8, 4))
+            self._tab_btns = {}
+            for key, label in (("todo", "待办"), ("recur", "周期待办")):
+                b = tk.Button(tabbar, text=label, width=10, relief="flat",
+                              bg="#3a3a4e", fg="#e8e8f0", activebackground="#4a4a62",
+                              command=lambda k=key: self._show_todo_tab(k))
+                b.pack(side="left", padx=(0, 4))
+                self._tab_btns[key] = b
 
-            canvas = tk.Canvas(win, bg="#2b2b3a", highlightthickness=0)
-            vsb = tk.Scrollbar(win, orient="vertical", command=canvas.yview)
-            inner = tk.Frame(canvas, bg="#2b2b3a")
-            inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-            canvas.create_window((0, 0), window=inner, anchor="nw", width=658)
-            canvas.configure(yscrollcommand=vsb.set)
-            vsb.pack(side="right", fill="y")
-            canvas.pack(side="top", fill="both", expand=True)
-            bind_wheel_scroll(win, canvas)
-            self._todo_inner = inner
+            body = tk.Frame(win, bg="#2b2b3a")
+            body.pack(fill="both", expand=True)
+            self._todo_page = tk.Frame(body, bg="#2b2b3a")
+            self._recur_page = tk.Frame(body, bg="#2b2b3a")
+            self._build_todo_page(self._todo_page)
+            self._build_recur_page(self._recur_page)
+            self._show_todo_tab("todo")
 
-            bar = tk.Frame(win, bg="#2b2b3a")
-            bar.pack(fill="x", padx=8, pady=6)
-            tk.Button(bar, text="新建", width=8, command=self._todo_new).pack(side="left", padx=4)
-            tk.Button(bar, text="确认", width=8, command=self._todo_confirm).pack(side="left", padx=4)
-            tk.Button(bar, text="刷新", width=8, command=self._build_todo_rows).pack(side="left", padx=4)
-            tk.Button(bar, text="关闭", width=8, command=self._close_todo_window).pack(side="right", padx=4)
+            def _wheel(e):
+                c = getattr(self, "_active_canvas", None)
+                if c is not None:
+                    try:
+                        c.yview_scroll(int(-e.delta / 120) * 3, "units")
+                    except Exception:
+                        pass
+            win.bind("<MouseWheel>", _wheel)
 
             win.protocol("WM_DELETE_WINDOW", self._close_todo_window)
             win.bind("<Escape>", lambda e: self._close_todo_window())
-            self._build_todo_rows()
 
-            # 定位到角色右侧（放不下就左侧），一次性设好尺寸和位置再显示
             x = self.pet.winfo_rootx() + self.pet.winfo_width() + 8
             y = self.pet.winfo_rooty()
             sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
@@ -4469,7 +4669,6 @@ class DeskPet:
                 x = self.pet.winfo_rootx() - W - 8
             x = max(0, x)
             y = max(0, min(y, sh - H - 40))
-            # 隐藏状态下先算好布局，再一次性显示（不要用 alpha 淡入，Windows 上会先闪一下）
             win.update_idletasks()
             win.geometry(f"{W}x{H}+{x}+{y}")
             win.deiconify()
@@ -4477,11 +4676,91 @@ class DeskPet:
         except Exception:
             pass
 
+    def _show_todo_tab(self, key):
+        for k, page in (("todo", getattr(self, "_todo_page", None)),
+                        ("recur", getattr(self, "_recur_page", None))):
+            if page is None:
+                continue
+            if k == key:
+                page.pack(fill="both", expand=True)
+            else:
+                page.pack_forget()
+        self._active_canvas = getattr(self, "_recur_canvas" if key == "recur" else "_todo_canvas", None)
+        for k, b in getattr(self, "_tab_btns", {}).items():
+            try:
+                b.configure(bg="#4a6fa5" if k == key else "#3a3a4e")
+            except Exception:
+                pass
+
+    def _build_todo_page(self, page):
+        head = tk.Frame(page, bg="#2b2b3a")
+        head.pack(fill="x", padx=8, pady=(4, 2))
+        tk.Label(head, text="编号", width=4, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+        tk.Label(head, text="内容", bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left", fill="x", expand=True)
+        tk.Label(head, text="时间描述", width=14, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+        tk.Label(head, text="绝对时间", width=18, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+        tk.Label(head, text="操作", width=13, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+
+        canvas = tk.Canvas(page, bg="#2b2b3a", highlightthickness=0)
+        vsb = tk.Scrollbar(page, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg="#2b2b3a")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw", width=678)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="top", fill="both", expand=True)
+        self._todo_canvas = canvas
+        self._todo_inner = inner
+
+        bar = tk.Frame(page, bg="#2b2b3a")
+        bar.pack(fill="x", padx=8, pady=6)
+        tk.Button(bar, text="新建", width=8, command=self._todo_new).pack(side="left", padx=4)
+        tk.Button(bar, text="确认", width=8, command=self._todo_confirm).pack(side="left", padx=4)
+        tk.Button(bar, text="刷新", width=8, command=self._build_todo_rows).pack(side="left", padx=4)
+        tk.Button(bar, text="关闭", width=8, command=self._close_todo_window).pack(side="right", padx=4)
+        self._build_todo_rows()
+
+    def _build_recur_page(self, page):
+        head = tk.Frame(page, bg="#2b2b3a")
+        head.pack(fill="x", padx=8, pady=(4, 2))
+        tk.Label(head, text="内容", bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left", fill="x", expand=True)
+        tk.Label(head, text="频率", width=6, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+        tk.Label(head, text="时间", width=8, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+        tk.Label(head, text="星期", width=5, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+        tk.Label(head, text="操作", width=13, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
+
+        canvas = tk.Canvas(page, bg="#2b2b3a", highlightthickness=0)
+        vsb = tk.Scrollbar(page, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg="#2b2b3a")
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=inner, anchor="nw", width=678)
+        canvas.configure(yscrollcommand=vsb.set)
+        vsb.pack(side="right", fill="y")
+        canvas.pack(side="top", fill="both", expand=True)
+        self._recur_canvas = canvas
+        self._recur_inner = inner
+
+        bar = tk.Frame(page, bg="#2b2b3a")
+        bar.pack(fill="x", padx=8, pady=6)
+        tk.Button(bar, text="新建", width=8, command=self._recur_new).pack(side="left", padx=4)
+        tk.Button(bar, text="确认", width=8, command=self._recur_confirm).pack(side="left", padx=4)
+        tk.Button(bar, text="刷新", width=8, command=self._build_recur_rows).pack(side="left", padx=4)
+        tk.Button(bar, text="关闭", width=8, command=self._close_todo_window).pack(side="right", padx=4)
+        self._build_recur_rows()
+
     def _close_todo_window(self):
         win = getattr(self, "_todo_win", None)
         self._todo_win = None
         self._todo_inner = None
         self._todo_rows = []
+        self._recur_inner = None
+        self._recur_rows = []
+        self._todo_page = None
+        self._recur_page = None
+        self._todo_canvas = None
+        self._recur_canvas = None
+        self._active_canvas = None
+        self._tab_btns = {}
         if win is not None:
             try:
                 win.destroy()
@@ -4656,6 +4935,488 @@ class DeskPet:
         self.todos = [x for x in self.todos if x["id"] != tid]
         self._save_todos()
         self._build_todo_rows()
+
+    # ================= 周期提醒 =================
+    def _load_recurs(self):
+        if os.path.exists(RECUR_FILE):
+            try:
+                with open(RECUR_FILE, "r", encoding="utf-8-sig") as f:
+                    return json.load(f).get("items", [])
+            except Exception:
+                self._backup_bad_file(RECUR_FILE)
+                return []
+        return []
+
+    def _save_recurs(self):
+        with _FILE_LOCK:
+            try:
+                with open(RECUR_FILE, "w", encoding="utf-8") as f:
+                    json.dump({"items": self.recurs}, f, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
+
+    def _parse_hhmm(self, s):
+        """把「9点 / 09:00 / 下午3点半」等解析成 'HH:MM'，失败返回 None。"""
+        s = (s or "").strip()
+        if not s:
+            return None
+        m = re.search(r"(\d{1,2})\s*[:：点]\s*(\d{1,2})?", s) or re.search(r"(\d{1,2})\s*时", s)
+        if not m:
+            return None
+        h = int(m.group(1))
+        mm = int(m.group(2)) if (m.lastindex and m.group(2)) else 0
+        if "半" in s and mm == 0:
+            mm = 30
+        elif "一刻" in s and mm == 0:
+            mm = 15
+        if any(k in s for k in ("下午", "晚上", "傍晚")) and h < 12:
+            h += 12
+        if "中午" in s and h < 11:
+            h += 12
+        if any(k in s for k in ("凌晨", "早上", "上午", "早晨")) and h == 12:
+            h = 0
+        return "%02d:%02d" % (max(0, min(23, h)), max(0, min(59, mm)))
+
+    def _save_recur_and_confirm(self, text, freq, hhmm, weekday=None):
+        if freq not in RECUR_FREQS:
+            freq = "daily"
+        wd = weekday if isinstance(weekday, int) and 0 <= weekday <= 6 else None
+        self.recurs.append({
+            "id": "r" + uuid.uuid4().hex[:12], "text": text, "freq": freq,
+            "time": hhmm, "weekday": wd, "enabled": True, "last_fired": "",
+            "created": time.time(),
+        })
+        self._save_recurs()
+        label = RECUR_FREQ_LABEL.get(freq, "每天")
+        if freq == "weekly" and wd is not None:
+            label += "周" + WEEKDAY_CN[wd]
+        self.say("好，%s %s 提醒你：%s" % (label, hhmm, text))
+
+    def _handle_add_recurring(self, result, original):
+        content = ((result or {}).get("content") or "").strip()
+        freq = ((result or {}).get("freq") or "daily").strip()
+        if freq not in RECUR_FREQS:
+            freq = "daily"
+        hhmm = self._parse_hhmm((result or {}).get("time")) or self._parse_hhmm(original)
+        wd = (result or {}).get("weekday")
+        if not content:
+            self._pending_recur = {"content": None, "freq": freq, "time": hhmm, "weekday": wd}
+            self.open_chat_input()
+            self.say("好呀，要定期提醒你做什么呢？")
+            return
+        if not hhmm:
+            self._pending_recur = {"content": content, "freq": freq, "time": None, "weekday": wd}
+            self.open_chat_input()
+            self.say("好，几点提醒你呢？（比如「9点」「下午3点」）")
+            return
+        self._save_recur_and_confirm(content, freq, hhmm, wd)
+
+    def _check_recurs(self):
+        """到点的周期提醒触发（每 20 秒调用一次）。"""
+        lt = time.localtime()
+        today = time.strftime("%Y-%m-%d")
+        wd = lt.tm_wday
+        now_s = lt.tm_hour * 3600 + lt.tm_min * 60
+        changed = False
+        for it in self.recurs:
+            if not it.get("enabled", True) or it.get("last_fired") == today:
+                continue
+            freq = it.get("freq", "daily")
+            if freq == "workday" and wd >= 5:
+                continue
+            if freq == "weekly" and it.get("weekday") is not None and wd != int(it["weekday"]):
+                continue
+            hhmm = self._parse_hhmm(it.get("time"))
+            if not hhmm:
+                continue
+            target = int(hhmm[:2]) * 3600 + int(hhmm[3:]) * 60
+            if now_s >= target and (now_s - target) <= 4 * 3600:
+                it["last_fired"] = today
+                changed = True
+                self.root.after(1500, lambda t=it.get("text", ""): self._fire_reminder("（周期）%s" % t))
+            elif now_s > target:
+                it["last_fired"] = today   # 错过太久，今天不再补
+                changed = True
+        if changed:
+            self._save_recurs()
+
+    # ---------- 周期待办窗口 ----------
+    def _build_recur_rows(self):
+        inner = getattr(self, "_recur_inner", None)
+        if inner is None:
+            return
+        for w in inner.winfo_children():
+            w.destroy()
+        self._recur_rows = []
+        if not self.recurs:
+            tk.Label(inner, text="还没有周期提醒，点「新建」加一条", bg="#2b2b3a", fg="#9a9ab0").pack(pady=12)
+            return
+        for it in self.recurs:
+            row = tk.Frame(inner, bg="#2b2b3a")
+            row.pack(fill="x", padx=4, pady=2)
+            enabled = bool(it.get("enabled", True))
+            fg = "#e8e8f0" if enabled else "#6a6a80"
+            cv = tk.StringVar(value=it.get("text", ""))
+            ce = tk.Entry(row, textvariable=cv, bg="#3a3a4e", fg=fg,
+                          insertbackground="#ffffff", relief="flat")
+            ce.pack(side="left", fill="x", expand=True, padx=2, ipady=2)
+            fv = tk.StringVar(value=RECUR_FREQ_LABEL.get(it.get("freq", "daily"), "每天"))
+            ttk.Combobox(row, textvariable=fv, width=5, state="readonly",
+                         values=[RECUR_FREQ_LABEL[f] for f in RECUR_FREQS]).pack(side="left", padx=2)
+            tv = tk.StringVar(value=it.get("time", "09:00"))
+            tk.Entry(row, textvariable=tv, width=7, bg="#3a3a4e", fg=fg,
+                     insertbackground="#ffffff", relief="flat").pack(side="left", padx=2, ipady=2)
+            wv = tk.StringVar(value=WEEKDAY_CN[it["weekday"]] if it.get("weekday") is not None else "-")
+            ttk.Combobox(row, textvariable=wv, width=3, state="readonly",
+                         values=["-"] + WEEKDAY_CN).pack(side="left", padx=2)
+            self._recur_rows.append((it["id"], cv, fv, tv, wv))
+            tk.Button(row, text=("暂停" if enabled else "启用"), width=5,
+                      command=lambda i=it["id"]: self._recur_toggle(i)).pack(side="left", padx=1)
+            tk.Button(row, text="删除", width=5,
+                      command=lambda i=it["id"]: self._recur_delete(i)).pack(side="left", padx=1)
+
+    def _recur_new(self):
+        self.recurs.append({"id": "r" + uuid.uuid4().hex[:12], "text": "新周期提醒",
+                            "freq": "daily", "time": "09:00", "weekday": None,
+                            "enabled": True, "last_fired": "", "created": time.time()})
+        self._save_recurs()
+        self._build_recur_rows()
+
+    def _recur_confirm(self):
+        label2freq = {v: k for k, v in RECUR_FREQ_LABEL.items()}
+        for tid, cv, fv, tv, wv in getattr(self, "_recur_rows", []):
+            it = next((x for x in self.recurs if x["id"] == tid), None)
+            if it is None:
+                continue
+            if cv.get().strip():
+                it["text"] = cv.get().strip()
+            it["freq"] = label2freq.get(fv.get(), it.get("freq", "daily"))
+            hhmm = self._parse_hhmm(tv.get())
+            if hhmm:
+                it["time"] = hhmm
+            it["weekday"] = (WEEKDAY_CN.index(wv.get()) if wv.get() in WEEKDAY_CN else None)
+            it["last_fired"] = ""   # 改动后允许今天重新触发
+        self._save_recurs()
+        self._build_recur_rows()
+
+    def _recur_toggle(self, tid):
+        for it in self.recurs:
+            if it["id"] == tid:
+                it["enabled"] = not it.get("enabled", True)
+        self._save_recurs()
+        self._build_recur_rows()
+
+    def _recur_delete(self, tid):
+        self.recurs = [x for x in self.recurs if x["id"] != tid]
+        self._save_recurs()
+        self._build_recur_rows()
+
+    # ================= 使用时长统计 =================
+    def _load_usage(self):
+        try:
+            with open(USAGE_FILE, "r", encoding="utf-8-sig") as f:
+                d = json.load(f)
+            if isinstance(d, dict):
+                d.setdefault("days", {})
+                return d
+        except Exception:
+            pass
+        return {"days": {}}
+
+    def _save_usage(self):
+        try:
+            days = self._usage.setdefault("days", {})
+            for k in sorted(days.keys())[:-USAGE_KEEP_DAYS]:
+                days.pop(k, None)
+            with _FILE_LOCK:
+                with open(USAGE_FILE, "w", encoding="utf-8") as f:
+                    json.dump(self._usage, f, ensure_ascii=False)
+        except Exception:
+            pass
+
+    def _usage_today(self):
+        return self._usage.setdefault("days", {}).setdefault(time.strftime("%Y-%m-%d"), {})
+
+    def _app_display_name(self, exe):
+        key = (exe or "").lower()
+        known = {
+            "chrome.exe": "浏览器 Chrome", "msedge.exe": "浏览器 Edge", "firefox.exe": "浏览器 Firefox",
+            "code.exe": "VS Code", "pycharm64.exe": "PyCharm", "devenv.exe": "Visual Studio",
+            "windowsterminal.exe": "终端", "cmd.exe": "命令行", "powershell.exe": "PowerShell",
+            "qq.exe": "QQ", "wechat.exe": "微信", "tim.exe": "TIM", "dingtalk.exe": "钉钉",
+            "discord.exe": "Discord", "telegram.exe": "Telegram",
+            "explorer.exe": "资源管理器", "notepad.exe": "记事本",
+            "yuanshen.exe": "原神", "genshinimpact.exe": "原神", "starrail.exe": "崩坏：星穹铁道",
+            "steam.exe": "Steam", "spotify.exe": "Spotify",
+            "opencode.exe": "opencode",
+        }
+        return known.get(key, exe or "未知")
+
+    def _fmt_dur(self, sec):
+        sec = int(sec)
+        if sec >= 3600:
+            return "%d小时%d分" % (sec // 3600, (sec % 3600) // 60)
+        if sec >= 60:
+            return "%d分" % (sec // 60)
+        return "%d秒" % sec
+
+    def _usage_loop(self):
+        try:
+            self._usage_tick()
+        except Exception:
+            pass
+        try:
+            self._usage_after = self.root.after(USAGE_SAMPLE_MS, self._usage_loop)
+        except Exception:
+            pass
+
+    def _usage_tick(self):
+        if not getattr(self, "_usage_on", True):
+            return
+        idle = _system_idle_seconds()
+        away_min = max(1, min(USAGE_AWAY_MAX_MIN, int(getattr(self, "_usage_away_min", USAGE_AWAY_MIN))))
+        away = False
+        if idle is not None and idle >= away_min * 60:
+            # 长时间无键鼠操作：若正在放音频（可能在看视频/听歌）则不算离开
+            if _audio_peak() <= 0.01:
+                away = True
+        if away:
+            self._usage_away = True
+            return
+        self._usage_away = False
+        title, exe = get_foreground_app()
+        if not exe:
+            return
+        if exe.lower() in ("python.exe", "pythonw.exe"):
+            return   # 忽略自身
+        apps = self._usage_today()
+        apps[exe] = apps.get(exe, 0.0) + USAGE_SAMPLE_MS / 1000.0
+        now = time.time()
+        if now - self._usage_last_save > 60:
+            self._usage_last_save = now
+            self._save_usage()
+
+    def _maybe_daily_report(self):
+        """小概率触发「今天你都在忙什么」小日报，每天最多一次。"""
+        today = time.strftime("%Y-%m-%d")
+        if self._usage_report_date == today:
+            return
+        total = sum(self._usage_today().values())
+        if total < USAGE_REPORT_MIN * 60:
+            return
+        if random.random() > 0.05:
+            return
+        self._usage_report_date = today
+        threading.Thread(target=self._gen_usage_report, daemon=True).start()
+
+    def _gen_usage_report(self):
+        apps = self._usage_today()
+        if not apps:
+            return
+        top = sorted(apps.items(), key=lambda x: -x[1])[:6]
+        lines = ["%s：%s" % (self._app_display_name(k), self._fmt_dur(v)) for k, v in top]
+        total = sum(apps.values())
+        prompt = (
+            "用户今天在电脑上的使用时长（按应用）：\n%s\n总计约 %s。\n"
+            "请以静香的口吻，用一到两句话做一个轻松自然的「今天你都在忙什么」小总结（像随口聊起），"
+            "不要像报表，不要罗列全部数字，挑最突出的说，口语化。"
+        ) % ("\n".join(lines), self._fmt_dur(total))
+        try:
+            client = get_client()
+            resp = client.chat.completions.create(
+                model=api_model(),
+                messages=[{"role": "system", "content": load_persona()},
+                          {"role": "user", "content": prompt}],
+                temperature=1.0, max_tokens=90)
+            text = clean_reply_style((resp.choices[0].message.content or "").strip())
+            if text and self.visible and not self._is_speaking():
+                self.say(text, source="时长日报")
+        except Exception:
+            pass
+
+    def show_usage(self, event=None):
+        if getattr(self, "_usage_win", None) is not None:
+            try:
+                self._usage_win.destroy()
+            except Exception:
+                pass
+            self._usage_win = None
+        try:
+            W, H = 620, 430
+            win = tk.Toplevel(self.root)
+            win.withdraw()
+            win.title("静香 · 今日使用时长")
+            win.attributes("-topmost", True)
+            win.configure(bg="#2b2b3a")
+            self._usage_win = win
+            tk.Label(win, text="今日使用时长", bg="#2b2b3a", fg="#e8e8f0",
+                     font=("Microsoft YaHei", 12, "bold")).pack(pady=(10, 4))
+            canvas = tk.Canvas(win, bg="#2b2b3a", highlightthickness=0)
+            vsb = tk.Scrollbar(win, orient="vertical", command=canvas.yview)
+            inner = tk.Frame(canvas, bg="#2b2b3a")
+            inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+            canvas.create_window((0, 0), window=inner, anchor="nw", width=590)
+            canvas.configure(yscrollcommand=vsb.set)
+            vsb.pack(side="right", fill="y")
+            canvas.pack(fill="both", expand=True)
+            bind_wheel_scroll(win, canvas)
+            self._build_usage_rows(inner)
+            tk.Button(win, text="关闭", width=8, command=self._close_usage_window).pack(pady=8)
+            win.protocol("WM_DELETE_WINDOW", self._close_usage_window)
+            x = self.pet.winfo_rootx() + self.pet.winfo_width() + 8
+            y = self.pet.winfo_rooty()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            if x + W > sw:
+                x = self.pet.winfo_rootx() - W - 8
+            x = max(0, x)
+            y = max(0, min(y, sh - H - 40))
+            win.update_idletasks()
+            win.geometry(f"{W}x{H}+{x}+{y}")
+            win.deiconify()
+            win.lift()
+        except Exception:
+            pass
+
+    def _close_usage_window(self):
+        win = getattr(self, "_usage_win", None)
+        self._usage_win = None
+        if win is not None:
+            try:
+                win.destroy()
+            except Exception:
+                pass
+
+    def _build_usage_rows(self, inner):
+        apps = dict(self._usage_today())
+        items = sorted(apps.items(), key=lambda x: -x[1])
+        if not items:
+            tk.Label(inner, text="今天还没记录到使用数据～", bg="#2b2b3a", fg="#9a9ab0").pack(pady=14)
+            return
+        mx = max(v for _, v in items) or 1
+        total = sum(v for _, v in items)
+        for name, sec in items:
+            row = tk.Frame(inner, bg="#2b2b3a")
+            row.pack(fill="x", padx=6, pady=2)
+            tk.Label(row, text=self._app_display_name(name), width=18, anchor="w",
+                     bg="#2b2b3a", fg="#e8e8f0").pack(side="left")
+            bar = tk.Canvas(row, width=270, height=14, bg="#2b2b3a", highlightthickness=0)
+            bar.pack(side="left", padx=6)
+            w = int(270 * sec / mx)
+            bar.create_rectangle(0, 2, max(2, w), 12, fill="#4a6fa5", outline="")
+            tk.Label(row, text=self._fmt_dur(sec), width=10, anchor="e",
+                     bg="#2b2b3a", fg="#7fd6a8").pack(side="left")
+        tk.Label(inner, text="合计：%s" % self._fmt_dur(total), bg="#2b2b3a", fg="#9a9ab0",
+                 anchor="e").pack(fill="x", padx=10, pady=(8, 0))
+
+    # ================= 自动检查更新 =================
+    def _check_update_async(self):
+        def work():
+            info = check_latest_release()
+            self._ui(lambda: self._apply_update_info(info))
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_update_info(self, info):
+        self._update_info = info
+        self._refresh_update_mark()
+
+    def _refresh_update_mark(self):
+        m = getattr(self, "_update_mark", None)
+        if m is None:
+            return
+        info = self._update_info
+        try:
+            if info and info[0]:
+                m.config(text="·有更新·", fg="#c0392b")
+            else:
+                m.config(text="已是最新版本咯~", fg="#7a7a7a")
+        except Exception:
+            pass
+
+    def _on_update_click(self):
+        info = self._update_info
+        if info and info[0] and info[2]:
+            self._confirm_update(info)
+        else:
+            self._update_info = None
+            m = getattr(self, "_update_mark", None)
+            if m is not None:
+                try:
+                    m.config(text="检查中…", fg="#7a7a7a")
+                except Exception:
+                    pass
+            self._check_update_async()
+
+    def _confirm_update(self, info):
+        has, ver, url, notes = info
+        try:
+            win = tk.Toplevel(self.root)
+            win.title("发现新版本")
+            win.attributes("-topmost", True)
+            win.configure(bg="#2b2b3a")
+            tk.Label(win, text="发现新版本 %s" % ver, bg="#2b2b3a", fg="#e8e8f0",
+                     font=("Microsoft YaHei", 12, "bold")).pack(padx=20, pady=(14, 6))
+            txt = tk.Text(win, width=54, height=12, bg="#3a3a4e", fg="#e8e8f0",
+                          relief="flat", wrap="word")
+            txt.insert("1.0", notes or "（这个版本没有写更新说明）")
+            txt.config(state="disabled")
+            txt.pack(padx=20, pady=6)
+            bar = tk.Frame(win, bg="#2b2b3a")
+            bar.pack(pady=(0, 14))
+            tk.Button(bar, text="立即更新", width=10,
+                      command=lambda: (win.destroy(), self._apply_update(info))).pack(side="left", padx=6)
+            tk.Button(bar, text="取消", width=10, command=win.destroy).pack(side="left", padx=6)
+            win.update_idletasks()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry("+%d+%d" % ((sw - win.winfo_width()) // 2, (sh - win.winfo_height()) // 2))
+        except Exception:
+            self._apply_update(info)
+
+    def _apply_update(self, info):
+        has, ver, url, notes = info
+        if not url:
+            self.say("这个版本没有可下载的压缩包，去仓库手动下载一下吧。")
+            return
+        self.say("好，我这就去下载新版本，下载好会自动重启～")
+        threading.Thread(target=self._download_and_update, args=(url,), daemon=True).start()
+
+    def _download_and_update(self, url):
+        import tempfile
+        import shutil as _sh
+        import zipfile as _zip
+        import urllib.request as _url
+        import subprocess as _sp
+        try:
+            tmp = tempfile.mkdtemp(prefix="shizuka_upd_")
+            zpath = os.path.join(tmp, "update.zip")
+            req = _url.Request(url, headers={"User-Agent": "ShizukaDeskPet"})
+            with _url.urlopen(req, timeout=180) as r, open(zpath, "wb") as f:
+                _sh.copyfileobj(r, f)
+            with _zip.ZipFile(zpath) as z:
+                z.extractall(tmp)
+            src = None
+            for root, dirs, files in os.walk(tmp):
+                if "Shizuka.exe" in files:
+                    src = root
+                    break
+            if not src:
+                raise RuntimeError("压缩包里没找到 Shizuka.exe")
+            dst = ROOT_DIR
+            bat = os.path.join(tmp, "_update.bat")
+            pid = os.getpid()
+            restart = (os.path.join(dst, "Shizuka.exe") if getattr(sys, "frozen", False)
+                       else '"%s" "%s"' % (_find_pythonw(), os.path.join(APP_DIR, "run_pet.py")))
+            with open(bat, "w", encoding="gbk", errors="ignore") as f:
+                f.write("@echo off\r\n")
+                f.write(":wait\r\n")
+                f.write('tasklist /FI "PID eq %d" | find "%d" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)\r\n' % (pid, pid))
+                f.write('robocopy "%s" "%s" /E /XD data /XF api_key.txt /R:2 /W:1 >nul\r\n' % (src, dst))
+                f.write('start "" %s\r\n' % restart)
+                f.write('rmdir /S /Q "%s"\r\n' % tmp)
+            _sp.Popen(["cmd", "/c", bat], creationflags=0x08000000, close_fds=True)
+            time.sleep(0.5)
+            self._ui(self.quit)
+        except Exception:
+            self._ui(lambda: self.say("更新失败了呢……可以到仓库手动下载新版本。"))
 
     # ---------- 设置 API Key ----------
     def _migrate_api_key(self):
@@ -5023,7 +5784,8 @@ class DeskPet:
         toggles = [("检测剪贴板", "_clip_on"),
                    ("翻译剪贴板", "_translate_on"),
                    ("开机问候", "_greeting_on"),
-                   ("开机待办提醒", "_summary_on")]
+                   ("开机待办提醒", "_summary_on"),
+                   ("使用时长统计", "_usage_on")]
         for text, attr in toggles:
             self._add_menu_toggle(win, text, attr)
         # 语音朗读：装了 GPT-SoVITS 才是开关，没装就显示提示
@@ -5033,6 +5795,8 @@ class DeskPet:
             self._add_menu_toggle(win, "角色动态", "_animation_on")
             self._add_menu_toggle(win, "自动小动作", "_ambient_actions_on")
         self._add_menu_toggle(win, "落在窗口上（试验）", "_land_on_windows")
+        # 开机自动启动（写注册表 Run 键）
+        self._add_menu_autostart(win)
         # 显示速度（悬停展开二级菜单）
         self._add_menu_speed(win)
         # 语音服务释放策略（仅开了语音时显示）
@@ -5045,11 +5809,14 @@ class DeskPet:
         # 分隔线
         tk.Frame(win, bg="#c8c8c8", height=1).pack(fill="x", pady=4)
         # 第二栏：常规项
-        for text, cmd in [("角色与外观", self.show_characters), ("角色动作", self.show_actions),
+        for text, cmd in [("时长统计", self.show_usage),
+                          ("角色与外观", self.show_characters), ("角色动作", self.show_actions),
                           ("测试提示音", self.play_sound),
                           ("设置 API Key", self._prompt_api_key), ("查看记忆", self.show_memory),
                           ("隐藏到托盘", self.hide), ("关闭", self.quit)]:
             self._add_menu_item(win, text, cmd)
+        # 检查更新（动态文案）
+        self._add_menu_update(win)
         x = event.x_root
         y = event.y_root
         win.update_idletasks()
@@ -5158,6 +5925,39 @@ class DeskPet:
         if self._voice_on:
             threading.Thread(target=self._ensure_tts_server, daemon=True).start()
         self.say("找到 GPT-SoVITS 了，语音朗读可以用啦～")
+
+    def _add_menu_autostart(self, win):
+        """开机自动启动：写/删注册表 Run 键。"""
+        row, lbl, mark = self._menu_row(win, "开机自动启动")
+        self._autostart_on = is_autostart_on()
+        mark.config(text="✓" if self._autostart_on else "")
+
+        def toggle(e):
+            want = not self._autostart_on
+            ok = set_autostart(want)
+            if ok:
+                self._autostart_on = want
+            try:
+                mark.config(text="✓" if self._autostart_on else "")
+            except Exception:
+                pass
+            if not ok:
+                self.say("设置开机启动失败了呢……可能权限不够。")
+
+        for w in (row, lbl, mark):
+            w.bind("<Button-1>", toggle)
+
+    def _add_menu_update(self, win):
+        """检查更新：正常显示「已是最新版本咯~」，检测到更新显示「·有更新·」。"""
+        row, lbl, mark = self._menu_row(win, "检查更新")
+        info = self._update_info
+        if info and info[0]:
+            mark.config(text="·有更新·", fg="#c0392b")
+        else:
+            mark.config(text="已是最新版本咯~", fg="#7a7a7a")
+        self._update_mark = mark
+        for w in (row, lbl, mark):
+            w.bind("<Button-1>", lambda e, ww=win: self.select_item(ww, self._on_update_click))
 
     def _add_menu_option(self, win, text, options, get_key, set_key):
         """二级选项行：悬停展开 options=[(key,label)...]；get_key() 当前值，set_key(key) 应用。"""
@@ -5374,6 +6174,8 @@ class DeskPet:
             "api_model": self._settings.get("api_model") or DEFAULT_API_MODEL,
             "provider": self._settings.get("provider") or "",
             "gsv_dir": self._settings.get("gsv_dir") or gsv_dir(),
+            "usage_track": bool(getattr(self, "_usage_on", True)),
+            "usage_away_min": int(getattr(self, "_usage_away_min", USAGE_AWAY_MIN)),
         }
         self._settings.update(data)
         with _FILE_LOCK:
@@ -6736,7 +7538,7 @@ class DeskPet:
         return item
 
     def _reminder_loop(self):
-        """每 20 秒检查一次到期的待办"""
+        """每 20 秒检查一次到期的待办 + 周期提醒"""
         now = time.time()
         for it in self.todos:
             if it.get("done"):
@@ -6746,6 +7548,10 @@ class DeskPet:
                 it["done"] = True
                 self._fire_reminder(it["text"], due)
         self._save_todos()
+        try:
+            self._check_recurs()
+        except Exception:
+            pass
         try:
             self._reminder_after = self.root.after(20000, self._reminder_loop)
         except Exception:
@@ -7234,6 +8040,10 @@ class DeskPet:
         except Exception:
             pass
         try:
+            self._maybe_daily_report()
+        except Exception:
+            pass
+        try:
             self.root.after(FOREGROUND_INTERVAL, self._foreground_loop)
         except Exception:
             pass
@@ -7365,6 +8175,10 @@ class DeskPet:
         except Exception:
             pass
         try:
+            self._save_usage()   # 退出前落盘使用时长
+        except Exception:
+            pass
+        try:
             self._vinyl_destroy()
         except Exception:
             pass
@@ -7454,6 +8268,10 @@ class DeskPet:
         self.root.after(2500, self._boot_reminders)
         # 剪贴板监听
         self.root.after(4000, self._clip_loop)
+        # 使用时长统计
+        self.root.after(5000, self._usage_loop)
+        # 后台检查更新（GitHub Release）
+        self.root.after(8000, self._check_update_async)
         # 前台程序感知（主动评论）
         self.root.after(6000, self._foreground_loop)
         # 长时间无操作主动搭话
