@@ -1,0 +1,10 @@
+{
+  "schema_version": 1,
+  "id": "shizuka-classic",
+  "character_id": "shizuka",
+  "name": "静香 · 单图版",
+  "description": "朋友制作的原始立绘；保留已有记忆和聊天记录。",
+  "renderer": "static",
+  "portrait": "portrait.png",
+  "persona": "persona.json"
+}
