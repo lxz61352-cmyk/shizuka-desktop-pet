@@ -1562,6 +1562,7 @@ VOICE_VOLUME = 850   # 语音朗读 / 甩晕台词 MCI 音量 0-1000
 
 # 背景音乐「i wanna」：放在 assets 里，用独立的 MCI 别名播放，可与语音/提示音同时存在
 MUSIC_FILE = os.path.join(ASSETS_DIR, "i_wanna.mp3")
+MUSIC_COVER_FILE = os.path.join(ASSETS_DIR, "i_wanna_cover.png")   # 歌曲封面（mp3 内嵌封面被去掉后用它）
 MUSIC_ALIAS = "deskpet_bgm"
 MUSIC_VOLUME = 850  # 0-1000，比满音量轻 15%
 
@@ -6759,6 +6760,11 @@ class DeskPet:
         if getattr(self, "_vinyl_base", None) is not None:
             return
         cover = extract_mp3_cover(MUSIC_FILE)
+        if cover is None and os.path.exists(MUSIC_COVER_FILE):
+            try:
+                cover = Image.open(MUSIC_COVER_FILE).convert("RGB")
+            except Exception:
+                cover = None
         self._vinyl_base = make_vinyl_image(cover, self._vinyl_size)
 
     def _vinyl_show(self):
