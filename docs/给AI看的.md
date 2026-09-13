@@ -125,7 +125,7 @@
 ### 10. 线程 / 锁 / 设置
 
 - 后台线程统一经主线程队列 `_ui`/`_poll_ui` 操作 Tk。锁：`_FILE_LOCK`（文件写）、`_hist_lock`、`_chat_lock`、`_MCI_LOCKS`（每别名一把）、`_render_lock`、`get_client`/`get_memory` 双检锁。
-- 设置持久化在 `data/settings.json`（`_save_settings`）；API Key 用 Windows DPAPI 加密存 `api_key.txt`（`_dpapi`/`read_api_key`/`save_api_key`），绝不落明文。数据文件读坏时先备份 `.bad-<时间戳>` 再重建，防清空。
+- 设置持久化在 `data/settings.json`（`_save_settings`）；API Key 存 **Windows 凭据管理器**（`_cred_write`/`_cred_read`/`_cred_delete`，目标 `ShizukaDeskPet/api_key`，系统加密、绑定当前用户），**程序目录不留 Key 文件**；旧版 `api_key.txt` 首次启动自动迁移进凭据管理器并删除（`_migrate_api_key` / `_read_legacy_key_file`）。数据文件读坏时先备份 `.bad-<时间戳>` 再重建，防清空。
 
 ---
 
@@ -134,7 +134,6 @@
 | 文件 | 内容 |
 | --- | --- |
 | `data/settings.json` | 功能开关 + 位置/缩放/接口配置 |
-| `api_key.txt` | API Key（DPAPI 加密，本包不含） |
 | `data/memory.json` | 记忆库 |
 | `data/todos.json` | 待办 |
 | `data/对话记录/对话记录.json` + `YYYY-MM-DD.md` | 对话记录（私人数据） |

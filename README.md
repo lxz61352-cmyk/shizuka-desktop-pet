@@ -29,11 +29,11 @@
    **不要只把 `Shizuka.exe` 单独拿出来**——旁边的 `_internal`、`assets`、`characters` 文件夹都要一起保留，缺一个会打不开或没声音。
 2. 双击 **`Shizuka.exe`**（或 `启动桌宠.bat`）。这个包自带运行环境，**不需要安装 Python**。
 3. 第一次打开只有动作和问候，还不会聊天。点**齿轮 → 设置 API Key**，填入你自己的 Key（DeepSeek，或任意 OpenAI 兼容接口），保存后会**自动识别服务商**并连上。
-   Key 用 Windows 加密保存在 `api_key.txt`，文件里看不到明文；没有 Key 也能看动作，只是不聊天。
+   Key 存进 **Windows 凭据管理器**（系统加密、绑定当前用户），**程序目录里不会留下 Key 文件**；没有 Key 也能看动作，只是不聊天。
 4. 只想看动作、不接聊天：运行 `预览动作.bat`。
 5. 想开机自动启动：给 `Shizuka.exe` 建个快捷方式，放进 `Win+R` → `shell:startup` 打开的文件夹。
 
-- 你的聊天、记忆、待办、设置都保存在解压目录的 `data/` 里。换电脑或升级前先备份；**转发给别人时，别把自己的 `data/` 和 `api_key.txt` 一起发出去。**
+- 你的聊天、记忆、待办、设置都保存在解压目录的 `data/` 里。换电脑或升级前先备份；**转发给别人时，别把自己的 `data/` 一起发出去。**
 - 源码运行：装好含 Tcl/Tk 的 Python（3.10~3.13）后 `pip install -r src/requirements.txt`，再运行 `源码启动.bat`（或 `python src/run_pet.py`）。
 
 ---
@@ -143,7 +143,6 @@
 | `tools/` `tests/` | 构建脚本、回归测试 |
 | `references/` `LICENSES/` | 参考资料与第三方许可 |
 | `data/` | 运行数据（聊天记录/记忆/待办/设置，**本机生成，不上传**） |
-| `api_key.txt` | API Key（加密存储；仓库里是空文件，填了才会生成内容） |
 
 ---
 
