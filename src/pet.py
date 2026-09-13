@@ -4,6 +4,8 @@ import io
 import json
 import re
 import base64
+import ctypes
+from ctypes import wintypes
 import atexit
 import time
 import random
@@ -486,39 +488,106 @@ def _dpapi(data, protect=True):
         ctypes.memset(buf, 0, len(data))   # 清零明文输入 buffer
 
 
+# ---------------- API Key（存 Windows 凭据管理器，程序目录不留文件） ----------------
+_CRED_TYPE_GENERIC = 1
+_CRED_PERSIST_LOCAL_MACHINE = 2
+_CRED_TARGET = "ShizukaDeskPet/api_key"
+
+
+class _FILETIME(ctypes.Structure):
+    _fields_ = [("dwLowDateTime", wintypes.DWORD), ("dwHighDateTime", wintypes.DWORD)]
+
+
+class _CREDENTIAL(ctypes.Structure):
+    _fields_ = [
+        ("Flags", wintypes.DWORD), ("Type", wintypes.DWORD),
+        ("TargetName", wintypes.LPWSTR), ("Comment", wintypes.LPWSTR),
+        ("LastWritten", _FILETIME), ("CredentialBlobSize", wintypes.DWORD),
+        ("CredentialBlob", ctypes.POINTER(ctypes.c_byte)),
+        ("Persist", wintypes.DWORD), ("AttributeCount", wintypes.DWORD),
+        ("Attributes", ctypes.c_void_p), ("TargetAlias", wintypes.LPWSTR),
+        ("UserName", wintypes.LPWSTR),
+    ]
+
+
+def _cred_write(secret):
+    """把密钥写进 Windows 凭据管理器（系统加密，绑定当前用户）。"""
+    advapi = ctypes.windll.advapi32
+    data = secret.encode("utf-8")
+    blob = ctypes.create_string_buffer(data, len(data))
+    cred = _CREDENTIAL()
+    cred.Type = _CRED_TYPE_GENERIC
+    cred.TargetName = _CRED_TARGET
+    cred.CredentialBlobSize = len(data)
+    cred.CredentialBlob = ctypes.cast(blob, ctypes.POINTER(ctypes.c_byte))
+    cred.Persist = _CRED_PERSIST_LOCAL_MACHINE
+    cred.UserName = "shizuka"
+    advapi.CredWriteW.argtypes = [ctypes.POINTER(_CREDENTIAL), wintypes.DWORD]
+    advapi.CredWriteW.restype = wintypes.BOOL
+    try:
+        ok = advapi.CredWriteW(ctypes.byref(cred), 0)
+    finally:
+        ctypes.memset(blob, 0, len(data))
+    return bool(ok)
+
+
+def _cred_read():
+    advapi = ctypes.windll.advapi32
+    advapi.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
+                                 ctypes.POINTER(ctypes.POINTER(_CREDENTIAL))]
+    advapi.CredReadW.restype = wintypes.BOOL
+    p = ctypes.POINTER(_CREDENTIAL)()
+    if not advapi.CredReadW(_CRED_TARGET, _CRED_TYPE_GENERIC, 0, ctypes.byref(p)):
+        return ""
+    try:
+        c = p.contents
+        return ctypes.string_at(c.CredentialBlob, c.CredentialBlobSize).decode("utf-8", "ignore")
+    finally:
+        advapi.CredFree(p)
+
+
+def _cred_delete():
+    advapi = ctypes.windll.advapi32
+    advapi.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    advapi.CredDeleteW.restype = wintypes.BOOL
+    advapi.CredDeleteW(_CRED_TARGET, _CRED_TYPE_GENERIC, 0)
+
+
+def _read_legacy_key_file():
+    """读旧版遗留的 api_key.txt（仅用于迁移）。"""
+    try:
+        if not os.path.exists(API_KEY_FILE):
+            return ""
+        with open(API_KEY_FILE, "r", encoding="utf-8-sig") as f:
+            raw = f.read().strip()
+        if raw.startswith("DPAPI:"):
+            import base64
+            return _dpapi(base64.b64decode(raw[6:]), protect=False).decode("utf-8", "ignore")
+        return raw   # 兼容更早的明文
+    except Exception:
+        return ""
+
+
 def save_api_key(key):
-    """把 Key 加密后写入 api_key.txt（文件里看不到明文）。成功返回 True。"""
+    """把 Key 存进 Windows 凭据管理器（程序目录不留任何 Key 文件）。成功返回 True。"""
     key = (key or "").strip()
     try:
         if key:
-            import base64
-            enc = _dpapi(key.encode("utf-8"), protect=True)
-            text = "DPAPI:" + base64.b64encode(enc).decode("ascii")
-        else:
-            text = ""
-        with open(API_KEY_FILE, "w", encoding="utf-8") as f:
-            f.write(text)
+            return _cred_write(key)
+        _cred_delete()   # 传空 = 清除
         return True
     except Exception:
-        return False   # 加密失败就不落盘，绝不写明文
+        return False
 
 
 def read_api_key():
     key = ""
-    if os.path.exists(API_KEY_FILE):
-        try:
-            with open(API_KEY_FILE, "r", encoding="utf-8-sig") as f:
-                raw = f.read().strip()
-        except Exception:
-            raw = ""
-        if raw.startswith("DPAPI:"):
-            try:
-                import base64
-                key = _dpapi(base64.b64decode(raw[6:]), protect=False).decode("utf-8", "ignore")
-            except Exception:
-                key = ""
-        else:
-            key = raw   # 兼容旧的明文 key
+    try:
+        key = _cred_read()
+    except Exception:
+        key = ""
+    if not key:
+        key = _read_legacy_key_file()   # 兼容旧版 api_key.txt（首次启动会迁移）
     if not key:
         key = os.environ.get("DEEPSEEK_API_KEY", "")
     return key.strip()
@@ -4580,13 +4649,17 @@ class DeskPet:
 
     # ---------- 设置 API Key ----------
     def _migrate_api_key(self):
-        """若 api_key.txt 仍是旧的明文，自动加密覆盖。"""
+        """把旧版 api_key.txt 里的 Key 迁进 Windows 凭据管理器，然后删掉旧文件。"""
         try:
-            if os.path.exists(API_KEY_FILE):
-                with open(API_KEY_FILE, "r", encoding="utf-8-sig") as f:
-                    raw = f.read().strip()
-                if raw and not raw.startswith("DPAPI:"):
-                    save_api_key(raw)
+            if not os.path.exists(API_KEY_FILE):
+                return
+            old = _read_legacy_key_file()
+            if old:
+                _cred_write(old)
+            try:
+                os.remove(API_KEY_FILE)   # 迁移后不再在程序目录留 Key 文件
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -4658,7 +4731,7 @@ class DeskPet:
             status = tk.StringVar(value="当前服务商：" + cur)
             tk.Label(win, textvariable=status, bg="#2b2b3a", fg="#9a9ab0",
                      font=("Microsoft YaHei", 9)).pack(padx=20, pady=(4, 2))
-            tk.Label(win, text="Key 加密保存在本机；仅向上方接口验证连接。",
+            tk.Label(win, text="Key 存进 Windows 凭据管理器（系统加密、绑定当前用户），程序目录不留文件。",
                      bg="#2b2b3a", fg="#9a9ab0", font=("Microsoft YaHei", 9)).pack(padx=20, pady=(0, 8))
             btns = tk.Frame(win, bg="#2b2b3a")
             btns.pack(pady=(0, 16))
