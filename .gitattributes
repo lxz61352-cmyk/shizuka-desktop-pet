@@ -1,0 +1,2 @@
+voice_model/*.ckpt filter=lfs diff=lfs merge=lfs -text
+voice_model/*.pth filter=lfs diff=lfs merge=lfs -text

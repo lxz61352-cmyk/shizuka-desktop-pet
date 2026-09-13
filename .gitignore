@@ -1,0 +1,33 @@
+# ---- 个人运行数据（不上传）----
+data/
+*.bad-*
+
+# ---- Python 缓存 ----
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 构建中间产物（打包好的 exe/_internal 会随仓库提供）----
+build/
+dist/
+*.spec
+.venv/
+venv/
+
+# ---- 日志 / 临时文件 ----
+*.log
+*.tmp
+*.bak
+_tts*.wav
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+
+# ---- 试错素材归档（体积大，不上传）----
+experiments/
+
+# ---- 发布压缩包 ----
+*.zip
