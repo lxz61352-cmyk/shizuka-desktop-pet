@@ -25,7 +25,7 @@ from pet_triggers import ActionTriggers
 from pet_ground import GroundMotion, floor_position
 from pet_surfaces import window_surfaces,choose_support,exposed_support
 
-APP_VERSION = "0.6.0"
+APP_VERSION = "0.6.16"
 
 # 甩得太狠时说的预制台词（固定文本，不调模型；语音会缓存 wav 复用）
 SWAY_DIZZY_LINE = "头好晕，不要晃了喵"
