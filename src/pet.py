@@ -928,6 +928,32 @@ def check_latest_release(timeout=15):
         return (False, "", "", "")
 
 
+def read_announcement(ver):
+    """从「更新公告.md」里取指定版本号那一节的正文。找不到返回空串。"""
+    try:
+        if not ver or not os.path.exists(ANNOUNCE_FILE):
+            return ""
+        with open(ANNOUNCE_FILE, "r", encoding="utf-8-sig") as f:
+            lines = f.read().splitlines()
+        want = str(ver).strip().lstrip("vV")
+        body = []
+        cur = False
+        for ln in lines:
+            m = re.match(r"^#{1,6}\s*(.+?)\s*$", ln.strip())
+            if m:
+                if cur:
+                    break            # 到了下一节，结束
+                title = m.group(1).lstrip("vV").strip()
+                if want and (title == want or want in title or title in want):
+                    cur = True
+                continue
+            if cur:
+                body.append(ln)
+        return "\n".join(body).strip()
+    except Exception:
+        return ""
+
+
 # ---------------- 记忆系统 ----------------
 MEMORY_FILE = os.path.join(CHARACTER_DATA_DIR, "memory.json")
 MEMORY_TTL_DAYS = 25          # 记忆超过该天数未引用则进入淘汰
@@ -1567,6 +1593,7 @@ USAGE_REPORT_MIN = 20          # 累计使用满这么多分钟才可能触发�
 UPDATE_REPO = "lxz61352-cmyk/shizuka-desktop-pet"   # GitHub 仓库（owner/repo）
 UPDATE_API = "https://api.github.com/repos/%s/releases/latest" % UPDATE_REPO
 PENDING_UPDATE_FILE = os.path.join(DATA_DIR, "_pending_update.json")   # 更新重启后要展示的更新日志
+ANNOUNCE_FILE = os.path.join(ROOT_DIR, "更新公告.md")                    # 更新公告（按 ## vX.Y.Z 分节）
 
 
 def _sound_log(msg):
@@ -5499,7 +5526,7 @@ class DeskPet:
             self._ui(lambda: self.say("更新失败了呢……可以到仓库手动下载新版本。"))
 
     def _show_update_done(self):
-        """更新重启后：弹一次更新日志，然后删掉标记文件。"""
+        """更新重启后：弹一次更新公告，然后删掉标记文件。"""
         try:
             if not os.path.exists(PENDING_UPDATE_FILE):
                 return
@@ -5511,16 +5538,21 @@ class DeskPet:
                 os.remove(PENDING_UPDATE_FILE)
             except Exception:
                 pass
+            # 优先用随包的「更新公告.md」里该版本那一节，其次用 Release 说明
+            body_text = (read_announcement(ver) or read_announcement(APP_VERSION)
+                         or notes or "（这个版本没有写更新公告）")
             win = tk.Toplevel(self.root)
-            win.title("更新完成")
+            win.title("更新公告")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
+            tk.Label(win, text="更新公告", bg="#2b2b3a", fg="#e8e8f0",
+                     font=("Microsoft YaHei", 13, "bold")).pack(padx=22, pady=(16, 2))
             tk.Label(win, text=("已更新到 v%s" % ver) if ver else "更新完成",
-                     bg="#2b2b3a", fg="#e8e8f0",
-                     font=("Microsoft YaHei", 12, "bold")).pack(padx=22, pady=(16, 8))
+                     bg="#2b2b3a", fg="#9a9ab0",
+                     font=("Microsoft YaHei", 9)).pack(padx=22, pady=(0, 8))
             txt = tk.Text(win, width=54, height=12, bg="#3a3a4e", fg="#e8e8f0",
                           relief="flat", wrap="word")
-            txt.insert("1.0", notes or "（这个版本没有写更新说明）")
+            txt.insert("1.0", body_text)
             txt.config(state="disabled")
             txt.pack(padx=22, pady=6)
             tk.Button(win, text="知道啦", width=10, command=win.destroy).pack(pady=(0, 16))
