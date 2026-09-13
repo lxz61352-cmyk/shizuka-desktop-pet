@@ -135,6 +135,7 @@
 - **使用时长统计**：`data/usage.json`（`{"days": {日期: {exe: 秒}}}`，保留最近 14 天）。`_usage_loop` 每 5 秒采样一次前台程序（`get_foreground_app`）累加时长；`_system_idle_seconds()` 连续无键鼠超过 `USAGE_AWAY_MIN`（默认 5 分钟）时视为**离开、暂停统计**，但若 `_audio_peak()` 检测到正在放音频（看视频/听歌）则不算离开。面板：菜单「时长统计」→ `show_usage()`（各应用时长条形图 + 合计，底部可改离开阈值并写入 `settings.json` 的 `usage_away_min`）。日报：`_maybe_daily_report()` 在 `_foreground_loop` 里小概率触发一次「今天你都在忙什么」小总结（当天一次、需累计 ≥20 分钟）。
 - **自动检查更新**：`check_latest_release()` 读 GitHub 仓库 `UPDATE_REPO` 的最新 **Release**，与 `APP_VERSION` 比较；启动后台检查一次。菜单「检查更新」正常显示「已是最新版本咯~」、有更新显示「·有更新·」；**左键**检查/更新（点击弹窗显示 Release 说明，确认后 `_download_and_update()` 下载 zip、解压，生成 `.bat`：等本进程退出 → `robocopy /E /XD data voice_model experiments /XF api_key.txt` 覆盖 → 重启 → 清理），**右键** `_confirm_toggle_update()` 可停止/重新接收更新（存 `settings.json` 的 `update_disabled`，禁用后该行显示「已禁用更新」、启动不再检查）。
   - **更新包**：Release 附件优先选名字带 `update` 的 zip（`tools/make_update_zip.py` 生成，排除 `voice_model`/`data`/`experiments`，约 70MB），这样更新不会重下 328MB 音色模型、也不会覆盖用户数据；找不到才退回第一个 zip。
+  - **更新公告**：更新重启后 `_show_update_done()` 弹一次「更新公告」——内容取自随包的 `更新公告.md`（`read_announcement(ver)` 按 `## vX.Y.Z` 分节取该版本那一节），取不到再退回 Release 说明；弹完删除 `data/_pending_update.json`。
   - **注意**：更新提示只跟 **GitHub Release** 有关，普通 commit 不会触发；要发新版就建一个带 tag 和 zip 附件的 Release。
 
 ---
