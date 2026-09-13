@@ -1,0 +1,5 @@
+{
+  "version": "0.7.0",
+  "asset": "Shizuka-0.7.0-update.zip",
+  "notes": "1. 修复了 i wanna 被 rickroll 夺舍的问题。\n2. 添加了检测更新以及镜像站下载功能。\n3. 进行了一些优化和改进。"
+}

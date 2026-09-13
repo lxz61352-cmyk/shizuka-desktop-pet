@@ -5,6 +5,7 @@
 用法：在程序目录（含 Shizuka.exe）下运行  python tools/make_update_zip.py
 输出：程序目录的上一级生成 Shizuka-<版本>-update.zip
 """
+import json
 import os
 import re
 import sys
@@ -44,3 +45,29 @@ with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
 print("files:", n)
 print("zip MB:", round(os.path.getsize(OUT) / 1024 / 1024, 1))
 print("OUT:", OUT)
+
+# 同步写 version.json（给「备用源/镜像」用：程序直连不上 GitHub API 时读它）
+def _announcement(v):
+    try:
+        with open(os.path.join(ROOT, "更新公告.md"), encoding="utf-8-sig") as f:
+            lines = f.read().splitlines()
+        body, cur = [], False
+        for ln in lines:
+            m = re.match(r"^#{1,6}\s*(.+?)\s*$", ln.strip())
+            if m:
+                if cur:
+                    break
+                if m.group(1).lstrip("vV").strip() == v:
+                    cur = True
+                continue
+            if cur:
+                body.append(ln)
+        return "\n".join(body).strip()
+    except Exception:
+        return ""
+
+verjson = os.path.join(ROOT, "version.json")
+with open(verjson, "w", encoding="utf-8") as f:
+    json.dump({"version": ver, "asset": os.path.basename(OUT), "notes": _announcement(ver)},
+              f, ensure_ascii=False, indent=2)
+print("version.json:", verjson)
