@@ -11,7 +11,7 @@
 
 - 平台：**Windows x64**（Windows 11 实测；Windows 10 待测，不提供 Mac 版）
 - 技术：Python + Tkinter + Pillow，PyInstaller 打包
-- 版本：**V0.6.0**
+- 版本：**V0.6.16**
 - 本仓库同时提供**免装 Python 的打包版**（`Shizuka.exe` + `_internal/`）和**完整源码**（`src/`）。
 
 ---
