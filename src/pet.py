@@ -25,7 +25,7 @@ from pet_triggers import ActionTriggers
 from pet_ground import GroundMotion, floor_position
 from pet_surfaces import window_surfaces,choose_support,exposed_support
 
-APP_VERSION = "0.6.16"
+APP_VERSION = "0.7.0"
 
 # 甩得太狠时说的预制台词（固定文本，不调模型；语音会缓存 wav 复用）
 SWAY_DIZZY_LINE = "头好晕，不要晃了喵"
@@ -916,7 +916,6 @@ def check_latest_release(timeout=15):
         zips = [a for a in (data.get("assets") or [])
                 if (a.get("name") or "").lower().endswith(".zip")]
         url = ""
-        # 优先选名字里带 update 的小包（不含音色大模型/用户数据）；否则取第一个 zip
         for a in zips:
             if "update" in (a.get("name") or "").lower():
                 url = a.get("browser_download_url") or ""
@@ -925,7 +924,22 @@ def check_latest_release(timeout=15):
             url = zips[0].get("browser_download_url") or ""
         return (_ver_tuple(tag) > _ver_tuple(APP_VERSION), tag.lstrip("vV"), url, notes)
     except Exception:
-        return (False, "", "", "")
+        pass
+    # 2) 备用源：镜像读 version.json（{"version","asset","notes"}）
+    for m in UPDATE_MIRRORS:
+        try:
+            req = urllib.request.Request(m + VERSION_JSON_URL, headers={"User-Agent": "ShizukaDeskPet"})
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                d = json.loads(r.read().decode("utf-8", "ignore"))
+            ver = (d.get("version") or "").strip().lstrip("vV")
+            asset = (d.get("asset") or "").strip()
+            if not ver or not asset:
+                continue
+            url = "%shttps://github.com/%s/releases/download/v%s/%s" % (m, UPDATE_REPO, ver, asset)
+            return (_ver_tuple(ver) > _ver_tuple(APP_VERSION), ver, url, (d.get("notes") or "").strip())
+        except Exception:
+            continue
+    return (False, "", "", "")
 
 
 def read_announcement(ver):
@@ -1593,6 +1607,9 @@ USAGE_REPORT_MIN = 20          # 累计使用满这么多分钟才可能触发�
 # ---------------- 自动检查更新 ----------------
 UPDATE_REPO = "lxz61352-cmyk/shizuka-desktop-pet"   # GitHub 仓库（owner/repo）
 UPDATE_API = "https://api.github.com/repos/%s/releases/latest" % UPDATE_REPO
+# 直连被墙时的备用源（国内可通的 GitHub 镜像；用于读 version.json 和下载更新包）
+UPDATE_MIRRORS = ["https://ghfast.top/", "https://ghproxy.net/"]
+VERSION_JSON_URL = "https://raw.githubusercontent.com/%s/main/version.json" % UPDATE_REPO
 PENDING_UPDATE_FILE = os.path.join(DATA_DIR, "_pending_update.json")   # 更新重启后要展示的更新日志
 ANNOUNCE_FILE = os.path.join(ROOT_DIR, "更新公告.md")                    # 更新公告（按 ## vX.Y.Z 分节）
 
@@ -2479,6 +2496,11 @@ class DeskPet:
         self._update_info = None                    # (has_update, version, url, notes)
         self._update_mark = None
         self._update_disabled = bool(self._settings.get("update_disabled", False))
+        self._update_downloading = False            # 正在下载更新
+        self._update_notified = False               # 本会话是否已主动提示过更新
+        self._update_prog_win = None
+        self._update_prog_bar = None
+        self._update_prog_lbl = None
         self._last_clip = ""
         self._clip_after = None
         self._reminder_after = None
@@ -5375,6 +5397,13 @@ class DeskPet:
     def _apply_update_info(self, info):
         self._update_info = info
         self._refresh_update_mark()
+        # 检测到更新：让静香主动说一句（每个会话只说一次）
+        try:
+            if info and info[0] and not getattr(self, "_update_notified", False):
+                self._update_notified = True
+                self.say("检测到新版本 v%s，去齿轮菜单里更新一下吧～" % info[1])
+        except Exception:
+            pass
 
     def _refresh_update_mark(self):
         m = getattr(self, "_update_mark", None)
@@ -5382,7 +5411,9 @@ class DeskPet:
             return
         info = self._update_info
         try:
-            if getattr(self, "_update_disabled", False):
+            if getattr(self, "_update_downloading", False):
+                m.config(text="下载中…", fg="#4a6fa5")
+            elif getattr(self, "_update_disabled", False):
                 m.config(text="已禁用更新", fg="#8a8a8a")
             elif info and info[0]:
                 m.config(text="·有更新·", fg="#c0392b")
@@ -5392,6 +5423,9 @@ class DeskPet:
             pass
 
     def _on_update_click(self):
+        if getattr(self, "_update_downloading", False):
+            self.say("正在下载更新呢，稍等一下～")
+            return
         if getattr(self, "_update_disabled", False):
             self.say("更新检查已经关掉啦，想重新打开的话在「检查更新」上右键。")
             return
@@ -5478,8 +5512,66 @@ class DeskPet:
         if not url:
             self.say("这个版本没有可下载的压缩包，去仓库手动下载一下吧。")
             return
+        self._update_downloading = True
+        self._refresh_update_mark()
         self.say("好，我这就去下载新版本，下载好会自动重启～")
         threading.Thread(target=self._download_and_update, args=(url, ver, notes), daemon=True).start()
+
+    def _show_update_progress(self, ver):
+        """下载进度窗口（无按钮，下载中不允许再点更新）。"""
+        try:
+            if self._update_prog_win is not None:
+                return
+            win = tk.Toplevel(self.root)
+            win.title("正在下载更新")
+            win.attributes("-topmost", True)
+            win.configure(bg="#2b2b3a")
+            win.resizable(False, False)
+            tk.Label(win, text=("正在下载 v%s …" % ver) if ver else "正在下载更新…",
+                     bg="#2b2b3a", fg="#e8e8f0",
+                     font=("Microsoft YaHei", 11, "bold")).pack(padx=24, pady=(18, 8))
+            bar = ttk.Progressbar(win, orient="horizontal", length=320,
+                                  mode="determinate", maximum=100)
+            bar.pack(padx=24, pady=6)
+            lbl = tk.Label(win, text="0%", bg="#2b2b3a", fg="#9a9ab0")
+            lbl.pack(pady=(0, 16))
+            self._update_prog_win = win
+            self._update_prog_bar = bar
+            self._update_prog_lbl = lbl
+            win.update_idletasks()
+            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
+            win.geometry("+%d+%d" % ((sw - win.winfo_width()) // 2,
+                                     (sh - win.winfo_height()) // 2))
+        except Exception:
+            pass
+
+    def _update_progress(self, done, total, extracting=False):
+        try:
+            if self._update_prog_bar is None:
+                return
+            if extracting:
+                self._update_prog_bar["value"] = 100
+                self._update_prog_lbl.config(text="正在安装…")
+                return
+            if total > 0:
+                pct = min(100, int(done * 100 / total))
+                self._update_prog_bar["value"] = pct
+                self._update_prog_lbl.config(text="%d%%  （%.1f / %.1f MB）" % (pct, done / 1e6, total / 1e6))
+            else:
+                self._update_prog_lbl.config(text="%.1f MB" % (done / 1e6))
+        except Exception:
+            pass
+
+    def _close_update_progress(self):
+        w = getattr(self, "_update_prog_win", None)
+        self._update_prog_win = None
+        self._update_prog_bar = None
+        self._update_prog_lbl = None
+        if w is not None:
+            try:
+                w.destroy()
+            except Exception:
+                pass
 
     def _download_and_update(self, url, ver="", notes=""):
         import tempfile
@@ -5488,11 +5580,41 @@ class DeskPet:
         import urllib.request as _url
         import subprocess as _sp
         try:
+            self._ui(lambda: self._show_update_progress(ver))
             tmp = tempfile.mkdtemp(prefix="shizuka_upd_")
             zpath = os.path.join(tmp, "update.zip")
-            req = _url.Request(url, headers={"User-Agent": "ShizukaDeskPet"})
-            with _url.urlopen(req, timeout=180) as r, open(zpath, "wb") as f:
-                _sh.copyfileobj(r, f)
+            # 直连多试几次（连上很快），连不上再退备用镜像
+            if "github.com/" in url:
+                urls = [url, url, url] + [m + url for m in UPDATE_MIRRORS]
+            else:
+                urls = [url] + [m + url for m in UPDATE_MIRRORS]
+            ok = False
+            last_err = None
+            for u in urls:
+                try:
+                    req = _url.Request(u, headers={"User-Agent": "ShizukaDeskPet"})
+                    with _url.urlopen(req, timeout=20) as r:
+                        try:
+                            total = int(r.headers.get("Content-Length") or 0)
+                        except Exception:
+                            total = 0
+                        done = 0
+                        with open(zpath, "wb") as f:
+                            while True:
+                                chunk = r.read(65536)
+                                if not chunk:
+                                    break
+                                f.write(chunk)
+                                done += len(chunk)
+                                self._ui(lambda d=done, t=total: self._update_progress(d, t))
+                    ok = True
+                    break
+                except Exception as e:
+                    last_err = e
+                    continue
+            if not ok:
+                raise last_err or RuntimeError("下载失败")
+            self._ui(lambda: self._update_progress(1, 1, extracting=True))
             with _zip.ZipFile(zpath) as z:
                 z.extractall(tmp)
             src = None
@@ -5524,6 +5646,9 @@ class DeskPet:
             time.sleep(0.5)
             self._ui(self.quit)
         except Exception:
+            self._update_downloading = False
+            self._ui(self._close_update_progress)
+            self._ui(self._refresh_update_mark)
             self._ui(lambda: self.say("更新失败了呢……可以到仓库手动下载新版本。"))
 
     def _show_update_done(self):
@@ -6771,7 +6896,7 @@ class DeskPet:
         """淡入唱片并开始旋转。"""
         self._vinyl_destroy()
         btn = getattr(self, "_btn_size", GEAR_SIZE)
-        self._vinyl_size = max(40, min(110, int(btn * VINYL_SIZE_RATIO)))
+        self._vinyl_size = max(16, min(110, int(btn * VINYL_SIZE_RATIO)))
         self._vinyl_ensure_base()
         win = tk.Toplevel(self.root)
         win.overrideredirect(True)
@@ -6953,7 +7078,7 @@ class DeskPet:
             return
         try:
             btn = getattr(self, "_btn_size", GEAR_SIZE)
-            size = max(40, min(110, int(btn * VINYL_SIZE_RATIO)))
+            size = max(16, min(110, int(btn * VINYL_SIZE_RATIO)))
             if size != getattr(self, "_vinyl_size", 0):
                 self._vinyl_size = size
                 self._vinyl_base = None
