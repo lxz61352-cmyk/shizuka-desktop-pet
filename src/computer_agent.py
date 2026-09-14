@@ -122,6 +122,15 @@ class DshInstallation:
         return [self.node, self.cli, "--profile", "headless", "--patch", str(overlay), task]
 
 
+def dsh_available(config):
+    """本机是否装好了 dsh（含 Node.js）。不抛异常，供降级判断用。"""
+    try:
+        DshInstallation.discover(config)
+        return True
+    except Exception:
+        return False
+
+
 class ProcessTree:
     """Own only the spawned task tree; cancellation never kills other dsh chats."""
     def __init__(self, process):

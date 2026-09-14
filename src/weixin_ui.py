@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import messagebox
 from tkinter.scrolledtext import ScrolledText
 from PIL import Image, ImageTk
-from computer_agent import load_config
+from computer_agent import dsh_available, load_config
 from computer_ui import computer_command
 from weixin_channel import BASE_URL, ILinkClient, ProtectedStore, WeixinChannel, session_from_login, trusted_base, IMAGE_BLOCK_MARK
 
@@ -89,6 +89,9 @@ class WeixinMixin:
             config = load_config(self._computer_data_dir())
             if not config.get("enabled", True):
                 return "电脑助手已关闭，请先在电脑端开启。"
+            if not dsh_available(config):
+                # 本机没装 dsh / Node.js：微信远程仍可用，但只有聊天，不做文件任务
+                return "这台电脑还没装好文件任务要用的 dsh（Node.js 组件），现在只能陪你聊天哦。"
             result = self._computer_agent.run(task, config, cancel=cancel,
                 progress=lambda state: progress({"status": "正在处理文件 · %s 秒" % state["elapsed"]}))
             progress({"directory": result.get("directory", "")})
@@ -282,6 +285,13 @@ class WeixinMixin:
         remote = tk.BooleanVar(value=bool(self._weixin_store.data.get("allow_computer")))
         tk.Checkbutton(top, text="允许绑定的微信账号执行文件任务（使用电脑助手的工作文件夹）", variable=remote,
             command=lambda: self._weixin_store.update(allow_computer=remote.get())).pack(anchor="w", pady=(12, 4))
+        try:
+            _dsh_ok = dsh_available(load_config(self._computer_data_dir()))
+        except Exception:
+            _dsh_ok = False
+        if not _dsh_ok:
+            tk.Label(top, text="本机未检测到 dsh（Node.js 组件），微信远程目前只能聊天，文件任务不可用。",
+                     fg="#b04a4a", anchor="w", wraplength=610).pack(anchor="w")
         wrap = tk.BooleanVar(value=bool(self._weixin_store.data.get("persona_wrap", True)))
         tk.Checkbutton(top, text="文件任务结果用静香语气包装（不改动结果内容）", variable=wrap,
             command=lambda: self._weixin_store.update(persona_wrap=wrap.get())).pack(anchor="w")

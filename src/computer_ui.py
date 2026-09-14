@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 from PIL import Image, ImageTk
-from computer_agent import ComputerAgent, DshInstallation, load_config, save_config
+from computer_agent import ComputerAgent, DshInstallation, dsh_available, load_config, save_config
 
 # 文件任务耗时较长：先以静香口吻应一声，完成后按人设汇报（纯话术，不改任务事实）
 COMPUTER_START_LINES = (
@@ -71,6 +71,11 @@ class ComputerAssistantMixin:
         if not config.get("enabled", True):
             self._close_think_bubble()
             self.say("电脑助手已关闭，可以从菜单里的“电脑助手”开启。")
+            return
+        if not dsh_available(config):
+            # 本机没装 dsh / Node.js：文件任务不可用，但不影响聊天
+            self._close_think_bubble()
+            self.say("这台电脑还没装好文件任务要用的 dsh（Node.js 组件），先只能陪你聊天哦。")
             return
         token = threading.Event()
         self._cancel_computer_task()
