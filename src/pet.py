@@ -27,7 +27,7 @@ from pet_surfaces import window_surfaces,choose_support,exposed_support
 from computer_ui import ComputerAssistantMixin, computer_command
 from weixin_ui import WeixinMixin
 
-APP_VERSION = "0.7.3"
+APP_VERSION = "0.7.4"
 
 # 甩得太狠时说的预制台词（固定文本，不调模型；语音会缓存 wav 复用）
 SWAY_DIZZY_LINE = "头好晕，不要晃了喵"
@@ -310,7 +310,7 @@ PROVIDER_PRESETS = [
     {"name": "DeepSeek", "base": "https://api.deepseek.com",
      "model": "deepseek-chat", "hints": ["sk-"]},
     {"name": "月之暗面 Kimi", "base": "https://api.moonshot.cn/v1",
-     "model": "moonshot-v1-8k", "hints": ["sk-"]},
+     "model": "kimi-k2.6", "hints": ["sk-"]},
     {"name": "智谱 GLM", "base": "https://open.bigmodel.cn/api/paas/v4",
      "model": "glm-4-flash", "hints": ["."]},
     {"name": "通义千问", "base": "https://dashscope.aliyuncs.com/compatible-mode/v1",
@@ -379,11 +379,11 @@ def load_persona():
                 ex_clean = ex.replace("<START>", "").replace("{{char}}", data.get("name") or "静香").replace("{{user}}", "用户")
                 parts.append("参考这些对话习惯说话：\n" + ex_clean)
             if parts:
-                return "\n\n".join(parts)
+                return "\n\n".join(parts) + BREVITY_RULE + REPEAT_RULE + TONE_RULE
         except Exception:
             pass
     # 2) 最终回退：内置默认人设
-    return DEFAULT_PERSONA
+    return DEFAULT_PERSONA + BREVITY_RULE + REPEAT_RULE + TONE_RULE
 
 _client = None
 _client_lock = threading.Lock()
@@ -413,16 +413,38 @@ def _disable_thinking(cli):
 # 贴在历史之后、用户这句之前：提醒接着聊、换个新鲜说法
 STYLE_REMINDER = "（上面这些只是刚才聊过的内容，接着往下聊，说点新鲜的。）"
 
+# 回复长度：默认短。闲聊/评论类一两句就够，别条条长篇大论。
+BREVITY_RULE = (
+    "\n\n【回复长度】默认只回一到两句话，尽量不超过 50 字，能一句说清就别展开。"
+    "不要罗列、不要补充背景、不要堆反问、不要总结。"
+    "只有用户明确要你详细讲、或事情本身确实需要步骤时才多说。"
+)
+
+# 别预设用户「又在/老是」做某事——第一次或不常做的事被说成"又"，会让人以为被盯着。
+REPEAT_RULE = (
+    "\n\n【别默认重复】不要预设用户「又在/还在/总是/老是/果然」做某事。"
+    "除非前面的对话里确实反复出现过，否则别用「又、还、总、老、果然」这类表示「经常/重复」的词，"
+    "就当他第一次做，平实地说。"
+)
+
+# 别用「X啊……」「X呢……」这种拖长音的公式化开头，也别句句带语气词收尾。
+TONE_RULE = (
+    "\n\n【别用公式化语气】不要用「X啊……」「X呢……」「好家伙」这类拖长音的开头，"
+    "也不要句句都以「啊/呀/呢/哦/啦」收尾。语气词能省就省，平实地把话说完，"
+    "偶尔一句带点语气就够了，别每句都一样。"
+)
+
 # 模型（deepseek-flash）很爱用「哦，……啊」「呵呵，……」这类语气词起手，光靠提示词压不住，
 # 这里做一层确定性的兜底：只去掉开头的语气词起手，顺带去掉紧随其后的短句尾语气词。
 _ACK_LEAD_RE = re.compile(
     r"^\s*(?:哦|噢|喔|嗯|呃|诶|欸|唉|哎|呵呵|哦哦|嗯嗯)"
     r"(?![呀哟呦豁哈嘿哼嘛])\s*[，,、：:]?\s*")
-# 「又在……」是模型观察前台程序时最爱用的公式化开头，一并去掉
-_FORMULA_LEAD_RE = re.compile(r"^\s*又在\s*")
+# 「又在/还在……」是模型观察前台程序时最爱用的公式化开头（还常预设用户老在做某事），一并去掉
+_FORMULA_LEAD_RE = re.compile(r"^\s*(?:你)?\s*(?:又|还)在\s*")
 # 开头「（叹气）」「（笑）」这类括号动作/旁白，一并去掉（只删开头连续的一到多个）
 _LEAD_PAREN_RE = re.compile(r"^(?:\s*[（(][^（）()\n]{1,20}[）)])+\s*")
-_FIRST_TAIL_PARTICLE_RE = re.compile(r"^([^。！？!?\n]{0,14}?)([啊呀哦噢])([。！？!?])")
+# 开头第一小句里的「啊/呀/哦/噢」拖长音收尾（如「音游区啊……」「在刷视频啊，」），一并去掉
+_FIRST_TAIL_PARTICLE_RE = re.compile(r"^(.{1,30}?)([啊呀哦噢])(?=[。！？!?…，,、；;\n])")
 
 
 def clean_reply_style(text):
@@ -431,15 +453,155 @@ def clean_reply_style(text):
     if not text:
         return text
     out = _LEAD_PAREN_RE.sub("", text, count=1)   # 开头的「（叹气）」这类舞台提示
-    before = out
     out = _ACK_LEAD_RE.sub("", out, count=1)
-    if out == before:
-        out = _FORMULA_LEAD_RE.sub("", before, count=1)
-    if out != before:
-        m = _FIRST_TAIL_PARTICLE_RE.match(out)
-        if m:
-            out = m.group(1) + m.group(3) + out[m.end():]
+    out = _FORMULA_LEAD_RE.sub("", out, count=1)   # 起手语气词后紧跟的「(你)又在/还在」也去掉
+    m = _FIRST_TAIL_PARTICLE_RE.match(out)         # 第一小句结尾的拖长音语气词（啊/呀/哦/噢）
+    if m:
+        out = m.group(1) + out[m.end():]
     return out.lstrip()
+
+
+def _tts_split(text, min_len=10, max_len=45):
+    """把一段文字切成适合合成/逐句显示的片段：按句末标点切，过短的往后并，
+    过长的再按逗号或字数切开。避免整段长文挤进一个气泡显示不下。"""
+    text = (text or "").strip()
+    if not text:
+        return []
+    parts = [p for p in re.split(r"(?<=[。！？!?…\n])", text) if p.strip()]
+    merged = []
+    for p in parts:
+        if merged and len(merged[-1].strip()) < min_len:
+            merged[-1] += p
+        else:
+            merged.append(p)
+    out = []
+    for seg in merged:
+        seg = seg.strip()
+        while len(seg) > max_len:
+            cut = -1
+            for ch in "，,、；;":
+                cut = max(cut, seg.rfind(ch, 0, max_len))
+            if cut < min_len:
+                cut = max_len - 1
+            out.append(seg[:cut + 1].strip())
+            seg = seg[cut + 1:].strip()
+        if seg:
+            out.append(seg)
+    return [s for s in out if s]
+
+
+class _FakeMsg:
+    def __init__(self, content):
+        self.content = content
+
+
+class _FakeChoice:
+    def __init__(self, content):
+        self.message = _FakeMsg(content)
+        self.delta = _FakeMsg(content)
+
+
+class _FakeChatResponse:
+    """把 Responses API 的结果包装成 chat.completions 的返回形状，
+    这样所有既有调用（含 stream=True 的 for chunk / with ... as）都能直接复用。"""
+    def __init__(self, text):
+        self._text = text or ""
+        self.choices = [_FakeChoice(self._text)]
+
+    def __iter__(self):
+        if self._text:
+            yield self   # 流式调用方：一次给全文，由既有打字/朗读逻辑显示
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _responses_via_chat(cli, kw):
+    """api_mode=responses：把 chat 调用改走 responses.create（联网模型），
+    并带上「联网搜索」工具；不支持工具/温度的接口逐级降级，保证仍能回话。"""
+    messages = kw.get("messages") or []
+    rkw = {"model": kw.get("model") or api_model(), "input": messages}
+    if kw.get("max_tokens") is not None:
+        rkw["max_output_tokens"] = kw["max_tokens"]
+    if kw.get("temperature") is not None:
+        rkw["temperature"] = kw["temperature"]
+    no_temp = {k: v for k, v in rkw.items() if k != "temperature"}
+    variants = [
+        dict(rkw, tools=[{"type": "web_search_preview"}]),   # ① 带联网搜索
+        dict(rkw),                                           # ② 不带工具
+        no_temp,                                             # ③ 再去掉温度
+    ]
+    last = None
+    for v in variants:
+        try:
+            resp = cli.responses.create(**v)
+            text = (getattr(resp, "output_text", "") or "").strip()
+            if text:
+                return _FakeChatResponse(text)
+            last = RuntimeError("responses 返回空内容")   # 空回复当作失败 → 让上层退回 chat
+        except Exception as exc:
+            last = exc
+    raise last
+
+
+# 各模型对参数的兼容情况（按「接口地址+模型名」记）：{"max_key": ..., "temp": bool}
+# 第一次调用踩坑后自动修正并记住，之后直接用对的参数，不再每次失败重试。
+_MODEL_CAPS = {}
+# 不支持 Responses 接口的（接口地址+模型）——记住后不再每次都先试一遍
+_RESPONSES_UNSUPPORTED = set()
+
+
+def _wrap_client(cli):
+    """统一适配所有 chat.completions.create 调用：
+    - api_mode=responses → 优先走 Responses API（联网模型）；该接口不支持就自动退回普通 chat；
+    - chat 模式下按模型能力发参数：不接受 temperature 就去掉；max_tokens 不被支持
+      就改用 max_completion_tokens（o 系 / gpt-5 等）。首次自动探测并记住。"""
+    comp = cli.chat.completions
+    orig = comp.create
+
+    def build(kw, caps):
+        k = dict(kw)
+        if "max_tokens" in k:
+            k[caps["max_key"]] = k.pop("max_tokens")
+        if not caps["temp"]:
+            k.pop("temperature", None)
+        return k
+
+    def chat_call(a, kw):
+        model = kw.get("model") or api_model()
+        caps = _MODEL_CAPS.setdefault((api_base(), model), {"max_key": "max_tokens", "temp": True})
+        for _ in range(3):   # 最多修正两次（温度、max_tokens 各一次）
+            try:
+                return orig(*a, **build(kw, caps))
+            except Exception as exc:
+                msg = str(exc).lower()
+                changed = False
+                if "temperature" in msg and caps["temp"]:
+                    caps["temp"] = False          # 该模型不接受自定义温度
+                    changed = True
+                if ("max_tokens" in msg or "max_completion_tokens" in msg) and caps["max_key"] != "max_completion_tokens":
+                    caps["max_key"] = "max_completion_tokens"
+                    changed = True
+                if not changed:
+                    raise
+        return orig(*a, **build(kw, caps))
+
+    def create(*a, **kw):
+        key = (api_base(), kw.get("model") or api_model())
+        if api_mode() == "responses" and key not in _RESPONSES_UNSUPPORTED:
+            try:
+                return _responses_via_chat(cli, kw)
+            except Exception:
+                _RESPONSES_UNSUPPORTED.add(key)   # 该接口不支持联网/Responses → 之后直接走 chat
+                _err_log("responses_fallback")
+                return chat_call(a, kw)
+        return chat_call(a, kw)
+
+    comp.create = create
+    return cli
 
 
 def get_client():
@@ -449,7 +611,7 @@ def get_client():
             if _client is None:
                 import openai
                 key = read_api_key() or "sk-dummy"
-                _client = _disable_thinking(openai.OpenAI(api_key=key, base_url=api_base()))
+                _client = _wrap_client(_disable_thinking(openai.OpenAI(api_key=key, base_url=api_base())))
     return _client
 
 
@@ -618,6 +780,7 @@ def load_settings():
     defaults = {"sound_mode": "todo", "clipboard": True, "translate": True, "greeting": True, "summary": True,
                 "voice": False, "scale": None, "pos": None, "speed": "medium", "history": 3,
                 "api_base": DEFAULT_API_BASE, "api_model": DEFAULT_API_MODEL, "provider": "",
+                "api_mode": "chat",   # chat=对话模型（Chat Completions）/ responses=联网模型（Responses API）
                 "tts_release": "1"}
     if os.path.exists(SETTINGS_FILE):
         try:
@@ -630,7 +793,7 @@ def load_settings():
                 defaults["sound_mode"] = data["sound_mode"]
             elif "sound" in data:   # 兼容旧版布尔开关
                 defaults["sound_mode"] = "todo" if bool(data["sound"]) else "none"
-            for k in ("scale", "pos", "speed", "api_base", "api_model", "provider", "tts_release", "character_pack"):
+            for k in ("scale", "pos", "speed", "api_base", "api_model", "provider", "api_mode", "tts_release", "character_pack"):
                 if k in data:
                     defaults[k] = data[k]
             if "history" in data:
@@ -643,17 +806,22 @@ def load_settings():
     return defaults
 
 
-_api_cfg = {"base": DEFAULT_API_BASE, "model": DEFAULT_API_MODEL}
+_api_cfg = {"base": DEFAULT_API_BASE, "model": DEFAULT_API_MODEL, "mode": "chat"}
 
 
 def _valid_base_url(url, fallback):
     """只接受 http(s) 接口地址；settings.json 被篡改成别的 scheme 时回退默认，
-    避免把 API Key 发到任意地址。"""
+    避免把 API Key 发到任意地址。另外把误填的完整端点裁回 base（SDK 会自己补
+    /chat/completions），比如 .../v4/chat/completion → .../v4。"""
     u = (url or "").strip().rstrip("/")
     low = u.lower()
-    if low.startswith("http://") or low.startswith("https://"):
-        return u
-    return fallback
+    if not (low.startswith("http://") or low.startswith("https://")):
+        return fallback
+    for suffix in ("/chat/completions", "/chat/completion", "/completions"):
+        if low.endswith(suffix):
+            u = u[: -len(suffix)].rstrip("/")
+            break
+    return u
 
 
 def refresh_api_cfg():
@@ -661,6 +829,8 @@ def refresh_api_cfg():
     s = load_settings()
     _api_cfg["base"] = _valid_base_url(s.get("api_base"), DEFAULT_API_BASE)
     _api_cfg["model"] = (s.get("api_model") or DEFAULT_API_MODEL).strip()
+    mode = (s.get("api_mode") or "chat").strip().lower()
+    _api_cfg["mode"] = "responses" if mode == "responses" else "chat"
 
 
 def api_base():
@@ -671,8 +841,19 @@ def api_model():
     return _api_cfg["model"]
 
 
+def api_mode():
+    """'chat' = 对话模型（Chat Completions）；'responses' = 联网模型（Responses API）。"""
+    return _api_cfg.get("mode", "chat")
+
+
+_DETECT_LAST_ERROR = ""
+
+
 def detect_provider(key, timeout=8, base_url=None, model=None, name=None):
     """只验证当前选定的接口，绝不向其他服务商发送同一枚 Key。"""
+    global _DETECT_LAST_ERROR, _DETECT_NOTE
+    _DETECT_LAST_ERROR = ""
+    _DETECT_NOTE = ""
     import openai
     key = (key or "").strip()
     if not key:
@@ -680,13 +861,32 @@ def detect_provider(key, timeout=8, base_url=None, model=None, name=None):
 
     base = (base_url or api_base()).rstrip("/")
     selected_model = model or api_model()
-    selected_name = name or next(
+    selected_name = next(
         (p["name"] for p in PROVIDER_PRESETS if p["base"].rstrip("/") == base), "自定义")
+
+    def _chat_ping(cli):
+        try:
+            cli.chat.completions.create(model=selected_model,
+                messages=[{"role": "user", "content": "ping"}], max_tokens=16)
+        except Exception:
+            cli.chat.completions.create(model=selected_model,
+                messages=[{"role": "user", "content": "ping"}], max_completion_tokens=16)
+
     try:
+        # 直接发一次最小请求验证「这个模型能不能真的回话」，比只列模型更准
         with openai.OpenAI(api_key=key, base_url=base, timeout=timeout, max_retries=0) as cli:
-            cli.models.list()
+            if api_mode() == "responses":
+                try:
+                    cli.responses.create(model=selected_model, input="ping", max_output_tokens=16)
+                except Exception:
+                    # 该服务商没有联网/Responses 接口 → 用 chat 验证（运行时也会自动退回 chat）
+                    _chat_ping(cli)
+                    _DETECT_NOTE = "（该服务商不支持联网接口，将按普通对话工作）"
+            else:
+                _chat_ping(cli)
         return (selected_name, base, selected_model)
-    except Exception:
+    except Exception as exc:
+        _DETECT_LAST_ERROR = str(exc)[:220]
         return None
 
 
@@ -993,6 +1193,7 @@ MEMORY_TTL_DAYS = 25          # 记忆超过该天数未引用则进入淘汰
 MEMORY_CLEAN_PROB = 0.30      # 超期后每次启动以该概率清除
 MEMORY_INJECT_MAX = 15        # 每次对话注入的非永久记忆上限
 MEMORY_HARD_CAP = 80          # 非永久记忆硬上限
+MEMORY_FRESH_SECS = 300       # 新记忆"新鲜期"：期内无条件注入（保证刚说完的话下一轮就记得）
 CHATLOG_DIR = os.path.join(CHARACTER_DATA_DIR, "对话记录")
 CHATLOG_FILE = os.path.join(CHATLOG_DIR, "对话记录.json")   # 「查看对话」持久化
 CHATLOG_INITIAL = 50          # 对话记录窗口初始显示的条数
@@ -1002,6 +1203,8 @@ STREAM_TICK_MS = 40           # 流式显示刷新间隔（毫秒）
 SPEED_CPS = {"fast": 30, "medium": 20, "slow": 10}   # 显示速度：快 / 中等 / 慢
 TTS_SENTENCE_GAP_MS = 220     # 语音分段之间保留的句末停顿（毫秒），避免听起来太赶
 TTS_TEXT_SPEEDUP = 1.12       # 有语音时文字比朗读稍快一点（倍数），避免字比声慢半拍
+SAY_MAX_TOKENS = 400          # 被动短评/问候/识图等回复的 token 上限（过小会被 finish_reason=length 截断）
+CHAT_MAX_TOKENS = 500         # 主聊天回复的 token 上限
 
 # 触发永久记忆的关键词
 PIN_KEYWORDS = ["记住", "记得", "不要忘了", "别忘了", "永记", "永远记住", "别忘"]
@@ -1175,6 +1378,7 @@ class MemoryStore:
             it.setdefault("use_count", 0)
             it.setdefault("created", now)
             it.setdefault("last_used", now)
+            it.setdefault("fresh_until", 0)
             it.setdefault("content", "")
         # 永久记忆在前，其余按 last_used 降序
         self.items.sort(key=lambda x: (not x["pinned"], -x["last_used"]))
@@ -1203,26 +1407,39 @@ class MemoryStore:
                     return it
         return None
 
-    def add(self, content, pinned=False):
+    def add(self, content, pinned=False, fresh=False):
         content = content.strip()
         with self._lock:
-            if not content or self.exists_content(content):
+            if not content:
                 return False
+            now = time.time()
+            # 完全相同：不重复记，但刷新"最近使用"；fresh 时刷新新鲜期（重说一遍=又相关了）
+            for it in self.items:
+                if it["content"].strip() == content:
+                    if pinned and not it.get("pinned"):
+                        it["pinned"] = True
+                    it["last_used"] = now
+                    if fresh:
+                        it["fresh_until"] = now + MEMORY_FRESH_SECS
+                    self.normalize()
+                    return False
             # 保守去重：与已有记忆字面太像就不重复记（若是永久则把旧的升级为永久）
             dup = self.find_similar(content)
             if dup is not None:
                 if pinned and not dup.get("pinned"):
                     dup["pinned"] = True
-                dup["last_used"] = time.time()
+                dup["last_used"] = now
+                if fresh:
+                    dup["fresh_until"] = now + MEMORY_FRESH_SECS
                 self.normalize()
                 return False
-            now = time.time()
             self.items.append({
                 "id": "m" + uuid.uuid4().hex[:12],
                 "content": content,
                 "pinned": pinned,
                 "created": now,
                 "last_used": now,
+                "fresh_until": now + MEMORY_FRESH_SECS if fresh else 0,
                 "use_count": 0,
             })
             self.normalize()
@@ -1273,28 +1490,39 @@ class MemoryStore:
                     it["use_count"] += 1
 
     def injectable(self, query=""):
-        """返回注入用记忆：优先用本地语义 embedding 排序（服务不可用则回退字面重合），
-        永久记忆略有加权；总量上限 MEMORY_INJECT_MAX。"""
+        """返回注入用记忆：处于"新鲜期"的记忆无条件置顶（保证刚说完的话下一轮就在上下文里），
+        其余优先用本地语义 embedding 排序（服务不可用则回退字面重合），永久记忆略有加权；
+        总量上限 MEMORY_INJECT_MAX。"""
+        now = time.time()
         with self._lock:
             items = list(self.items)
+        if not items:
+            return []
+        fresh = [it for it in items if it.get("fresh_until", 0) > now]
+        fresh.sort(key=lambda it: -it.get("fresh_until", 0))
+        fresh = fresh[:MEMORY_INJECT_MAX]
+        rest = [it for it in items if it.get("fresh_until", 0) <= now]
+        room = MEMORY_INJECT_MAX - len(fresh)
+        if room <= 0:
+            return fresh
         if not query:
-            items.sort(key=lambda it: (not it["pinned"], -it.get("last_used", 0)))
-            return items[:MEMORY_INJECT_MAX]
+            rest.sort(key=lambda it: (not it["pinned"], -it.get("last_used", 0)))
+            return fresh + rest[:room]
 
         # 1) 语义检索（query 不缓存，避免缓存无限增长）
         qv_list = _embed_texts([query], cache=False)
-        mvecs = _embed_texts([it.get("content", "") for it in items])
+        mvecs = _embed_texts([it.get("content", "") for it in rest])
         if qv_list and mvecs:
             qv = qv_list[0]
 
             def key_sem(i):
-                it = items[i]
+                it = rest[i]
                 s = _cos(qv, mvecs[i])
                 if it.get("pinned"):
                     s += 0.05
                 return (-s, -it.get("last_used", 0))
-            order = sorted(range(len(items)), key=key_sem)
-            return [items[i] for i in order[:MEMORY_INJECT_MAX]]
+            order = sorted(range(len(rest)), key=key_sem)
+            return fresh + [rest[i] for i in order[:room]]
 
         # 2) 回退：字面重合
         def key(it):
@@ -1302,8 +1530,8 @@ class MemoryStore:
             if it.get("pinned"):
                 s += 0.5   # 永久记忆轻微加权
             return (-s, -it.get("last_used", 0))
-        items.sort(key=key)
-        return items[:MEMORY_INJECT_MAX]
+        rest.sort(key=key)
+        return fresh + rest[:room]
 
     def clean(self):
         """启动时清理：超期以概率清除 + 硬上限裁剪"""
@@ -2733,8 +2961,9 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
         self._usage_after = None
         self._usage_last_save = 0.0
         self._usage_away = False
-        self._usage_report_day = ""      # 日报：今天是哪天
-        self._usage_report_count = 0     # 日报：今天已经说了几次
+        _rep = self._usage.get("report") or {}
+        self._usage_report_day = str(_rep.get("day") or "")       # 日报：今天是哪天（持久化）
+        self._usage_report_count = int(_rep.get("count") or 0)    # 日报：今天已说几次（持久化，重启不清零）
         self._usage_report_at = 0.0      # 日报：今天这一次的随机触发时刻
         self._usage_away_min = int(self._settings.get("usage_away_min") or USAGE_AWAY_MIN)
         self._usage_on = bool(self._settings.get("usage_track", True))
@@ -4000,7 +4229,8 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             self._dot_state = 0
             self._show_think_bubble()
             my_conv = self._conv_id
-            threading.Thread(target=self._parse_explicit_memory, args=(text, my_conv), daemon=True).start()
+            self._mem_thread = threading.Thread(target=self._parse_explicit_memory, args=(text, my_conv), daemon=True)
+            self._mem_thread.start()
             return
         my_conv = self._conv_id
         # 弹"加载中"气泡，后台让模型判断意图
@@ -4020,7 +4250,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
         prompt = (
             "现在的时间是 %s。请判断用户这句话属于以下哪一类，并只输出 JSON，不要多余文字。\n"
             "用户说：“%s”\n"
-            "输出格式：{\"action\": \"add_todo\" | \"add_recurring\" | \"query_todo\" | \"query_memory\" | \"delete_todo\" | \"complete_todo\" | \"weather\" | \"news\" | \"computer_task\" | \"chat\", "
+            "输出格式：{\"action\": \"add_todo\" | \"add_recurring\" | \"query_todo\" | \"delete_todo\" | \"complete_todo\" | \"weather\" | \"news\" | \"usage_report\" | \"computer_task\" | \"chat\", "
             "\"content\": \"要做的事\", \"when\": \"YYYY-MM-DD HH:MM:SS\" 或 null, "
             "\"on_boot\": true/false, \"time_specified\": true/false, \"content_clear\": true/false, "
             "\"freq\": \"daily\" | \"weekly\" | \"workday\" 或 null, \"weekday\": 0-6 或 null, \"time\": \"HH:MM\" 或 null}\n"
@@ -4038,7 +4268,8 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             "content_clear：用户明确说了**要做的事**（如“买牛奶”“给妈妈打电话”）为 true；"
             "只给了时间却没说要做什么（如“提醒我明天9点”“9点提醒我”）为 false、content 留空。\n"
             "- query_todo：用户在询问有哪些待办/提醒（如“最近有什么要提醒我的”“我有哪些待办”“有什么要我做的”）。\n"
-            "- query_memory：用户在询问你记住了什么、记过哪些事（如“你记得什么”“我让你记了什么”“你记住了哪些事”）。\n"
+            "- usage_report：用户要求查看今天在电脑上的使用时长 / 窗口使用统计"
+            "（如“看看我今天用了多久”“今天用了哪些软件”“窗口使用统计”“今天都在忙什么”“时长日报”）。\n"
             "- delete_todo：用户要求删除/取消某个待办（如“删掉买牛奶那个提醒”“取消开会的提醒”“把待办里的X删了”）。"
             "此时 content 填用户描述的那个待办（尽量保留原词）。\n"
             "- complete_todo：用户表示某个待办已经做完（如“买牛奶做完了”“开会那个我完成了”“提醒我的事办好了”）。"
@@ -4079,9 +4310,9 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             self._close_think_bubble()
             self._reply_todo_list()
             return
-        if action == "query_memory":
+        if action == "usage_report":
             self._close_think_bubble()
-            self._reply_memory_list()
+            self._report_usage_now()
             return
         if action == "delete_todo":
             self._close_think_bubble()
@@ -4135,7 +4366,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=1.0,
-                max_tokens=150,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
         except Exception:
@@ -4177,8 +4408,13 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
 
     # ---------- 显式记忆（"记住X"）：关键词触发 + 模型解析条目 + 回复确认 ----------
     def _parse_explicit_memory(self, text, my_conv):
-        content = self._extract_memory_content(text)
-        self._ui(lambda: self._finish_explicit_memory(content, my_conv))
+        content = (self._extract_memory_content(text) or "").strip()
+        added = False
+        if content:
+            mem = get_memory()
+            added = mem.add(content, pinned=True, fresh=True)
+            mem.save()
+        self._ui(lambda: self._finish_explicit_memory(content, my_conv, added))
 
     def _strip_pin_prefix(self, text):
         """本地回退：去掉最靠前的指令词，其余保持原文"""
@@ -4221,7 +4457,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             pass
         return self._strip_pin_prefix(text)
 
-    def _finish_explicit_memory(self, content, my_conv):
+    def _finish_explicit_memory(self, content, my_conv, added=False):
         if my_conv != self._conv_id:
             return
         self._close_think_bubble()
@@ -4229,9 +4465,6 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
         if not content:
             self.say("嗯？你想让我记住什么呢？")
             return
-        mem = get_memory()
-        added = mem.add(content, pinned=True)
-        mem.save()
         now = time.strftime("%m月%d日 %H:%M")
         if added:
             self.say("好，我记住了（%s）：%s" % (now, content))
@@ -4623,20 +4856,25 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             tag = "［永久］" if it["pinned"] else ""
             lines.append("| {id} | {content}{tag} |".format(
                 id=it["id"], content=it["content"], tag=tag))
-        return "以下是与用户相关的旧记忆，请在你的回答中自然利用，但不要突兀引用编号或'我记得以前'之外的多余说明：\n" + "\n".join(lines)
+        return ("以下是与用户相关的旧记忆。只在和当前话题**直接相关**时自然利用；"
+                "不确定是否相关就不要提起，也不要为了显得记得而硬扯。"
+                "不要引用编号，也不要说'根据我的记忆'这类多余说明：\n" + "\n".join(lines))
 
     def _extract_memories(self, user_text, reply):
         """由模型判断这轮对话是否含值得长期记住的用户信息，返回条目列表。"""
         prompt = (
-            "阅读下面这轮对话，提取【关于用户的、以后还用得上的信息】。\n"
-            "包括：身份、所在城市或时区、习惯、喜好与厌恶、长期目标、正在做的事或项目、"
-            "常用工具或软件、重要的人、纪念日、在意的点等。\n"
-            "只要有一点长期参考价值就记下来；一句话里有几条就拆成几条。\n"
-            "以下不要记：寒暄客套、一次性的任务指令、临时情绪、对助手的操作指令、"
-            "使用时长或前台窗口等使用统计、剪贴板里复制的内容、图片或截图里的内容。\n"
+            "阅读下面这轮对话，判断有没有【关于用户本人、长期稳定、以后还会用到】的信息需要记住。\n"
+            "只有这几类才值得记：身份或称呼、常住城市/时区、长期习惯、稳定的喜好与厌恶、"
+            "重要的人、长期目标或长期在做的项目、纪念日。\n"
+            "以下一律不要记：\n"
+            "- 这轮正在讨论或追问的具体问题、临时困惑、一次性的经历；\n"
+            "- 待办与任务细节、当下的情绪、对助手的操作指令；\n"
+            "- 使用时长/前台窗口等统计、剪贴板内容、图片或截图内容。\n"
+            "同一件事只记一条，禁止把一段话拆成好几条；不确定值不值得记就不记（宁缺毋滥）。\n"
+            "绝大多数对话应该是 0 条，确实有长期价值时最多 1~2 条。\n"
             "用户说：“%s”\n"
             "你回答：“%s”\n"
-            "只输出 JSON：{\"memories\": [\"条目1\", \"条目2\"]}；没有可记的就输出 {\"memories\": []}。"
+            "只输出 JSON：{\"memories\": [\"条目1\"]}；没有可记的就输出 {\"memories\": []}。"
             "每条为一句简洁陈述，保留用户原意与用词，不要编号、不要多余说明。"
         ) % (user_text, reply)
         try:
@@ -4669,7 +4907,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             return
         mem = get_memory()
         for m in self._extract_memories(user_text, reply):
-            mem.add(m, pinned=False)
+            mem.add(m, pinned=False, fresh=True)
 
     def _refresh_memories(self, reply):
         """根据回复内容，匹配被引用的记忆并刷新时间"""
@@ -4685,7 +4923,14 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
         if used:
             mem.mark_used(used)
 
+    def _wait_mem_pending(self, timeout=2.5):
+        """等上一轮的记忆提取写完，确保新记忆的"新鲜期"标记已生效，再注入本轮记忆。"""
+        t = getattr(self, "_mem_thread", None)
+        if t is not None and t.is_alive():
+            t.join(timeout)
+
     def _ask_model(self, text, my_conv=None):
+        self._wait_mem_pending()
         # 普通聊天回复也按提示音设置响一声（say() 那条路径本来就会响）
         if self._should_sound(False):
             self._ui(self.play_sound)
@@ -4713,7 +4958,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                 model=api_model(),
                 messages=messages,
                 temperature=0.8,
-                max_tokens=300,
+                max_tokens=CHAT_MAX_TOKENS,
                 stream=True,
             )
             last = 0.0
@@ -4741,9 +4986,13 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             if voice:
                 self._speak_stream(clean_reply_style(acc), spoken, final=True)   # 最后一段
         except Exception:
+            _err_log("ask_model")   # 详细原因写到 data/error.log，方便排查接口/模型问题
             reply = "（我一时没反应过来……稍后再试好吗？）"
         if my_conv is not None and my_conv != self._conv_id:
             return
+        if not reply:
+            _err_log("empty_reply")   # 服务商返回空（如 Responses 抽风）→ 别让气泡空着
+            reply = "（我一时没反应过来……稍后再试好吗？）"
         if voice:
             if not acc.strip():
                 self._tts_enqueue(reply)   # 出错兜底：把兜底文字也念出来
@@ -4751,7 +5000,8 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
         else:
             self._ui(lambda: self._stream_finish(reply, my_conv))
         # 记忆 + 历史 + 日志（后台，避免阻塞渲染）
-        threading.Thread(target=self._post_memory, args=(text, reply), daemon=True).start()
+        self._mem_thread = threading.Thread(target=self._post_memory, args=(text, reply), daemon=True)
+        self._mem_thread.start()
 
     def _stream_update(self, text, my_conv):
         if my_conv is not None and my_conv != self._conv_id:
@@ -4887,14 +5137,14 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                 paras = ["".join(sents[:half]).strip(), "".join(sents[half:]).strip()]
                 paras = [p for p in paras if p]
         if self._voice_on or len(paras) == 1:
-            for p in paras:
-                self.say(p, source=source)
+            for i, p in enumerate(paras):
+                self.say(p, source=source, sound=(i == 0))   # 只第一段响提示音
             return
 
         def play(i):
             if i >= len(paras):
                 return
-            self.say(paras[i], source=source,
+            self.say(paras[i], source=source, sound=(i == 0),
                      on_done=lambda: self.root.after(350, lambda: play(i + 1)))
         play(0)
 
@@ -5550,6 +5800,8 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             days = self._usage.setdefault("days", {})
             for k in sorted(days.keys())[:-USAGE_KEEP_DAYS]:
                 days.pop(k, None)
+            self._usage["report"] = {"day": getattr(self, "_usage_report_day", ""),
+                                     "count": int(getattr(self, "_usage_report_count", 0))}
             with _FILE_LOCK:
                 with open(USAGE_FILE, "w", encoding="utf-8") as f:
                     json.dump(self._usage, f, ensure_ascii=False)
@@ -5644,6 +5896,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             self._usage_report_day = today
             self._usage_report_count = 0
             self._usage_report_at = 0.0
+            self._save_usage()   # 新的一天：把「已说几次」落盘，重启不清零
         if self._usage_report_count >= USAGE_REPORT_MAX:
             return
         lt = time.localtime(now)
@@ -5663,11 +5916,29 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             return   # 时长还不够，等够了再报
         self._usage_report_count += 1
         self._usage_report_at = 0.0
+        self._save_usage()   # 记下已说次数，避免重启后又凑满每日上限
         threading.Thread(target=self._gen_usage_report, daemon=True).start()
+
+    def _report_usage_now(self):
+        """用户主动要求查看使用统计：无论今天是否已达上限都汇报一次；
+        次数没满就 +1，满了不再加（不会超出每日上限）。"""
+        if not getattr(self, "_usage_on", True):
+            self.say("我这边没开「记录窗口使用时长」呀，开起来我才好帮你统计。", source="时长日报")
+            return
+        today = time.strftime("%Y-%m-%d")
+        if self._usage_report_day != today:
+            self._usage_report_day = today
+            self._usage_report_count = 0
+        if self._usage_report_count < USAGE_REPORT_MAX:
+            self._usage_report_count += 1
+        self._save_usage()
+        threading.Thread(target=self._gen_usage_report, args=(True,), daemon=True).start()
 
     def _gen_usage_report(self, force=False):
         apps = self._usage_today()
         if not apps:
+            if force:
+                self.say("今天我还没统计到什么使用记录呢。", source="时长日报")
             return
         top = sorted(apps.items(), key=lambda x: -x[1])[:6]
         lines = ["%s：%s" % (self._app_display_name(k), self._fmt_dur(v)) for k, v in top]
@@ -5683,7 +5954,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                 model=api_model(),
                 messages=[{"role": "system", "content": load_persona()},
                           {"role": "user", "content": prompt}],
-                temperature=1.0, max_tokens=200)
+                temperature=1.0, max_tokens=SAY_MAX_TOKENS)
             text = clean_reply_style((resp.choices[0].message.content or "").strip())
             if text and (force or (self.visible and not self._is_speaking())):
                 self._say_paragraphs(text.split("\n"), source="时长日报")
@@ -6148,9 +6419,10 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     refresh_api_cfg()
                     reset_client()
                     if status_cb:
-                        status_cb(f"已连接：{name} · {model}")
+                        status_cb(f"已连接：{name} · {model}{_DETECT_NOTE}")
                 elif status_cb:
-                    status_cb("设置已保存，接口验证未通过；请检查 Key、地址和网络。")
+                    detail = _DETECT_LAST_ERROR
+                    status_cb("验证未通过：" + (detail or "请检查 Key、接口地址和模型名称。"))
             try:
                 self._ui(apply)
             except Exception:
@@ -6184,6 +6456,14 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             for label, field in (("接口地址", base_var), ("模型名称", model_var)):
                 tk.Label(win, text=label, bg="#2b2b3a", fg="#e8e8f0").pack(pady=(6, 2))
                 tk.Entry(win, textvariable=field, width=48).pack(padx=20)
+            # 接口类型：对话模型（Chat Completions） / 联网模型（Responses API）
+            mode_labels = ["对话模型（Chat Completions）", "联网模型（Responses API）"]
+            mode_var = tk.StringVar(value=mode_labels[1] if self._settings.get("api_mode") == "responses" else mode_labels[0])
+            tk.Label(win, text="接口类型", bg="#2b2b3a", fg="#e8e8f0").pack(pady=(6, 2))
+            ttk.Combobox(win, textvariable=mode_var, state="readonly", width=46,
+                         values=mode_labels).pack(padx=20)
+            tk.Label(win, text="不确定就选「对话模型」；用 OpenAI 联网模型（Responses）时选「联网模型」。",
+                     bg="#2b2b3a", fg="#9a9ab0", font=("Microsoft YaHei", 9)).pack(padx=20, pady=(2, 0))
             tk.Label(win, text="API Key：", bg="#2b2b3a", fg="#e8e8f0",
                      font=("Microsoft YaHei", 11)).pack(padx=20, pady=(18, 6))
             var = tk.StringVar(value=read_api_key())
@@ -6210,6 +6490,11 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                 key = var.get().strip()
                 from urllib.parse import urlsplit
                 base = base_var.get().strip().rstrip("/")
+                # 容错：误填了完整端点（.../chat/completions）就裁回 base
+                for _suf in ("/chat/completions", "/chat/completion", "/completions"):
+                    if base.lower().endswith(_suf):
+                        base = base[: -len(_suf)].rstrip("/")
+                        break
                 model = model_var.get().strip()
                 parts = urlsplit(base)
                 local = parts.hostname in ("localhost", "127.0.0.1", "::1")
@@ -6220,7 +6505,8 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                 if not save_api_key(key):
                     set_status("保存失败（加密不可用），请重试")
                     return
-                self._settings.update(provider=provider.get(), api_base=base, api_model=model)
+                mode = "responses" if "Responses" in mode_var.get() else "chat"
+                self._settings.update(provider=provider.get(), api_base=base, api_model=model, api_mode=mode)
                 self._save_settings()
                 refresh_api_cfg()
                 reset_client()
@@ -7126,6 +7412,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             "pos": [x, y],
             "api_base": self._settings.get("api_base") or DEFAULT_API_BASE,
             "api_model": self._settings.get("api_model") or DEFAULT_API_MODEL,
+            "api_mode": self._settings.get("api_mode") or "chat",
             "provider": self._settings.get("provider") or "",
             "gsv_dir": self._settings.get("gsv_dir") or gsv_dir(),
             "usage_track": bool(getattr(self, "_usage_on", True)),
@@ -7492,7 +7779,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.9,
-                max_tokens=120,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
         except Exception:
@@ -7944,7 +8231,8 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             return
         text = (text or "").strip()
         if text:
-            self._tts_enqueue(text)
+            for piece in _tts_split(text):   # 按句切开，逐句显示，避免整段挤一个气泡
+                self._tts_enqueue(piece)
             self._tts_enqueue(None)
 
     def _speak_stream(self, acc, spoken, final=False):
@@ -7957,17 +8245,15 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             if piece:
                 self._tts_enqueue(piece)
             return len(acc)
-        idx = -1
+        start = 0
         for i, c in enumerate(seg):
             if c in "。！？!?\n":
-                idx = i
-        if idx >= 0:
-            piece = seg[:idx + 1].strip()
-            # 太短的句子单独合成会平淡/没语调，攒够长度再送
-            if len(piece) >= 10:
-                self._tts_enqueue(piece)
-                return spoken + idx + 1
-        return spoken
+                piece = seg[start:i + 1].strip()
+                # 太短的句子单独合成会平淡/没语调，攒够长度再送；够长就立刻送，别攒成一大段
+                if len(piece) >= 10:
+                    self._tts_enqueue(piece)
+                    start = i + 1
+        return spoken + start
 
     def _tts_enqueue(self, text):
         """把一句/一段文本（或 None 结束标记）排进语音队列。"""
@@ -8488,11 +8774,12 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
         except Exception:
             pass
 
-    def say(self, text, is_reminder=False, source=None, on_done=None):
+    def say(self, text, is_reminder=False, source=None, on_done=None, sound=True):
         """让桌宠用气泡说一句话（走分段打字效果）。
         is_reminder=True 时，气泡显示期间禁止打开对话框。
         source 非空表示这不是用户聊天触发（如「粘贴板」「截图」），会记一条来源说明。
-        on_done：无语音时该气泡播完后的回调（用于逐段连播）。"""
+        on_done：无语音时该气泡播完后的回调（用于逐段连播）。
+        sound=False：多段连播时只在第一段响提示音，避免一段一声连着响。"""
         try:
             text = clean_reply_style(text)
             if source:
@@ -8500,7 +8787,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             self._log_chat("assistant", text)
             if is_reminder:
                 self._reminder_showing = True
-            if self._should_sound(is_reminder):
+            if sound and self._should_sound(is_reminder):
                 self._ui(self.play_sound)
             if self._voice_on:
                 self._speak(text)   # 语音驱动显示（文字跟着语音出）
@@ -8728,7 +9015,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=1.0,
-                max_tokens=120,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
         except Exception:
@@ -8777,7 +9064,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=1.0,
-                max_tokens=150,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
         except Exception:
@@ -8859,7 +9146,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=1.0,
-                max_tokens=80,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
             if text and self.visible and not self._is_speaking():
@@ -8966,7 +9253,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.8,
-                max_tokens=250,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
             if text and self.visible and not self._is_speaking():
@@ -8988,6 +9275,8 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             return
         prompt = (
             "用户刚截图/复制了一张图片。请以静香的口吻，像看到图后随口说的那样，说点什么（描述、反应、调侃都行）。\n"
+            "直接说内容或感想，不要用括号写动作、神态或旁白（如「（凑近看了一眼）」「（笑了笑）」），也不要加舞台说明。\n"
+            "只回一到两句话，尽量不超过 50 字，别长篇大论。\n"
             "【认出心菜的前提】把心菜（Kokona）认出来，靠两个同时出现的标志："
             "**头侧蓝色「>」形发夹** 和 **橙琥珀色带星形高光的眼睛**。\n" + KOKONA_FEATURES +
             "\n两点都吻合时，就认定她是静香最重要的人——心菜，用亲近的语气提到她。"
@@ -9005,7 +9294,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                         {"type": "image_url", "image_url": {"url": data_url}},
                     ],
                 }],
-                max_tokens=150,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
             if text and self.visible and not self._is_speaking():
@@ -9064,6 +9353,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
             "%s\n"
             "用户正在用的前台程序是：%s（进程名 %s）。\n"
             "以静香的口吻，就他正在做的事说一句自然的话（一到两句），结合标题里具体在做什么来聊。\n"
+            "就当第一次看到他做这件事，别用「又在/还在/老是/果然」这类预设他经常做的说法。\n"
             "这一次从「%s」这个角度来说。\n"
             "%s"
         ) % (time_hint(), title or exe, exe, angle, avoid)
@@ -9076,7 +9366,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=1.0,
-                max_tokens=80,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
             if text and self.visible and not self._is_speaking():
@@ -9139,7 +9429,7 @@ class DeskPet(ComputerAssistantMixin, WeixinMixin):
                     {"role": "user", "content": prompt},
                 ],
                 temperature=1.0,
-                max_tokens=80,
+                max_tokens=SAY_MAX_TOKENS,
             )
             text = (resp.choices[0].message.content or "").strip()
             if text and self.visible and not self._is_speaking():
