@@ -1,0 +1,339 @@
+"""Weixin pairing panel and a task adapter for the existing pet brain/dsh."""
+import json
+from pathlib import Path
+import queue
+import threading
+import time
+import tkinter as tk
+from tkinter import messagebox
+from tkinter.scrolledtext import ScrolledText
+from PIL import Image, ImageTk
+from computer_agent import load_config
+from computer_ui import computer_command
+from weixin_channel import BASE_URL, ILinkClient, ProtectedStore, WeixinChannel, session_from_login, trusted_base, IMAGE_BLOCK_MARK
+
+
+class WeixinMixin:
+    def _weixin_init(self):
+        if not hasattr(self, "_weixin_store"):
+            import pet as engine
+            self._weixin_store = ProtectedStore(self._computer_data_dir(), engine._dpapi)
+            self._weixin_channel = None
+            self._weixin_login_cancel = threading.Event()
+            self._weixin_code_queue = queue.Queue()
+            self._weixin_state = {"status": "尚未连接", "output": ""}
+            self._computer_init()
+
+    def _weixin_boot(self):
+        try:
+            self._weixin_init()
+            if self._weixin_store.data.get("enabled") and self._weixin_store.data.get("session"):
+                self._weixin_connect()
+        except Exception:
+            self._weixin_boot_error = "微信连接配置无法读取，请打开微信连接窗口检查。"
+
+    def _weixin_media_dir(self):
+        """微信发来的图片落到「文件工作区\微信图片」，方便后续 /电脑 任务直接读取。"""
+        config = load_config(self._computer_data_dir())
+        target = Path(config["workspace"]) / "微信图片"
+        target.mkdir(parents=True, exist_ok=True)
+        return target
+
+    def _weixin_connect(self):
+        self._weixin_init()
+        if self._weixin_channel and not self._weixin_channel.stopped.is_set():
+            return
+        channel = WeixinChannel(self._weixin_store, self._weixin_reply, media_dir=self._weixin_media_dir)
+        def status(value):
+            def apply():
+                if self._weixin_channel is channel:
+                    self._weixin_state.update(value)
+            self._ui(apply)
+        channel.status = status
+        self._weixin_channel = channel
+        self._weixin_store.update(enabled=True)
+        channel.start()
+
+    def _weixin_stop(self, persist=False):
+        event = getattr(self, "_weixin_login_cancel", None)
+        if event:
+            event.set()
+        channel = getattr(self, "_weixin_channel", None)
+        if channel:
+            channel.stop()
+        if hasattr(self, "_weixin_state"):
+            self._weixin_state["status"] = "已断开"
+        if persist and hasattr(self, "_weixin_store"):
+            self._weixin_store.update(enabled=False)
+
+    def _weixin_reply(self, text, cancel, progress):
+        import pet as engine
+        if cancel.is_set():
+            return "任务已取消。"
+        task = computer_command(text)
+        if task is None and engine.has_api_key():
+            if IMAGE_BLOCK_MARK in text:
+                task = text      # 带图片的消息交给电脑助手（它能直接看图）
+            else:
+                intent = self._classify_intent(text)
+                if (intent or {}).get("action") == "computer_task":
+                    task = text
+        if cancel.is_set():
+            return "任务已取消。"
+        self._log_chat("user", text, kind="weixin")
+        if task is not None:
+            if not task:
+                return "在 /电脑 后写具体文件任务，例如：/电脑 列出工作文件夹中的文件。"
+            if not self._weixin_store.data.get("allow_computer"):
+                return "微信文件任务尚未开启，请在电脑的“微信连接”窗口启用。"
+            config = load_config(self._computer_data_dir())
+            if not config.get("enabled", True):
+                return "电脑助手已关闭，请先在电脑端开启。"
+            result = self._computer_agent.run(task, config, cancel=cancel,
+                progress=lambda state: progress({"status": "正在处理文件 · %s 秒" % state["elapsed"]}))
+            progress({"directory": result.get("directory", "")})
+            if result["status"] == "completed":
+                reply = result.get("output") or "本机助手已返回，请核对任务记录。"
+            elif result["status"] == "cancelled":
+                reply = "文件任务已停止，已完成的更改会保留。"
+            elif result["status"] == "timeout":
+                reply = "文件任务达到时限，已停止。请在电脑的任务记录中核对已完成的部分。"
+            else:
+                reply = "文件任务未完成。" + (result.get("error") or result.get("stderr") or result.get("output") or "请查看电脑端的任务记录。")[:1000]
+            if self._weixin_store.data.get("persona_wrap", True):
+                reply = self._weixin_style_wrap(reply, cancel)
+            self._append_history(text, reply[:1000])
+            self._log_chat("assistant", reply[:1500], kind="weixin")
+            return reply
+        if not engine.has_api_key():
+            return "请先在电脑桌宠中设置聊天 API Key。已有 dsh 配置时，仍可使用 /电脑 文件任务。"
+        system = engine.load_persona()
+        system += "\n\n（背景）" + engine.time_hint() + "除非和话题有关，不用主动报时间。"
+        system += ("\n当前通过手机微信交流。只回复需要发给用户的文字；没有调用文件执行器时，不要声称已读取或修改电脑文件。"
+                   "文件操作请让用户发 /电脑 加具体任务。用户发来的图片已存在电脑工作区，需要看图时请让用户发 /电脑 加要求。")
+        memory = self._get_memory_block(text)
+        if memory:
+            system += "\n\n" + memory
+        messages = [{"role": "system", "content": system}]
+        with self._hist_lock:
+            recent = list(self._history[-self._history_max:]) if self._history_max > 0 else []
+        for turn in recent:
+            messages.append({"role": "user", "content": turn.get("user", "")})
+            if turn.get("assistant"):
+                messages.append({"role": "assistant", "content": turn["assistant"]})
+        if len(messages) > 1:
+            messages.append({"role": "system", "content": engine.STYLE_REMINDER})
+        messages.append({"role": "user", "content": text})
+        output = []
+        client = engine.get_client()
+        with client.chat.completions.create(model=engine.api_model(), messages=messages,
+                temperature=.8, max_tokens=1000, stream=True) as stream:
+            for chunk in stream:
+                if cancel.is_set():
+                    return "本轮回复已停止。"
+                if chunk.choices:
+                    output.append(chunk.choices[0].delta.content or "")
+        reply = engine.clean_reply_style("".join(output)).strip() or "刚才没有收到完整回复，请再试一次。"
+        if not cancel.is_set():
+            self._append_history(text, reply)
+            self._log_chat("assistant", reply, kind="weixin")
+            # Plain conversation shares long-term memory; file results bypass this path.
+            def remember():
+                try:
+                    self._record_new_memories(text, reply)
+                    self._refresh_memories(reply)
+                    engine.get_memory().save()
+                except Exception:
+                    pass
+            threading.Thread(target=remember, daemon=True).start()
+        return reply
+
+    def _weixin_style_wrap(self, body, cancel):
+        import pet as engine
+        if not body or cancel.is_set() or not engine.has_api_key():
+            return body
+        system = engine.load_persona()
+        system += (
+            "\n\n用户刚通过手机微信让你在这台电脑上处理了一个文件任务，下面是执行结果的正文。"
+            "请用静香本人的口吻，为这段结果配一句简短自然的开场白，必要时再加一句收尾。"
+            "只输出 JSON：{\"prefix\": \"开场白\", \"suffix\": \"收尾或空字符串\"}。"
+            "开场白像平时说话，告诉他结果出来了或事情办好了；若结果是失败或未完成，语气温和些。"
+            "绝对不要复述、概括或改动正文里的任何内容，不要提编号，不要用括号旁白或破折号解释。"
+        )
+        try:
+            client = engine.get_client()
+            resp = client.chat.completions.create(
+                model=engine.api_model(),
+                messages=[{"role": "system", "content": system},
+                          {"role": "user", "content": "任务结果正文：\n" + body[:4000]}],
+                temperature=.7, max_tokens=200)
+            raw = (resp.choices[0].message.content or "").strip()
+            prefix = suffix = ""
+            start, end = raw.find("{"), raw.rfind("}")
+            if start >= 0 and end > start:
+                data = json.loads(raw[start:end + 1])
+                prefix = str(data.get("prefix") or "").strip()
+                suffix = str(data.get("suffix") or "").strip()
+            if cancel.is_set():
+                return body
+            prefix = engine.clean_reply_style(prefix).strip()
+            suffix = engine.clean_reply_style(suffix).strip()
+            parts = [p for p in (prefix, body, suffix) if p]
+            return "\n\n".join(parts) if len(parts) > 1 else body
+        except Exception:
+            return body
+
+    def _weixin_begin_login(self):
+        self._weixin_stop()
+        cancel = threading.Event()
+        self._weixin_login_cancel = cancel
+        self._weixin_code_queue = queue.Queue()
+        self._weixin_state.update(status="正在获取微信二维码…", qr=None, verify=False)
+        def update(**values):
+            def apply():
+                if self._weixin_login_cancel is cancel:
+                    self._weixin_state.update(values)
+            self._ui(apply)
+        def login():
+            try:
+                client = ILinkClient()
+                qr = client.qr()
+                update(qr=qr["qrcode_img_content"], status="请用手机微信扫码，并按手机提示确认")
+                deadline, verify = time.monotonic() + 300, ""
+                while not cancel.is_set() and time.monotonic() < deadline:
+                    try:
+                        state = client.qr_status(qr["qrcode"], verify)
+                    except (ConnectionError, TimeoutError):
+                        cancel.wait(1)
+                        continue
+                    if cancel.is_set():
+                        return
+                    status = state.get("status")
+                    if status == "confirmed":
+                        session = session_from_login(state)
+                        def finish():
+                            if self._weixin_login_cancel is not cancel or cancel.is_set():
+                                return
+                            self._weixin_store.update(session=session, cursor="", seen={}, enabled=True, last_result="")
+                            self._weixin_state.update(qr=None, verify=False, status="已绑定，正在连接…")
+                            self._weixin_connect()
+                        self._ui(finish)
+                        return
+                    if status == "need_verifycode":
+                        update(verify=True, status="请把手机微信显示的配对数字填入下方，然后点“提交配对码”")
+                        while not cancel.is_set() and time.monotonic() < deadline:
+                            try:
+                                verify = self._weixin_code_queue.get(timeout=.3)
+                                break
+                            except queue.Empty:
+                                continue
+                        continue
+                    if status == "scaned":
+                        verify = ""
+                        update(verify=False, status="已扫码，等待手机确认…")
+                    elif status == "scaned_but_redirect":
+                        client.base = trusted_base("https://" + str(state.get("redirect_host", "")))
+                    elif status in ("expired", "verify_code_blocked"):
+                        update(qr=None, verify=False, status="二维码已过期或配对暂不可用，请重新生成二维码")
+                        return
+                    elif status == "binded_redirect":
+                        update(qr=None, verify=False, status="该机器人已绑定；如本机已有绑定记录，请点击连接")
+                        return
+                    cancel.wait(.5)
+                if not cancel.is_set():
+                    update(qr=None, verify=False, status="扫码等待超时，请重新生成二维码")
+            except Exception as exc:
+                update(qr=None, verify=False, status="微信绑定未完成：" + str(exc)[:200])
+        threading.Thread(target=login, name="deskpet-weixin-pair", daemon=True).start()
+
+    def show_weixin(self):
+        self.close_popup()
+        try:
+            self._weixin_init()
+        except Exception:
+            messagebox.showerror("微信连接", "微信配置无法解密或读取，请先保留原文件并检查当前 Windows 用户。", parent=self.root)
+            return
+        existing = getattr(self, "_weixin_win", None)
+        if existing is not None and existing.winfo_exists():
+            existing.deiconify();existing.lift()
+            return
+        win = tk.Toplevel(self.root)
+        self._weixin_win = win
+        win.title("微信连接 · 手机聊天与文件任务")
+        win.geometry("660x800")
+        win.minsize(580, 660)
+        top = tk.Frame(win, padx=18, pady=12)
+        top.pack(fill="x")
+        tk.Label(top, text="把桌宠连到手机微信", font=("Microsoft YaHei UI", 16, "bold"), anchor="w").pack(fill="x")
+        tk.Label(top, text="手机发消息，桌宠在这台电脑上处理，再回复到微信。电脑和桌宠需要保持运行。", wraplength=610, anchor="w").pack(fill="x", pady=8)
+        controls = tk.Frame(top);controls.pack(fill="x")
+        tk.Button(controls, text="生成绑定二维码", command=self._weixin_begin_login).pack(side="left")
+        def connect():
+            try:
+                self._weixin_connect()
+            except Exception as exc:
+                self._weixin_state["status"] = str(exc)
+        tk.Button(controls, text="连接", command=connect).pack(side="left", padx=8)
+        tk.Button(controls, text="断开", command=lambda: self._weixin_stop(persist=True)).pack(side="left")
+        def stop_task():
+            if self._weixin_channel:
+                self._weixin_channel.cancel_task()
+        tk.Button(controls, text="停止当前任务", command=stop_task).pack(side="left", padx=8)
+        remote = tk.BooleanVar(value=bool(self._weixin_store.data.get("allow_computer")))
+        tk.Checkbutton(top, text="允许绑定的微信账号执行文件任务（使用电脑助手的工作文件夹）", variable=remote,
+            command=lambda: self._weixin_store.update(allow_computer=remote.get())).pack(anchor="w", pady=(12, 4))
+        wrap = tk.BooleanVar(value=bool(self._weixin_store.data.get("persona_wrap", True)))
+        tk.Checkbutton(top, text="文件任务结果用静香语气包装（不改动结果内容）", variable=wrap,
+            command=lambda: self._weixin_store.update(persona_wrap=wrap.get())).pack(anchor="w")
+        tk.Button(top, text="设置文件工作文件夹…", command=self.show_computer_assistant).pack(anchor="w")
+        status_label = tk.Label(top, text="", wraplength=610, anchor="w", justify="left")
+        status_label.pack(fill="x", pady=8)
+        qr_label = tk.Label(win, text="点击上方按钮，用手机微信扫码绑定", width=38, height=2)
+        qr_label.pack(pady=4)
+        verify_frame = tk.Frame(win)
+        tk.Label(verify_frame, text="手机显示的配对码：").pack(side="left")
+        code = tk.Entry(verify_frame, width=12)
+        code.pack(side="left")
+        def submit_code():
+            value = code.get().strip()
+            if value.isdigit() and len(value) <= 12:
+                self._weixin_code_queue.put(value)
+                code.delete(0, "end")
+                self._weixin_state.update(verify=False, status="正在核对配对码…")
+        tk.Button(verify_frame, text="提交配对码", command=submit_code).pack(side="left", padx=8)
+        help_label = tk.Label(win, text="微信中可直接聊天，或输入 /电脑 加文件任务。\n/停止 停止任务 · /状态 查看进度 · /结果 查看最近结果", wraplength=610, justify="left")
+        help_label.pack(pady=10)
+        output = ScrolledText(win, height=8, wrap="word", state="disabled")
+        output.pack(fill="both", expand=True, padx=18, pady=(0, 14))
+        last = {"qr": None, "output": None}
+        def refresh():
+            if not win.winfo_exists():
+                return
+            state = self._weixin_state
+            status_label.configure(text=state.get("status", ""))
+            qr = state.get("qr")
+            if qr != last["qr"]:
+                last["qr"] = qr
+                if qr:
+                    import qrcode
+                    code_image = qrcode.QRCode(box_size=1, border=4)
+                    code_image.add_data(qr);code_image.make(fit=True)
+                    image = code_image.make_image().convert("RGB")
+                    size = image.width * max(2, 320 // image.width)
+                    image = image.resize((size, size), Image.Resampling.NEAREST)
+                    qr_label.image = ImageTk.PhotoImage(image)
+                    qr_label.configure(image=qr_label.image, text="", width=0, height=0)
+                else:
+                    qr_label.configure(image="", text="已保存绑定" if self._weixin_store.data.get("session") else "点击上方按钮生成二维码", width=38, height=2)
+                    qr_label.image = None
+            if state.get("verify"):
+                verify_frame.pack(before=help_label, pady=6)
+            else:
+                verify_frame.pack_forget()
+            text = state.get("output") or self._weixin_store.data.get("last_result", "")
+            if text != last["output"]:
+                last["output"] = text
+                output.configure(state="normal");output.delete("1.0", "end")
+                output.insert("1.0", text);output.configure(state="disabled")
+            win.after(400, refresh)
+        refresh()

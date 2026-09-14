@@ -3,3 +3,4 @@
 pillow==12.3.0
 pystray==0.19.5
 openai==3.13.0
+qrcode==8.2
