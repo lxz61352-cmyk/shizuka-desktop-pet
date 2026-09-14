@@ -35,7 +35,11 @@ with zipfile.ZipFile(OUT, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as z:
     for dp, dn, fn in os.walk(ROOT):
         dn[:] = [d for d in dn if d not in EXCLUDE_DIRS]
         for f in fn:
-            if f in EXCLUDE_FILES or f.endswith((".pyc", ".log", ".zip")):
+            if f in EXCLUDE_FILES or f.endswith((".pyc", ".log")):
+                continue
+            # 只排除「根目录下的打包产物」（别把 zip 打进 zip）；
+            # _internal 里的 base_library.zip 是 PyInstaller 必需的，必须保留。
+            if f.lower().endswith(".zip") and os.path.normpath(dp) == os.path.normpath(ROOT):
                 continue
             full = os.path.join(dp, f)
             rel = os.path.relpath(full, os.path.dirname(ROOT))
