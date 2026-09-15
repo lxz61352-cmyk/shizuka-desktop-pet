@@ -40,11 +40,11 @@ class GroundMotion:
                 self.y=self.floor
                 impact=impact or self.bounces==0
                 self.bounces+=1
-                if self.velocity<80 or self.bounces>=3:
-                    self.velocity=0
-                    self.active=False
-                    break
-                self.velocity=-min(self.velocity*.26,220)
+                # The authored bent-knee pose absorbs impact at the support
+                # plane. Startup/gesture jumps use MotionController separately.
+                self.velocity=0
+                self.active=False
+                break
         return GroundStep(self.y,impact,not self.active)
 
 def floor_position(workarea,bounds,scale,x):

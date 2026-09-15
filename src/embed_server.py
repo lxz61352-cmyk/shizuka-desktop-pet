@@ -12,8 +12,8 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 import uvicorn
 
-MODEL_DIR = (r"E:\GPT-SoVITS-v2pro-20250604\GPT-SoVITS-v2pro-20250604"
-             r"\GPT_SoVITS\pretrained_models\chinese-roberta-wwm-ext-large")
+import os
+MODEL_DIR = os.environ.get("DESKPET_EMBED_MODEL", "models/chinese-roberta-wwm-ext-large")
 # 用 CPU：避免和 GPT-SoVITS 语音服务抢显存（每次只算 1 条 query，~0.5s，够用）
 DEV = "cpu"
 

@@ -1,8 +1,0 @@
-# Per-run overlay. Does not change the user's web/headless profile on disk.
-- id: sandbox-policy
-  config:
-    mode: workspace-write
-    workspaceRoot: !!js process.cwd()
-- id: approval
-  config:
-    policy: ask

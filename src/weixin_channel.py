@@ -1,7 +1,6 @@
-"""Weixin iLink transport, owner binding and durable duplicate guard.
+"""Text-only Weixin iLink transport, owner binding and durable duplicate guard.
 
-Text chat plus inbound image files (saved into the pet workspace for later
-local tasks). Protocol reference: https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md
+Protocol reference: https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md
 No desktop WeChat automation, no OpenClaw runtime, no model credentials here.
 """
 import base64
@@ -20,15 +19,12 @@ from computer_agent import write_json
 BASE_URL = "https://ilinkai.weixin.qq.com"
 CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c"
 CHANNEL_VERSION = "2.4.8"
-# 开始处理任务后，若这么久还没出结果，就先回一句「正在处理」，避免对方以为掉线
-ACK_DELAY_SECONDS = 4.0
 IMAGE_MAX_BYTES = 16 * 1024 * 1024
 COMMAND_RE = re.compile(r"^/(?:电脑|文件|dsh)(?=$|\s|[:：])", re.I)
 # 文字里出现这些词，说明用户在指代某张图片
 IMAGE_WORD_RE = re.compile(r"图\s*\d|第\s*[0-9一二三四五六七八九十]+\s*张|倒数|最新|刚才|刚刚|上一张|最后一张|这张|那张|该图|图片|照片|截图|图像", re.I)
 # 出现这些动词，说明用户是在「拿图片做事」，而不是随口提一句
 ACTION_RE = re.compile(r"做|写|生成|整理|改|转|处理|分析|识别|提取|翻译|制作|搞|弄|用|根据|基于")
-IMAGE_FRESH_SECONDS = 20      # 指令没提图时，刚收到多久内的图仍算「顺手要用」
 LATEST_IMAGE_HOURS = 1 / 6    # 没指定图片时，多久内收到的最新图片默认带上（10 分钟）
 IMAGE_BLOCK_MARK = "[图片]"    # 提示块标记：上层据此判断「这条消息带了图片」
 # 像在问/看图的口吻 → 默认把最新图片带上
@@ -191,6 +187,23 @@ class ILinkClient:
         self.opener = opener or request.build_opener(NoRedirect())
         self.media_opener = request.build_opener(CdnRedirect())
 
+    def download(self, media, aeskey=""):
+        """下载微信图片（自动用 aeskey 解密）。"""
+        if not isinstance(media, dict):
+            raise ValueError("图片缺少下载信息")
+        url = media.get("full_url") or ""
+        if not url:
+            parameter = media.get("encrypt_query_param")
+            if not isinstance(parameter, str) or not parameter:
+                raise ValueError("图片缺少下载地址")
+            url = CDN_BASE + "/download?encrypted_query_param=" + parse.quote(parameter, safe="")
+        with self.media_opener.open(request.Request(trusted_cdn(url), headers={"iLink-App-Id": "bot"}), timeout=60) as response:
+            raw = response.read(IMAGE_MAX_BYTES + 1)
+        if len(raw) > IMAGE_MAX_BYTES:
+            raise ValueError("图片超过 16MB，已跳过")
+        key = decode_aes_key(aeskey) or decode_aes_key(media.get("aes_key"))
+        return aes_ecb_decrypt(key, raw) if key else raw
+
     def call(self, endpoint, payload=None, timeout=20):
         headers = {"iLink-App-Id": "bot", "iLink-App-ClientVersion": str((2 << 16) | (4 << 8) | 8)}
         body = None
@@ -200,7 +213,7 @@ class ILinkClient:
             payload = dict(payload)
             if self.token:
                 headers["Authorization"] = "Bearer " + self.token
-                payload["base_info"] = {"channel_version": CHANNEL_VERSION, "bot_agent": "DeskPet/0.6.1"}
+                payload["base_info"] = {"channel_version": CHANNEL_VERSION, "bot_agent": "ShizukaAssistant/0.1.0"}
             body = json.dumps(payload, ensure_ascii=False).encode("utf8")
         req = request.Request(self.base + "/ilink/bot/" + endpoint, data=body, headers=headers)
         try:
@@ -244,22 +257,6 @@ class ILinkClient:
             "client_id": client_id, "message_type": 2, "message_state": 2,
             "context_token": context, "item_list": [{"type": 1, "text_item": {"text": text}}]}})
 
-    def download(self, media, aeskey=""):
-        if not isinstance(media, dict):
-            raise ValueError("图片缺少下载信息")
-        url = media.get("full_url") or ""
-        if not url:
-            parameter = media.get("encrypt_query_param")
-            if not isinstance(parameter, str) or not parameter:
-                raise ValueError("图片缺少下载地址")
-            url = CDN_BASE + "/download?encrypted_query_param=" + parse.quote(parameter, safe="")
-        with self.media_opener.open(request.Request(trusted_cdn(url), headers={"iLink-App-Id": "bot"}), timeout=60) as response:
-            raw = response.read(IMAGE_MAX_BYTES + 1)
-        if len(raw) > IMAGE_MAX_BYTES:
-            raise ValueError("图片超过 16MB，已跳过")
-        key = decode_aes_key(aeskey) or decode_aes_key(media.get("aes_key"))
-        return aes_ecb_decrypt(key, raw) if key else raw
-
 
 class ProtectedStore:
     """Session, owner, cursor and replay journal encrypted with the host's codec."""
@@ -267,8 +264,8 @@ class ProtectedStore:
         self.path = Path(data_root) / "weixin-state.json"
         self.crypt = crypt
         self.lock = threading.RLock()
-        self.data = {"enabled": False, "allow_computer": False, "persona_wrap": True,
-                     "session": None, "cursor": "", "seen": {}, "last_result": ""}
+        self.data = {"enabled": False, "allow_computer": False, "session": None,
+                     "cursor": "", "seen": {}, "last_result": ""}
         if self.path.exists():
             wrapper = json.loads(self.path.read_text("utf8"))
             value = json.loads(crypt(base64.b64decode(wrapper["protected"], validate=True), False))
@@ -396,9 +393,11 @@ class WeixinChannel:
         self._images = None
         self.stopped = threading.Event()
         self.task_cancel = threading.Event()
+        self.send_lock = threading.Lock()
         self.jobs = queue.Queue(maxsize=8)
         self.task_lock = threading.RLock()
         self.active = False
+        self.answer_pending = None
 
     def start(self):
         self.poller = threading.Thread(target=self._poll, name="deskpet-weixin-poll", daemon=True)
@@ -429,7 +428,8 @@ class WeixinChannel:
             if self.stopped.is_set():
                 break
             client_id = "deskpet-" + message["key"][:40] + "-" + suffix + "-" + str(index // 1500)
-            self.client.send(self.session["owner"], message["context"], text[index:index+1500], client_id)
+            with self.send_lock:
+                self.client.send(self.session["owner"], message["context"], text[index:index+1500], client_id)
 
     def image_index(self):
         if self._images is None:
@@ -479,7 +479,7 @@ class WeixinChannel:
 
     def image_context(self, text, images):
         """返回 (要附的提示, 需要反问的候选, 是否该等图片)，三者最多一个生效。
-        没有用「图N」明确指定时，一律只用最新一张图片；不再反问是哪张，也不带出更早的图片。"""
+        没有用「图N」明确指定时，一律只用最新一张图片。"""
         index = self.image_index()
         if index is None:
             return "", [], False
@@ -509,16 +509,29 @@ class WeixinChannel:
                                     r.get("label") or "") for r in records]
         return "最近收到的图片：\n" + "\n".join(lines) + "\n用「图N」指代即可。"
 
-    def queue_job(self, message, text):
-        message["text"] = text
-        full = False
-        with self.task_lock:
-            try:
-                self.jobs.put_nowait(message)
-            except queue.Full:
-                full = True
-        if full:
-            self.reply(message, "待处理消息较多，请稍后再发，或发送 /停止 取消队列。", "busy")
+    def reminder_ready(self):
+        with self.store.lock:
+            context=self.store.data.get('notification_context') or {}
+            session=self.store.data.get('session') or {}
+            return bool(not self.stopped.is_set() and self.store.data.get('enabled')
+                and context.get('owner')==session.get('owner')==self.session.get('owner')
+                and context.get('bot')==session.get('bot_id')==self.session.get('bot_id') and context.get('context'))
+
+    def notify_owner(self,text,identity):
+        with self.send_lock:
+            if not self.reminder_ready():raise ValueError('请先连接微信，并向绑定的助手发送一条消息')
+            with self.store.lock:context=dict(self.store.data['notification_context'])
+            client_id='shizuka-reminder-'+hashlib.sha256(identity.encode()).hexdigest()[:40]
+            self.client.send(self.session['owner'],context['context'],str(text)[:1500],client_id)
+
+    def notify_question(self,text,identity):
+        if not self.reminder_ready():raise ValueError('微信对话尚未连接')
+        with self.store.lock:context=dict(self.store.data['notification_context'])
+        for index in range(0,len(text),1500):
+            with self.send_lock:
+                if not self.reminder_ready():raise ValueError('微信连接已结束')
+                self.client.send(self.session['owner'],context['context'],text[index:index+1500],
+                    'shizuka-question-'+identity+'-'+str(index//1500))
 
     def receive(self, raw):
         if (self.stopped.is_set() or raw.get("message_type") != 1 or raw.get("message_state") != 2
@@ -539,6 +552,8 @@ class WeixinChannel:
         key = hashlib.sha256((self.session["owner"] + ":" + str(identity)).encode()).hexdigest()
         if not self.store.claim(key):
             return
+        self.store.update(notification_context={'owner':self.session['owner'],'bot':self.session['bot_id'],
+                                               'context':context})
         message = {"key": key, "context": context, "text": text, "images": []}
         image_items = [i for i in items if i.get("type") == 2]
         if image_items:
@@ -566,7 +581,8 @@ class WeixinChannel:
         elif text in ("/图片", "/images"):
             self.reply(message, self.image_list_text(), "images")
         elif text in ("/帮助", "/help"):
-            self.reply(message, "可以直接聊天。\n发来的图片会按天编号存到电脑工作区，之后用「/电脑 用图2 写一份文档」这样指代就行。\n"
+            self.reply(message, "可以直接聊天。/待办 加事项与时间，可以创建待办；到期可通过微信提醒。\n"
+                                "发来的图片会按天编号存到电脑工作区，之后用「/电脑 用图2 写一份文档」这样指代就行。\n"
                                 "文件任务：/电脑 加具体要求。\n/图片：看最近收到的图片编号\n/停止：停止任务\n"
                                 "/状态：查看连接与任务状态\n/结果：查看最近结果\n请保持电脑和桌宠运行。", "help")
         elif pending:
@@ -596,6 +612,11 @@ class WeixinChannel:
             self.reply(message, "先支持文字和图片，文字任务请不超过 20000 字。", "unsupported")
         else:
             self.store.update(pending_text=None)
+            if self.answer_pending:
+                answer=self.answer_pending(text)
+                if answer is not None:
+                    self.reply(message,answer,'answer')
+                    return
             block, ask, wait = self.image_context(text, message["images"])
             if wait:
                 self.store.update(pending_text={"task": text, "at": time.time()})
@@ -607,6 +628,18 @@ class WeixinChannel:
                 self.reply(message, "你说的是哪张？\n" + lines + "\n回「图2」这样就行。", "ask_image")
                 return
             self.queue_job(message, (text + "\n\n" + block).strip() if block else text)
+
+    def queue_job(self, message, text):
+        """把消息排进任务队列（带"队列已满"提示）。"""
+        message["text"] = text
+        full = False
+        with self.task_lock:
+            try:
+                self.jobs.put_nowait(message)
+            except queue.Full:
+                full = True
+        if full:
+            self.reply(message, "待处理消息较多，请稍后再发，或发送 /停止 取消队列。", "busy")
 
     def _poll(self):
         backoff = 1
@@ -659,23 +692,7 @@ class WeixinChannel:
             try:
                 self.status({"status": "正在处理微信任务", "task": message["text"]})
                 self.store.update(last_result="上一项任务正在处理；若程序意外退出，请先核对任务记录，再重新发起任务。")
-                # 处理耗时较久时先回一句「正在处理」，避免对方以为断了
-                finished = threading.Event()
-                def send_ack():
-                    if finished.is_set() or self.stopped.is_set() or token.is_set():
-                        return
-                    try:
-                        self.reply(message, "收到，正在处理，稍后把结果发给你。", "ack")
-                    except Exception:
-                        pass
-                ack_timer = threading.Timer(ACK_DELAY_SECONDS, send_ack)
-                ack_timer.daemon = True
-                ack_timer.start()
-                try:
-                    result = self.responder(message["text"], token, self.status)
-                finally:
-                    finished.set()
-                    ack_timer.cancel()
+                result = self.responder(message["text"], token, self.status)
                 if token.is_set():
                     result = "本轮任务已停止，已完成的文件更改会保留。"
             except Exception:

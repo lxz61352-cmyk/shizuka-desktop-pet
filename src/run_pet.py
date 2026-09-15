@@ -7,6 +7,16 @@ import time
 
 
 def main():
+    if "--self-test" in sys.argv:
+        import os
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="shizuka-self-test-") as folder:
+            os.environ["SHIZUKA_DATA_DIR"] = folder
+            return _main()
+    return _main()
+
+
+def _main():
     try:
         if "--surface-fixture" in sys.argv:
             import tkinter as tk
@@ -36,23 +46,36 @@ def main():
                     return 0
                 time.sleep(0.2)
         try:
-            pet.DeskPet().run()
+            app = pet.DeskPet()
+            if "--computer" in sys.argv:
+                app.root.after(100, app.show_computer_assistant)
+            if "--weixin" in sys.argv or "--weixin-pair" in sys.argv:
+                def open_weixin():
+                    app.show_weixin()
+                    if "--weixin-pair" in sys.argv:
+                        app._weixin_begin_login()
+                app.root.after(300, open_weixin)
+            app.run()
         finally:
             pet.release_single_instance()
         return 0
     except Exception:
         root = Path(sys.executable).resolve().parent if getattr(sys,"frozen",False) else Path(__file__).resolve().parent.parent
         log = root / "data" / "startup_error.log"
+        testing='--self-test' in sys.argv or '--exit-self-test' in sys.argv
+        if testing and '--report' in sys.argv:
+            log=Path(sys.argv[sys.argv.index('--report')+1]).parent/'self-test-error.log'
         details = traceback.format_exc()
         log.parent.mkdir(parents=True, exist_ok=True)
         with log.open("a", encoding="utf-8") as stream:
             stream.write(f"{datetime.datetime.now().isoformat()}\n{details}\n")
         if sys.stderr is not None:
             print(details, file=sys.stderr)
+        if testing:return 1
         try:
             import ctypes
             ctypes.windll.user32.MessageBoxW(
-                None, f"桌宠启动失败。\n错误详情已保存到：\n{log}", "静香桌宠", 0x10)
+                None, f"桌宠启动失败。\n错误详情已保存到：\n{log}", "静香助手", 0x10)
         except Exception:
             pass
         return 1

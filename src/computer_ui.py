@@ -1,35 +1,13 @@
 """Tk controls for explicit local file tasks. No imports from pet.py."""
 import os
 from pathlib import Path
-import random
 import re
 import threading
 import tkinter as tk
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox,ttk
 from tkinter.scrolledtext import ScrolledText
-from PIL import Image, ImageTk
-from computer_agent import ComputerAgent, DshInstallation, dsh_available, load_config, save_config
-
-# 文件任务耗时较长：先以静香口吻应一声，完成后按人设汇报（纯话术，不改任务事实）
-COMPUTER_START_LINES = (
-    "好，我去看看这些文件，弄好了就回来跟你说。",
-    "交给我吧，先动手处理，进度可以在「电脑助手」里看。",
-    "收到，这就去整理文件，完成后再跟你汇报。",
-    "明白，我先去处理文件，你等我一下。",
-    "行，这些文件我来弄，你去忙别的吧。",
-)
-COMPUTER_DONE_LEADS = {
-    "completed": ("弄好了，跟你说下结果：", "搞定，汇报一下：", "处理完了，情况是这样：", "文件那边弄完了，你看看："),
-    "failed": ("这次没弄成，情况是：", "没做成功，你看下这个：", "卡住了，没能完成："),
-    "cancelled": ("好，我停下来了。", "行，收手了。"),
-    "timeout": ("等太久了，我先停手。", "这个任务拖太久，我先停下。"),
-}
-COMPUTER_DONE_TAILS = (
-    "还有要改的地方，随时叫我。",
-    "需要别的整理就再跟我说。",
-    "有不对的地方我再帮你调。",
-    "别的文件要收拾也尽管说。",
-)
+from computer_agent import ComputerAgent, DshInstallation, load_config, save_config
+from computer_progress import ComputerProgressMixin,PendingQuestions
 
 
 def computer_command(text):
@@ -37,7 +15,7 @@ def computer_command(text):
     return match.group(1).strip() if match else None
 
 
-class ComputerAssistantMixin:
+class ComputerAssistantMixin(ComputerProgressMixin):
     def _computer_data_dir(self):
         raise NotImplementedError
 
@@ -46,22 +24,25 @@ class ComputerAssistantMixin:
             self._computer_agent = ComputerAgent(self._computer_data_dir())
             self._computer_state = {"status": "就绪", "output": "", "busy": False}
             self._computer_cancel = None
+        if not hasattr(self,"_computer_job_lock"):
+            self._computer_job_lock=threading.Lock()
+            self._computer_questions=PendingQuestions(self._computer_agent)
 
     def _cancel_computer_task(self):
         event = getattr(self, "_computer_cancel", None)
         if event:
             event.set()
-
-    def _computer_busy(self):
-        """本机文件任务进行中（含微信侧发起的）→ 主动搭话先让路。"""
-        state = getattr(self, "_computer_state", None)
-        if state and state.get("busy"):
-            return True
-        agent = getattr(self, "_computer_agent", None)
-        return bool(agent and agent.guard.locked())
+            if hasattr(self,'_computer_state'):self._computer_state['status']=self._scene('file_task_cancel_requested')
 
     def _start_computer_task(self, task, my_conv):
         self._computer_init()
+        # Keep task evidence out of the automatic personal-conversation summaries.
+        with self._chat_lock:
+            for row in reversed(self._chat_log):
+                if row.get("role")=="user" and row.get("text","").endswith(task):
+                    row["kind"]="computer_task"
+                    self._write_chatlog(list(self._chat_log))
+                    break
         try:
             config = load_config(self._computer_data_dir())
         except Exception as exc:
@@ -72,30 +53,28 @@ class ComputerAssistantMixin:
             self._close_think_bubble()
             self.say("电脑助手已关闭，可以从菜单里的“电脑助手”开启。")
             return
-        if not dsh_available(config):
-            # 本机没装 dsh / Node.js：文件任务不可用，但不影响聊天
-            self._close_think_bubble()
-            self.say("这台电脑还没装好文件任务要用的 dsh（Node.js 组件），先只能陪你聊天哦。")
-            return
         token = threading.Event()
-        self._cancel_computer_task()
-        self._computer_cancel = token
-        self._computer_state = {"status": "正在启动本机 dsh…", "output": "", "busy": True,
+        if not self._computer_claim(token):
+            self._close_think_bubble();self.say("上一件事还在处理，等我把它做完。",source="文件任务");return
+        self._computer_state = {"status": "任务已经接下，正在启动执行器。", "output": "", "busy": True,
                                 "task": task, "workspace": config["workspace"]}
         self._close_think_bubble()
-        self.say(random.choice(COMPUTER_START_LINES))
+        self.say(self._scene('file_start'),source="文件任务")
+        self._computer_open_progress(task,token)
 
         def progress(state):
-            def update():
-                if self._computer_cancel is token:
-                    self._computer_state["status"] = f"正在处理文件 · {state['elapsed']} 秒"
-            self._ui(update)
+            self._computer_receive_progress(state,token)
 
         def worker():
             try:
                 result = self._computer_agent.run(task, config, cancel=token, progress=progress)
             except Exception as exc:
                 result = {"status": "failed", "error": str(exc), "output": "", "stderr": ""}
+            self._ui(lambda:self._computer_execution_finished(token))
+            if result['status']=='completed':self._ui(lambda:self._computer_finish_progress(result,token))
+            if self._computer_can_reply(my_conv,token):
+                self._ui(lambda:self._computer_state.update(status='执行已经返回，我在整理结果。') if self._computer_cancel is token else None)
+                result['spoken_reply']=self._file_reply(result)
             self._ui(lambda: self._computer_task_done(task, result, my_conv, token))
         threading.Thread(target=worker, name="deskpet-computer-task", daemon=True).start()
 
@@ -107,25 +86,27 @@ class ComputerAssistantMixin:
             summary = output or "本机助手已返回，未提供文字结果。请查看任务记录核对。"
             label = "本机助手已返回"
         elif status == "cancelled":
-            summary = "已经改动过的文件会保留，后面的没有再动。详情见电脑助手。"
+            summary = "文件任务已停止。已经完成的文件更改会保留，详情见执行过程。"
             label = "已停止"
         elif status == "timeout":
-            summary = "可能已经有部分改动，建议去电脑助手核对一下。"
+            summary = "文件任务达到时限，已停止本次执行。可能已有部分更改，详情见执行过程。"
             label = "已超时"
         else:
             summary = "文件任务未完成。" + (error or output or "请查看任务记录。")[:350]
             label = "未完成"
         if self._computer_cancel is token:
-            self._computer_state.update(status=label, busy=False, output=output or summary,
+            self._computer_state.update(status=label, busy=False, executing=False, output=output or summary,
                                         error=error, directory=result.get("directory", ""))
-            self._computer_cancel = None
-        if my_conv != self._conv_id:
+        self._computer_finish_progress(result,token)
+        self._computer_release(token)
+        if status=='completed' and self._should_sound(event='file_complete'):
+            self._ui(self.play_sound)
+        if not self._computer_can_reply(my_conv,token):
             return
-        body = summary if len(summary) <= 500 else summary[:500] + "\n（完整结果见“电脑助手”）"
-        brief = random.choice(COMPUTER_DONE_LEADS.get(status, COMPUTER_DONE_LEADS["failed"])) + "\n" + body
-        if status == "completed" and len(brief) <= 600:
-            brief += "\n" + random.choice(COMPUTER_DONE_TAILS)
-        self.say(brief)
+        from dialogue_style import file_result
+        summary=result.get('spoken_reply') or file_result(result,self._dialogue_style())
+        brief = summary
+        self.say(brief,source="文件任务")
         # File contents are task evidence, not candidates for automatic memories.
         self._append_history(task, brief)
 
@@ -156,66 +137,42 @@ class ComputerAssistantMixin:
         enabled = tk.BooleanVar(value=config.get("enabled", True))
         tk.Checkbutton(top, text="启用文件任务", variable=enabled).grid(row=0, column=1)
         tk.Label(top, text="由本机 dsh 执行。选择工作文件夹后，可以读取、创建、编辑和整理文件。", anchor="w", wraplength=640).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
-        detected, detection_error = None, ""
-        try:
-            detected = DshInstallation.discover(config)
-        except Exception as exc:
-            detection_error = str(exc)
         paths = tk.Frame(win, padx=16)
         paths.grid(row=1, column=0, sticky="ew")
         paths.columnconfigure(1, weight=1)
         variables = {}
-        presets = {"node": detected.node if detected else "", "dsh_cli": detected.cli if detected else ""}
-        for row, (key, title) in enumerate((("workspace", "工作文件夹"), ("node", "Node 路径（可留空自动检测）"), ("dsh_cli", "dsh 入口 lib\\bin.js（可留空自动检测）"))):
+        scopes={'当前账户可访问的目录':'danger-full-access','仅工作文件夹内写入':'workspace-write'}
+        scope=tk.StringVar(value=next((label for label,mode in scopes.items() if mode==config.get('permission_mode','workspace-write')),'仅工作文件夹内写入'))
+        tk.Label(paths,text='文件操作范围',anchor='w').grid(row=3,column=0,sticky='w',pady=6)
+        ttk.Combobox(paths,textvariable=scope,values=tuple(scopes),state='readonly',width=27).grid(row=3,column=1,sticky='ew',padx=8)
+        for row, (key, title) in enumerate((("workspace", "工作文件夹"), ("node", "Node 路径（可留空）"), ("dsh_cli", "dsh bin.js（可留空）"))):
             tk.Label(paths, text=title, anchor="w").grid(row=row, column=0, sticky="w", pady=4)
-            value = tk.StringVar(value=config.get(key) or presets.get(key, ""))
+            value = tk.StringVar(value=config.get(key, ""))
             variables[key] = value
             tk.Entry(paths, textvariable=value).grid(row=row, column=1, sticky="ew", padx=8, pady=4)
-        connection = tk.StringVar(value="")
-        def browse_workspace():
+        def browse():
             folder = filedialog.askdirectory(parent=win, title="选择本轮文件任务的工作文件夹", initialdir=variables["workspace"].get())
             if folder:
                 variables["workspace"].set(folder)
-        def browse_node():
-            chosen = filedialog.askopenfilename(parent=win, title="选择 node.exe",
-                filetypes=[("Node", "node.exe"), ("可执行文件", "*.exe"), ("全部文件", "*.*")])
-            if chosen:
-                variables["node"].set(chosen)
-        def browse_dsh():
-            chosen = filedialog.askopenfilename(parent=win, title="选择 dsh 的 lib\\bin.js（也可以选 dsh 文件夹）",
-                filetypes=[("dsh 入口", "bin.js"), ("JavaScript", "*.js *.mjs"), ("全部文件", "*.*")])
-            if chosen:
-                variables["dsh_cli"].set(chosen)
-        tk.Button(paths, text="选择…", command=browse_workspace).grid(row=0, column=2)
-        tk.Button(paths, text="浏览…", command=browse_node).grid(row=1, column=2)
-        tk.Button(paths, text="浏览…", command=browse_dsh).grid(row=2, column=2)
+        tk.Button(paths, text="选择…", command=browse).grid(row=0, column=2)
+        connection = tk.StringVar(value="")
         def save():
-            updated = {**config, **{k: v.get().strip() for k, v in variables.items()}, "enabled": enabled.get()}
+            updated = {**config, **{k: v.get().strip() for k, v in variables.items()}, "enabled": enabled.get(),'permission_mode':scopes[scope.get()]}
             try:
                 saved = save_config(self._computer_data_dir(), updated)
                 installation = DshInstallation.discover(saved)
-                variables["node"].set(installation.node)
-                variables["dsh_cli"].set(installation.cli)
-                connection.set("已保存 · 已连接本机 dsh")
+                connection.set("已保存 · 已找到本机 dsh")
                 return saved
             except Exception as exc:
                 connection.set(str(exc))
                 return None
-        def autodetect():
-            try:
-                installation = DshInstallation.discover({**config, "node": variables["node"].get().strip(), "dsh_cli": variables["dsh_cli"].get().strip()})
-            except Exception as exc:
-                connection.set(str(exc))
-                return
-            variables["node"].set(installation.node)
-            variables["dsh_cli"].set(installation.cli)
-            save()
-        buttons = tk.Frame(paths)
-        buttons.grid(row=3, column=0, columnspan=3, sticky="w", pady=8)
-        tk.Button(buttons, text="保存设置", command=save).pack(side="left")
-        tk.Button(buttons, text="自动检测 dsh", command=autodetect).pack(side="left", padx=8)
-        tk.Label(paths, textvariable=connection, anchor="w", wraplength=640).grid(row=4, column=0, columnspan=3, sticky="w")
-        connection.set("已找到本机 dsh；使用它现有的登录/API 配置" if detected else detection_error)
+        tk.Button(paths, text="保存设置", command=save).grid(row=4, column=0, sticky="w", pady=8)
+        tk.Label(paths, textvariable=connection, anchor="w", wraplength=480).grid(row=4, column=1, columnspan=2, sticky="w")
+        try:
+            DshInstallation.discover(config)
+            connection.set("已找到本机 dsh；使用它现有的登录/API 配置")
+        except Exception as exc:
+            connection.set(str(exc))
         input_frame = tk.Frame(win, padx=16, pady=10)
         input_frame.grid(row=2, column=0, sticky="ew")
         tk.Label(input_frame, text="文件任务", anchor="w").pack(fill="x")

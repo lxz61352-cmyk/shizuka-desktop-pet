@@ -41,6 +41,7 @@ class Pose:
     anchor: tuple = (0.5,0.18)
     state: str = "idle"
     phase: str = "loop"
+    activity_progress: float = 1.0
 
 
 class MotionController:
@@ -56,17 +57,27 @@ class MotionController:
     SWAY_DRIVE_V = 4.0        # 速度驱动增益（持续拖动时的滞后，越大越明显）
     SWAY_DRIVE_A = 0.8        # 加速度驱动增益（起步/反向的惯性，别太大否则一提就乱晃）
 
-    def __init__(self):
+    LANDING_SECONDS = .25
+    PREPARE_SECONDS = .35
+
+    def __init__(self,physics=None,recover_frames=None):
+        self.physics=physics or {}
+        self.recover_frames=tuple(recover_frames or ())
+        self.recover_seconds=sum(frame['duration'] for frame in self.recover_frames) if self.recover_frames else .8
         self.reset()
 
     def reset(self):
         self.dragging=False
         self.grab=(0.5,0.18)
+        self.sway_limits=(-self.SWAY_MAX_DEG,self.SWAY_MAX_DEG)
         self.pointer=None
         self.pointer_time=None
+        self.last_movement=None
         self.last_time=None
         self.drag_started=-100.0
         self.released=-100.0
+        self.landing_started=None
+        self.settled_at=None
         self.action=None
         self.action_started=0.0
         self.speed=0.0
@@ -104,20 +115,23 @@ class MotionController:
             self.pet_target=0.0
             self.action_started=now-(self.ACTIONS["pat"]-.35)
 
-    def begin_drag(self,pointer,grab,now):
+    def begin_drag(self,pointer,grab,now,angle_limits=None):
+        self.landing_started=self.settled_at=None
         self.petting=self.pet_controlled=False
         self.pet_target=0.0
         self.dragging=True
         self.falling=False
         self.pointer=pointer
         self.pointer_time=now
+        self.last_movement=now
         self.drag_started=now
-        self.grab=tuple(clamp(n,0.05,0.95) for n in grab)
+        self.grab=tuple(clamp(n,0.0,1.0) for n in grab)
+        self.sway_limits=angle_limits or (-self.SWAY_MAX_DEG,self.SWAY_MAX_DEG)
         self.action=None
         self.speed=0.0
         self.accel=0.0
         self.prev_v=0.0
-        self.sway.velocity+=6.0
+        # Picking up a stationary character must not inject a scripted swing.
 
     def drag_to(self,pointer,now):
         if not self.dragging:
@@ -125,6 +139,8 @@ class MotionController:
         dt=max(0.008,now-self.pointer_time)
         # Pointer coordinates are normalized by the displayed character height.
         velocity=clamp((pointer[0]-self.pointer[0])/dt,-12,12)
+        if abs(pointer[0]-self.pointer[0])>.001:
+            self.last_movement=now
         self.speed += (velocity-self.speed)*(1-math.exp(-dt*18))
         acc=clamp((velocity-self.prev_v)/dt,-25,25)
         self.prev_v=velocity
@@ -138,16 +154,42 @@ class MotionController:
         self.falling=falling
         self.released=-100 if falling else now
         self.speed=0.0
+        if not falling:
+            self.land(now)
 
-    def land(self,now):
+    def land(self,now,settled=True):
         self.falling=False
         self.released=now
+        self.landing_started=now
+        self.settled_at=now if settled else None
+
+    def settle(self,now):
+        if self.landing_started is not None and self.settled_at is None:
+            self.settled_at=now
+
+    def body_state(self,now):
+        if self.dragging:return "dragging"
+        if self.falling:return "falling"
+        if self.landing_started is not None:
+            if self.settled_at is None or now-self.settled_at<self.LANDING_SECONDS:return "landing"
+            if now-self.settled_at<self.LANDING_SECONDS+self.PREPARE_SECONDS+self.recover_seconds:return "recover"
+        return "idle"
+
+    def recovery_phase(self,now):
+        age=now-self.settled_at-self.LANDING_SECONDS
+        if age<self.PREPARE_SECONDS:return "prepare"
+        age-=self.PREPARE_SECONDS
+        for index,frame in enumerate(self.recover_frames):
+            age-=frame['duration']
+            if age<0:return f"frame-{index}"
+        return "tidy"
 
     def trigger(self,action,now):
         if action not in self.ACTIONS:
             raise ValueError(f"Unknown action: {action}")
         if self.dragging or self.falling:
             return False
+        self.landing_started=self.settled_at=None
         self.petting=self.pet_controlled=False
         self.pet_target=0.0
         self.action,self.action_started=action,now
@@ -164,6 +206,7 @@ class MotionController:
             self.petting=self.pet_controlled=False
             self.pet_follow=Spring();self.pet_target=0.0
             self.action=None;self.released=-100.0
+            self.landing_started=self.settled_at=None
             return Pose()
         gx=self.gaze_x.step(clamp(gaze[0],-1,1),dt,90,19)
         gy=self.gaze_y.step(clamp(gaze[1],-1,1),dt,90,19)
@@ -184,20 +227,30 @@ class MotionController:
             # 驱动阻尼单摆：θ'' = -ω0²·sinθ - 2ζω0·θ' + drive
             w0=2*math.pi/self.SWAY_PERIOD
             zeta=self.SWAY_DAMP_DRAG if self.dragging else self.SWAY_DAMP_FREE
+            if self.dragging and 'drag_still_damping' in self.physics:
+                still=now-self.last_movement-self.physics.get('drag_still_delay',.08)
+                blend=clamp(still/.16,0,1)
+                zeta+=(self.physics['drag_still_damping']-zeta)*blend
             drive=-(self.SWAY_DRIVE_V*self.speed+self.SWAY_DRIVE_A*self.accel) if self.dragging else 0.0
             alpha=-(w0*w0)*math.sin(theta)-2*zeta*w0*omega+drive
             omega=clamp(omega+alpha*dt,-14.0,14.0)
-        theta=clamp(theta+omega*dt,-max_rad,max_rad)
+        low,high=(tuple(math.radians(a) for a in self.sway_limits) if self.dragging
+                  else (-max_rad,max_rad))
+        theta=clamp(theta+omega*dt,low,high)
+        if (theta<=low and omega<0) or (theta>=high and omega>0):
+            omega=0.0
         self.sway.value=math.degrees(theta)
         self.sway.velocity=math.degrees(omega)
         sway=self.sway.value
         lifted=clamp(self.lift.step(1.0 if self.dragging else 0.0,dt,160,12),-0.35,1.15)
-        # Window gravity handles the fall/bounce. Do not jump in place on release.
+        # Window gravity handles the fall; the landing artwork absorbs impact.
         dy=0.0
         head_angle=head_dx=head_dy=0.0
         eye=mouth=None
-        state="dragging" if self.dragging else "falling" if self.falling else "landing" if release_age<.7 else "idle"
+        state=self.body_state(now)
         phase="start" if self.dragging and now-self.drag_started<.2 else "end" if state=="landing" else "loop"
+        if state=="recover":
+            phase=self.recovery_phase(now)
         expression="lifted" if self.dragging else "falling" if self.falling else "neutral"
         sleep_fx=sleep_time=0.0
         leg=0.0
@@ -249,4 +302,4 @@ class MotionController:
                     hair_sway=hair,leg_sway=leg,breath=breath-squash*8,
                     sleep_fx=sleep_fx,sleep_time=sleep_time,
                     eye_open=eye,mouth_open=mouth,expression=expression,
-                    anchor=(self.grab[0],0.5),state=state,phase=phase)
+                    anchor=self.grab,state=state,phase=phase)

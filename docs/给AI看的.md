@@ -1,49 +1,46 @@
-# 给 AI / 开发者看的：Shizuka 桌宠 V0.6.0
+# 给 AI / 开发者看的：Shizuka 桌宠 V0.7.7
 
-> 这是一份**自包含**的技术交接文档：程序是什么、怎么跑、怎么改、每个功能怎么实现的、更新了什么、还有什么没解决。
-> 相对路径都以解压目录为根。
+> 这是一份**自包含**的技术交接文档：程序是什么、怎么跑、怎么改、每个功能怎么实现的、还有什么没解决。
+> 相对路径都以解压目录为根。上一版本文档对应 V0.6.0，架构已在 V0.7.6 全部模块化，本文按 0.7.7 重写。
 
 ---
 
 ## 一、这是什么
 
-一个 Windows 桌面宠物（Tk + Pillow）：角色是《World Dai Star》的静香，待在桌面左下角，支持聊天（任意 OpenAI 兼容接口，默认 DeepSeek）、记忆、待办提醒、剪贴板反应、开机问候、角色包切换、鼠标互动，以及背景音乐「i wanna」。
+一个 Windows 桌面宠物（Tk + Pillow）：角色是《World Dai Star》的静香，待在桌面上，支持聊天（任意 OpenAI 兼容接口，默认 DeepSeek）、记忆、待办提醒、剪贴板反应、天气/新闻、开机问候、角色包、鼠标互动、背景音乐、可选语音朗读、使用时长统计、文件助手、微信远程、文献筛选、双端记忆同步和自动更新。
 
 - 语言/运行：Python 3.13 + Tkinter + Pillow + pystray + openai；用 PyInstaller 打成 `Shizuka.exe`（onedir，旁边 `_internal/`）。
 - 无控制台窗口（`--windowed`），崩溃写 `data/startup_error.log`。
-- 单实例：Windows 命名互斥体 `Local\ShizukaDeskPet_SingleInstance`。
-- 版本常量：`src/pet.py` 顶部 `APP_VERSION = "0.6.0"`。
+- 单实例：Windows 命名互斥体 `Local\ShizukaAssistant_SingleInstance`。
+- **版本常量在 `src/app_identity.py` 的 `APP_VERSION`**（0.7.6 起从 `pet.py` 挪走）；`APP_NAME` / `APP_ID` 也在这里。
 
 ### 目录结构
 
 | 路径 | 说明 |
 | --- | --- |
-| `Shizuka.exe` + `_internal/` | 打包好的可运行程序（PyInstaller onedir） |
-| `src/` | 完整 Python 源码（见下） |
-| `characters/` | 角色包（正式：`shizuka-side-motion` 微动版、`shizuka-classic` 单图版） |
+| `Shizuka.exe` + `_internal/` | 打包好的可运行程序（PyInstaller onedir）。**`_internal/base_library.zip` 是运行必需文件**，`.gitignore` 里特意用 `!_internal/*.zip` 放行 |
+| `src/` | 完整 Python 源码（约 60 个模块） |
+| `characters/` | 角色包（`shizuka-side-motion` 微动版、`shizuka-classic` 单图版），人设卡是同目录 `persona.json`（SillyTavern V2） |
 | `assets/` | 图片/音频（`i_wanna.mp3`、`reminder.wav`、`voice_ref1.wav`、图标、`bubble/`） |
-| `voice_model/` | 训练好的「喜多郁代」音色模型（`.ckpt` + `.pth`，约 328MB）+ `说明.md` |
-| `experiments/` | 试错素材归档，**不参与运行时扫描** |
-| `tools/` `tests/` | 构建脚本、回归测试 |
-| `references/` `LICENSES/` | 参考资料与第三方许可 |
+| `voice_model/` | 「喜多郁代」音色模型（`.ckpt` + `.pth`，约 328MB，走 Git LFS）+ `说明.md` |
+| `docs/` | 发布文档（本文） |
+| `tools/` `tests/` | 构建/发版脚本、回归测试 |
+| `更新公告.md` | 更新重启后弹出的公告，按 `## vX.Y.Z` 分节 |
+| `version.json` | `{"version","asset","notes"}`，更新检查的镜像备用源读它 |
+| `MANIFEST.json` / `VERIFICATION.json` / `verify_package.py` | 发布包文件哈希清单与校验脚本 |
 | `data/` | **运行数据（首次运行自动创建；本包不含）** |
-| `启动桌宠.bat` / `预览动作.bat` / `源码启动.bat` | 启动脚本 |
+| `启动桌宠.bat` / `源码启动.bat` / `预览动作.bat` | 启动脚本（源码启动= `pythonw src/run_pet.py`，预览= `Shizuka.exe --preview`） |
 
 ---
 
-## 二、运行、构建、测试
+## 二、运行、构建、测试、发版
 
 - **运行（用户）**：双击 `Shizuka.exe`。程序按 `sys.executable` 的目录找 `assets/`、`characters/`、`data/`（frozen 时 `ROOT_DIR = dirname(sys.executable)`）。
-- **源码运行**：装好含 Tcl/Tk 的 Python 与 `src/requirements.txt` 后运行 `源码启动.bat`；`run_pet.py` 是入口（捕获启动异常 → `data/startup_error.log` + MessageBox）。
-- **构建**：`tools/build_release.py`（PyInstaller onedir + 显式收集 `assets/`/`src/` + 审计凭据与个人数据）。命令等价于：
-  ```
-  python -m PyInstaller --noconfirm --windowed --onedir --name Shizuka \
-    --icon assets/pet_icon.ico --paths src --paths tools \
-    --hidden-import pystray._win32 --collect-all openai --copy-metadata pystray \
-    src/run_pet.py
-  ```
-  构建环境（本项目实测）：Python 3.13 + pillow 12.3.0 / pystray / openai 3.13.0 / PyInstaller 6.22.x。
-- **测试**：`python -m unittest discover -s tests -p "test_*.py" -v`；`tests/smoke_windows.py`（用临时数据，不调真实 API）。
+- **源码运行**：装好含 Tcl/Tk 的 Python（3.10~3.13）与 `src/requirements.txt` 后运行 `源码启动.bat`；`run_pet.py` 是入口（捕获启动异常 → `data/startup_error.log` + MessageBox）。
+- **构建**：`python tools/build_windows.py`（PyInstaller onedir，参数见脚本）。构建产物直接覆盖根目录的 `Shizuka.exe` + `_internal/`。构建环境（本项目实测）：Python 3.13.14 + PyInstaller 6.22.3。
+- **测试**：`python tools/run_tests.py`（用临时数据目录，不调真实 API）。
+- **离线验收**：`Shizuka.exe --self-test --report <绝对JSON路径>`（用临时数据目录跑 `release_smoke.py`，不联网、不读凭据）。
+- **发版**：`python tools/make_release.py`——重新生成 `version.json`、`VERIFICATION.json`、`MANIFEST.json` 并打出 `Shizuka-<版本>-Windows-x64.zip` 与 `Shizuka-<版本>-update.zip`。之后建 GitHub Release（tag `v<版本>`，附件挂 update 包）。
 - **改代码不会改变已打包的 EXE**，必须重新构建。
 
 ---
@@ -53,13 +50,23 @@
 | 文件 | 职责 |
 | --- | --- |
 | `src/run_pet.py` | 入口：错误日志、单实例、`--preview`、`--self-test` |
-| `src/pet.py` | 主程序（约 7200 行）：Tk 窗口、鼠标事件、聊天/API、记忆、待办、剪贴板、问候、音乐/唱片、设置 |
-| `src/character_packs.py` | 角色包校验、路径越界限制、正式列表与默认选择 |
-| `src/pet_motion.py` | Pose、弹簧/单摆、持续抚摸、双跳、提起/下落状态 |
-| `src/pet_triggers.py` | 动作触发、空闲、冷却、主动/自动来源 |
-| `src/local_mesh.py`、`src/layered_renderer.py` | 局部网格变形、表情覆盖、zzz、Windows 色键透明 |
-| `src/pet_ground.py` | 窗口重力、回弹、任务栏脚底定位（含负坐标副屏） |
-| `src/pet_surfaces.py` | 只读枚举窗口几何、Z 序、PID；筛选下方可见上沿 |
+| `src/app_identity.py` | 名称/版本/默认角色 |
+| `src/pet.py` | 主程序：Tk 窗口、鼠标事件、菜单、渲染调度、提示音/音乐、语音服务、设置持久化、待办与提醒循环、剪贴板、前台感知、问候、使用时长 |
+| `src/speech_motion.py`、`src/activity_states.py` | 说话/动作状态机、活动帧调度 |
+| `src/dialogue_*.py` | 聊天、上下文拼接、口吻清理、被动发言闸门（`dialogue_grounding`）、显式记忆 |
+| `src/conversation_memory.py` | 统一近期上下文与长期事实提炼 |
+| `src/memory_maintenance.py` | 记忆审阅/整理（带来源） |
+| `src/todo_*.py` | 待办：模型整理（`todo_model`）、提醒策略（`todo_schedule`）、周期（`todo_recurrence`）、备注、语音、编辑窗、回复 |
+| `src/intent_routing.py` | 本地快速通道 + 交给模型的意图路由提示词 |
+| `src/weather.py` / `src/news.py` / `src/weather_features.py` | 定位+天气（双源）、新闻、天气/新闻问答 |
+| `src/updater.py` / `src/update_features.py` | 检查更新、镜像下载、覆盖安装、更新公告 |
+| `src/computer_agent.py`、`computer_ui.py`、`computer_progress.py` | 本机 DSH 文件助手（配置、任务、只读进度窗） |
+| `src/weixin_channel.py`、`weixin_ui.py` | 微信绑定、收发、识图、远程指令 |
+| `src/research_watch.py`、`assistant_features.py` | 文献筛选与「更多设置」二级菜单 |
+| `src/sync_*.py` | 双端记忆/聊天/待办同步（签名 journal、设备身份、冲突记录） |
+| `src/character_packs.py`、`character_persona.py` | 角色包校验与路径限制、人设卡读取 |
+| `src/layered_renderer.py`、`local_mesh.py`、`pet_motion.py`、`pet_triggers.py`、`pet_ground.py`、`pet_surfaces.py` | 局部网格变形、弹簧/单摆、动作触发、重力与窗口承接 |
+| `src/ui_theme.py`、`dialogue_bubble.py`、`conversation_ui.py` | 统一控件主题、可滚动气泡、聊天输入/记录 |
 | `tools/preview_character.py` | 与正式程序一致的鼠标互动离线预览 |
 
 ---
@@ -68,75 +75,81 @@
 
 ### 1. 角色包与渲染
 
-- 角色包在 `characters/<id>/character.json`（`renderer: layered` 或 `static`），人设在同目录 `persona.json`（SillyTavern Character Card V2）。`character_packs.discover_packs()` 扫描，`selected_pack()` 按 `data/settings.json` 的 `character_pack` 选。
-- 微动版角色包是**分层 PNG 局部网格**：`layered_renderer.LayeredRenderer` + `local_mesh.LocalMesh` 做头/发梢/下半身变形，闭眼/说话/撇嘴/下落嘴型用局部覆盖贴片（在同一张立绘上做轻微差分/微动）。
-- **透明是色键（chroma-key）**：`TRANS_COLOR = "#000001"`，`render_display()` 把 alpha 阈值化后填色键；`set_window_transparent()` 设 `-transparentcolor`。所以**不是真 alpha**（色键区自动穿透点击）。整体淡入淡出用窗口属性 `-alpha`（与色键可共存）。
-- 性能：`_RenderWorker` 后台线程渲染最新姿态，主线程只取成品帧；`_groups` 基础组按高度缓存 + 动态小补丁每帧叠加；拖动时把「下半身拉伸 + 整体摆动」折进网格一次变换。
+- 角色包在 `characters/<id>/character.json`（`renderer: layered` 或 `static`），人设在同目录 `persona.json`。`character_packs.discover_packs()` 扫描，`selected_pack()` 按 `data/settings.json` 的 `character_pack` 选。
+- 微动版是**分层 PNG 局部网格**：`LayeredRenderer` + `LocalMesh` 做头/发梢/下半身变形，闭眼/说话/撇嘴/下落嘴型用局部覆盖贴片。
+- **透明是色键（chroma-key）**：`TRANS_COLOR = "#000001"`，`render_display()` 把 alpha 阈值化后填色键；`set_window_transparent()` 设 `-transparentcolor`。所以**不是真 alpha**（色键区自动穿透点击）。整体淡入淡出用窗口属性 `-alpha`。
+- 圆角窗口（聊天输入框、气泡）用 `ui_theme.round_window()`：色键透明 + Canvas 画**采样过的圆弧多边形**（不要用 `create_polygon(smooth=True)`，那样只切掉 1~2px，看着还是方的）。内容必须四边缩进 `radius`，否则会盖住圆角。
+- 性能：`_RenderWorker` 后台线程渲染最新姿态，主线程只取成品帧；基础组按高度缓存 + 动态补丁叠加。
 
-### 2. 聊天
+### 2. 聊天与上下文
 
-- `DeskPet._ask_model()`：`system = load_persona() + CHAT_STYLE_HINT`（+ 相关记忆块），带最近 `history_max` 轮历史，历史后插一条 `STYLE_REMINDER`，再发用户消息；流式生成，边生成边按句合成/显示。
-- `load_persona()` 读当前角色包的 `description + system_prompt + mes_example`，末尾追加 `KOKONA_RESTRAINT`（少提心菜）。
-- **口癖兜底**：`clean_reply_style()`（模块级）用正则去掉回复**开头**的语气词起手（哦/噢/喔/嗯/呃/诶/欸/唉/哎/呵呵…）以及紧随的第一句句尾语气词；「哎呀/哎哟」等有负向保护。它被接在 `_ask_model` 的流式显示、`_stream_update`、`_stream_finish`、`_play_reply`、`say()`、`_translate_clip` 的点评上。函数幂等，喂回模型的历史也是清理后的。
-- 人设改动**实时读取**，改完下一条即生效；卡片缺失回退 `DEFAULT_PERSONA`。
+- `DeskPet._ask_model()`：`system = load_persona() + 聊天风格 + 相关记忆 + 待办备注上下文`，带统一近期上下文（最多 100 条 / 48000 字），流式生成，边生成边按句合成/显示。
+- **口癖兜底**：`clean_reply_style()` 用正则去掉回复开头的语气词起手和紧随的第一句句尾语气词；接在流式显示、`_play_reply`、`say()`、剪贴板点评等所有出口。函数幂等，喂回模型的历史也是清理后的。
+- `[历史消息时间：…]` 这类上下文元信息在 `clean_text` 里被正则剥离，提示词也禁止复述，否则模型会念出来。
+- 人设改动**实时读取**，改完下一条即生效。
 
 ### 3. 记忆
 
-- `data/memory.json`，`MemoryStore`（带锁）。显式「记住 X」→ 模型解析保留原文 → 永久记忆；未明说时模型判断是否值得长期记。
-- 检索：优先本地语义检索 → **回退关键词重合**；按相关度排序注入（上限约 15 条，永久轻微加权）。启动时清理过期（25 天未引用按 30% 概率删）+ 模型合并近义重复。
+- `data/characters/<角色>/memory.json`，`MemoryStore`（带锁）。显式「记住 X」→ 模型解析保留原文 → 永久记忆；未明说时模型判断是否值得长期记。检索优先本地语义检索，回退关键词重合，按相关度注入。
+- 启动清理过期（25 天未引用按概率删）+ 模型合并近义重复；`memory-review.json` 记录哪些旧对话已审阅，避免重复刷记忆。
 
 ### 4. 待办 / 提醒
 
-- `data/todos.json`。是否待办由模型分类（`_classify_intent` → `_route_intent`）；时间必须落到具体钟点，模糊则追问并弹输入框；相对时间（「2 小时后」「3 天后」「20s」）**本地直接算**。`_reminder_loop` 每 20 秒检查到期；开机类在启动时触发；折叠时只发声、下次打开补说。
+- `todos.json` 只存核心字段（`text/due/on_boot/done`）；`todo-details.json` 存备注、分类（生活/研究）、周期规则、提醒渠道和投递状态（**旁表，不跨端覆盖**）。
+- 建待办两条路：自然语言（`intent_routing` → `add_todo` → `_handle_add_todo`，相对时间本地算、模糊追问）和 `/待办`（模型整理成多条，带备注/时间/提前量/周期）。
+- `_reminder_loop` 每 20 秒检查到期；开机类在启动时触发；折叠时只发声、下次打开补说。提前提醒/周期由 `todo_schedule` 算，事件类默认提前 1 小时，「有空时」默认每天 09:00 直到完成。
 
-### 5. 剪贴板
+### 5. 剪贴板 / 截图
 
-- `_clip_loop` 每 1.5 秒查 `GetClipboardSequenceNumber`；仅对启动后的新内容反应。路由：图片文件路径 → 识图；网址 → `fetch_page_text`（`http_get` 会解 gzip/deflate）→ 概括；失效路径 → 试取图；外语 → `_translate_clip`；否则 `_react_clip`。这些被动反应 prompt 都明确「别一上来就鉴定/复述这是什么」。剪贴板内容**不当指令**、不设待办。
+- `_clip_loop` 每 1.5 秒查 `GetClipboardSequenceNumber`；仅对启动后的新内容反应。路由：图片文件路径 → 识图；网址 → `fetch_page_text`（`http_get` 解 gzip/deflate）→ 概括；失效路径 → 试取图；外语 → 翻译；否则 → 普通反应。
+- **去重**：`_clip_repeat/_clip_remember` 记住最近回应过的内容（文字还认「同一段被逐渐加长/截短」），同一张图按哈希去重。频率只留 3~5 秒防抖，不再用长间隔卡（长间隔会让「复制了却不理人」）。
+- 被动发言的闸门在 `dialogue_grounding`：`_claim_passive` 对剪贴板/截图用独立短间隔，且不占用「主动搭话间隔」，否则主动搭话会被饿死。剪贴板内容**不当指令**、不设待办。
 
-### 6. 开机问候 / 新闻
+### 6. 天气 / 新闻
 
-- `_gen_greeting`：概率 **35% 天气 / 35% 前台窗口 / 10% 暧昧 / 20% 新闻**；新闻取 `https://60s.viki.moe/v2/60s`；取不到退回普通主题。聊天里问新闻走 `_news_worker`。
+- `weather.py`：`_geo_ip()` 先查国内 IP 库（GBK）再回退 ip-api；`_net_mode()` 探测外网是否可达并缓存。外网可达走 Open-Meteo（地理编码 + 当前/未来三天），否则走中国气象局 `weather.cma.cn`，两边互为兜底。WMO 天气码用 `_WMO_ZH` 转中文。
+- `news.py`：`get_news()` 取 `https://60s.viki.moe/v2/60s` 的当日标题列表。
+- 问答走 `weather_features._weather_worker / _news_worker`（拿数据 → 交给模型用角色口吻回答）；启动时 `_prefetch_geo()` 后台预热，`_greeting_weather()` 有 35% 概率把真实天气带进开机问候。
 
-### 7. 背景音乐「i wanna」与旋转唱片（V0.6.0 新增）
+### 7. 语音朗读 / GPT-SoVITS
 
-- **音频**：`assets/i_wanna.mp3`；`MUSIC_ALIAS = "deskpet_bgm"`，用独立 MCI 别名播放（与提示音互不打断）。`_mci_music_play/pause/resume/stop/mode` 是模块级函数；音量 `MUSIC_VOLUME = 850`（0–1000）。
-- 状态机在 `DeskPet`：`_music_state ∈ {stopped, playing, paused}`；`_music_play/pause/resume/stop` + `_music_poll`（每秒查 MCI `status mode`，自然播完自动回 stopped）。
-- **菜单**：`show_menu` 里 `_add_menu_music()` 按状态显示「播放 i wanna」或「暂停播放/结束播放」或「继续播放/结束播放」。
-- **唱片外观**：`extract_mp3_cover()` 解析 ID3v2 APIC 取封面（无封面用深色兜底）；`make_vinyl_image()` 裁圆 + 中间挖小圆孔（4× 超采样抗锯齿）；`_rgba_to_key()` 转色键图。唱片窗口是独立 `Toplevel`，`-alpha` 做淡入淡出。
-- **位置**：`_place_vinyl()` 读齿轮按钮实际坐标，排在**齿轮正下方**、与按钮列对齐、直径 = `_btn_size`；`_start_vinyl_follow()` 每 40ms 跟随角色移动/缩放，角色隐藏时一起收起。
-- **旋转**：`_vinyl_spin()` 每 `VINYL_FRAME_MS=50` 转 `VINYL_SPIN_DEG=1.1°`；`_music_state=="playing"` 才转。
-- **交互**：唱片 label 绑 `<Button-1>/<ButtonRelease-1>`——`_vinyl_press` 起 3 秒定时器；到点 `_vinyl_long_press()` → `_music_stop()`（淡出）；提前松手 `_vinyl_release()` → 播放则暂停、暂停则继续。相关常量在 `pet.py` 顶部 `VINYL_*`。
+- 应用保留语音能力（`VOICE_ENABLED = True`）。是否可用取决于**本机有没有装 GPT-SoVITS**：`gsv_dir()/gsv_available()/gsv_py()` 先看环境变量 `GSV_DIR`/`GPTSOVITS_DIR`/`GPT_SOVITS_DIR`，再看 `settings.json` 的 `gsv_dir`，再在常见根目录找 `*GPT-SoVITS*`；判定标准是「有 `runtime\python.exe` 且有 `api_v2.py`」。
+- 服务：TTS 走 `http://127.0.0.1:9880/tts`（`api_v2.py` + `tts_infer_pet.yaml`），语义检索服务 9881。`_ensure_tts_server` / `_ensure_emb_server` 后台拉起；**健康检查**：TTS 请求超时自动杀进程重拉，语义服务卡死由主循环重拉（否则会「端口开着但不出声」）。
+- 流水线：`_tts_synth` → `_speak`/`_speak_stream`/`_tts_enqueue`/`_tts_producer`/`_tts_loop`；`_voice_type_*` 让文字按朗读时长逐字出；`_startup_gate` 未就绪先显示「语音服务加载中…」（最多等 4 分钟）。
+- 参考音色 `assets/voice_ref1.wav` 随包；GPT-SoVITS 本体约 14GB，不随包发布。
 
-### 8. 提示音 / 音量
+### 8. 背景音乐「i wanna」与旋转唱片
 
-- `play_sound` → 后台线程 `_mci_play(path, "deskpet_snd", wait=True, volume=SOUND_VOLUME)`；提示音与音乐音量统一 `850/1000`（全声音 −15%）。MCI `setaudio <alias> volume to N`，0–1000。
-- 三态设置：所有消息 / 仅待办 / 无（`_should_sound`）。菜单下栏「测试提示音」。
+- `assets/i_wanna.mp3`；`MUSIC_ALIAS = "deskpet_bgm"` 独立 MCI 别名（与提示音互不打断），音量 850/1000。
+- 状态机 `_music_state ∈ {stopped, playing, paused}`；`_music_poll` 每秒查 MCI `status mode`，自然播完自动回 stopped。
+- 唱片：`extract_mp3_cover()` 取 ID3v2 APIC 封面（无封面深色兜底）→ `make_vinyl_image()` 裁圆挖孔 → 独立 `Toplevel`，排在齿轮正下方、随角色移动缩放，`VINYL_SPIN_DEG=1.1°`/`VINYL_FRAME_MS=50` 旋转。
+- 交互：`_vinyl_press` 起 3 秒定时器，到点 `_music_stop()`；提前松手则播放↔暂停。
 
-### 9. 语音朗读 / GPT-SoVITS 自动检测
+### 9. 提示音 / 使用时长
 
-- 应用本身保留语音能力（`VOICE_ENABLED = True`）。是否可用取决于**本机有没有装 GPT-SoVITS**：
-  - `gsv_dir()` / `gsv_available()` / `gsv_py()`（模块级）自动寻找安装目录：先看环境变量 `GSV_DIR`/`GPTSOVITS_DIR`/`GPT_SOVITS_DIR`，再看 `settings.json` 的 `gsv_dir`，再在常见根目录（各盘根、桌面/文档/下载）下找 `*GPT-SoVITS*`；判定标准是「目录里有 `runtime\python.exe`（或 `python.exe`）**且**有 `api_v2.py`」。
-  - 找得到：`_voice_on = settings["voice"] and VOICE_ENABLED and gsv_available()`，设置菜单里「语音朗读」是正常开关；打开时后台拉起 TTS 服务（`_ensure_tts_server`，端口 9880），并自动拉起语义服务（`_ensure_emb_server`，9881）。
-  - 找不到：`_voice_on` 恒 False；菜单「语音朗读」行灰显提示「未检测到 gpt-sovits，语音功能暂时无法使用（点此指定目录）」；点击弹目录选择框（`_pick_gsv_dir`），选中有效目录后写入 `settings.json` 的 `gsv_dir`（`set_gsv_dir` + 缓存）即可用。
-- **参考音色随包**：`assets/voice_ref1.wav` + `voice_ref1.txt`（约 0.5MB），用户装了 GPT-SoVITS 就能直接用，不用自己找音色。**GPT-SoVITS 本体约 14GB，不随包发布**。
-- **训练模型也随包**：`voice_model/`（喜多郁代 `.ckpt` + `.pth`，约 328MB，v2ProPlus），配合 GPT-SoVITS 的 `tts_infer_pet.yaml` 使用；用法与来历见 `voice_model/说明.md`。
-- 相关实现：`_tts_synth`（调 9880 合成）、`_speak`/`_speak_stream`/`_tts_enqueue`/`_tts_producer`/`_tts_loop`（生产者-消费者流水线）、`_voice_type_*`（文字按朗读时长逐字）、`_preheat_tts`、`_startup_gate`（未就绪先显示「语音服务加载中…」）、`_trim_wav_silence`。
+- `play_sound` → 后台线程 MCI `deskpet_snd`（`wait=True`），音量 `SOUND_VOLUME=850`。四档：`all` / `todo-files`（默认）/ `todo` / `none`，由 `_should_sound` 判定；聊天回复也要响（`_ask_model` 开头补一次），否则只有 `say()` 路径会响。
+- `usage.json`（`{"days": {日期: {exe: 秒}}}`，保留最近 14 天）。`_usage_loop` 每 5 秒采样前台程序；连续无键鼠超过 `usage_away_min`（默认 5 分钟）且无音频播放时视为离开、暂停统计。问「我今天用了多久」由 `usage_report` 意图直接汇报。
 
-### 10. 线程 / 锁 / 设置
+### 10. 检查更新
+
+- `updater.check_latest_release()` 先直连 GitHub API（超时 4s），失败转镜像读 `version.json`；返回 `(有更新, 版本, 下载地址, 说明)`。`UPDATE_REPO` 在 `updater.py` 顶部。
+- 菜单「检查更新」左键检查/更新（确认窗 → `download_package()` 下载解压 → `launch_swap()` 写 bat：等本进程退出 → `robocopy /E /XD data voice_model experiments /XF api_key.txt` 覆盖 → 重启 → 清理），**右键**可停止/重新接收更新（`settings.json` 的 `update_disabled`）。
+- 更新重启后 `_show_update_done()` 弹一次公告：优先取随包 `更新公告.md` 里该版本那一节（`read_announcement`），其次 Release 说明；弹完删除 `data/_pending_update.json`。
+- **更新提示只跟 GitHub Release 有关**，普通 commit 不会触发；发新版要建带 tag 和 zip 附件的 Release。
+
+### 11. 电脑助手 / 微信 / 研究 / 同步
+
+- **电脑助手**：`/电脑 <任务>` 或明确文件指令 → 本机 DSH（headless profile + 本次 overlay，`src/shizuka-dsh-bridge.mjs`）。进度窗只读，需要确认的问题回到聊天里问。配置在 `data/computer-assistant.json`（工作文件夹、Node 路径、dsh bin.js、操作范围）。
+- **微信**：`weixin_channel` 负责协议与收发，`weixin_ui` 负责扫码/设置；支持对话、识图、`/图片`、`/电脑` 等远程指令，待办提醒也可走微信。绑定状态存 `data/weixin-state.json`。
+- **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `topics`/`queries` 检索，模型按摘要判断相关性；缺摘要时只依据题名评论，不编造结论。
+- **同步**：`sync_runtime/sync_client/sync_store/sync_transport/sync_rustdesk/...` 用签名 journal、独立设备身份、幂等事件；默认每 3 小时（`memory_interval_seconds`，60~604800 秒）轻量检查，另有手动同步。
+
+### 12. 线程 / 锁 / 设置 / 凭据
 
 - 后台线程统一经主线程队列 `_ui`/`_poll_ui` 操作 Tk。锁：`_FILE_LOCK`（文件写）、`_hist_lock`、`_chat_lock`、`_MCI_LOCKS`（每别名一把）、`_render_lock`、`get_client`/`get_memory` 双检锁。
-- 设置持久化在 `data/settings.json`（`_save_settings`）；API Key 存 **Windows 凭据管理器**（`_cred_write`/`_cred_read`/`_cred_delete`，目标 `ShizukaDeskPet/api_key`，系统加密、绑定当前用户），**程序目录不留 Key 文件**；旧版 `api_key.txt` 首次启动自动迁移进凭据管理器并删除（`_migrate_api_key` / `_read_legacy_key_file`）。数据文件读坏时先备份 `.bad-<时间戳>` 再重建，防清空。
-
-### 11. 开机自启 / 周期提醒 / 使用时长 / 自动更新
-
-- **开机自启**：`autostart_command()` / `is_autostart_on()` / `set_autostart(on)` 读写注册表 `HKCU\...\Run` 下的 `ShizukaDeskPet`；菜单「开机自动启动」开关。
-- **周期提醒**：数据存 `data/recurring.json`（`self.recurs`）；`freq` = daily / weekly / workday，`time` = `HH:MM`，`weekday` = 0-6（周一=0）。识别：`_classify_intent` 出现「每天/每日/每周/每星期/工作日」→ `action=add_recurring`，`_handle_add_recurring` 落库（缺内容/时间会追问，走 `self._pending_recur`）。触发：`_reminder_loop` 每 20 秒调 `_check_recurs()`，到点且当天未触发则提醒（错过超过 4 小时不再补）；`_parse_hhmm` 解析「9点/下午3点半/09:00」。
-- **待办窗口双页签**：`show_todos` 里「待办 / 周期待办」两个页签（`_show_todo_tab` 切换 `_todo_page`/`_recur_page`）；周期页 `_build_recur_rows` 可编辑内容/频率/时间/星期、暂停、删除。
-- **使用时长统计**：`data/usage.json`（`{"days": {日期: {exe: 秒}}}`，保留最近 14 天）。`_usage_loop` 每 5 秒采样一次前台程序（`get_foreground_app`）累加时长；`_system_idle_seconds()` 连续无键鼠超过 `USAGE_AWAY_MIN`（默认 5 分钟）时视为**离开、暂停统计**，但若 `_audio_peak()` 检测到正在放音频（看视频/听歌）则不算离开。面板：菜单「时长统计」→ `show_usage()`（各应用时长条形图 + 合计，底部可改离开阈值并写入 `settings.json` 的 `usage_away_min`）。日报：`_maybe_daily_report()` 在 `_foreground_loop` 里小概率触发一次「今天你都在忙什么」小总结（当天一次、需累计 ≥20 分钟）。
-- **自动检查更新**：`check_latest_release()` 读 GitHub 仓库 `UPDATE_REPO` 的最新 **Release**，与 `APP_VERSION` 比较；启动后台检查一次。菜单「检查更新」正常显示「已是最新版本咯~」、有更新显示「·有更新·」；**左键**检查/更新（点击弹窗显示 Release 说明，确认后 `_download_and_update()` 下载 zip、解压，生成 `.bat`：等本进程退出 → `robocopy /E /XD data voice_model experiments /XF api_key.txt` 覆盖 → 重启 → 清理），**右键** `_confirm_toggle_update()` 可停止/重新接收更新（存 `settings.json` 的 `update_disabled`，禁用后该行显示「已禁用更新」、启动不再检查）。
-  - **更新包**：Release 附件优先选名字带 `update` 的 zip（`tools/make_update_zip.py` 生成，排除 `voice_model`/`data`/`experiments`，约 70MB），这样更新不会重下 328MB 音色模型、也不会覆盖用户数据；找不到才退回第一个 zip。
-  - **更新公告**：更新重启后 `_show_update_done()` 弹一次「更新公告」——内容取自随包的 `更新公告.md`（`read_announcement(ver)` 按 `## vX.Y.Z` 分节取该版本那一节），取不到再退回 Release 说明；弹完删除 `data/_pending_update.json`。
-  - **注意**：更新提示只跟 **GitHub Release** 有关，普通 commit 不会触发；要发新版就建一个带 tag 和 zip 附件的 Release。
+- 设置持久化在 `data/settings.json`（`_save_settings` 写的是**显式字段字典**，新增设置项要同时改 `load_settings` 和 `_save_settings`）。
+- API Key 存 **Windows 凭据管理器**（`_cred_write`/`_cred_read`，目标 `ShizukaDeskPet/api_key`；读取时 `ShizukaAssistant/api_key` 也认，兼容 0.7.6 改过的名字），**程序目录不留 Key 文件**；旧 `api_key.txt` 首次启动自动迁移并删除。
+- 数据文件读坏先备份 `.bad-<时间戳>` 再重建，防清空。
 
 ---
 
@@ -144,54 +157,52 @@
 
 | 文件 | 内容 |
 | --- | --- |
-| `data/settings.json` | 功能开关 + 位置/缩放/接口配置 |
-| `data/memory.json` | 记忆库 |
-| `data/todos.json` | 待办 |
-| `data/对话记录/对话记录.json` + `YYYY-MM-DD.md` | 对话记录（私人数据） |
-| `data/startup_error.log` / `data/error.log` | 启动/回调错误 |
+| `data/settings.json` | 功能开关 + 位置/缩放/接口配置 + `update_disabled` |
+| `data/characters/<角色>/memory.json` | 记忆库 |
+| `data/characters/<角色>/todos.json` + `todo-details.json` | 待办核心字段 + 旁表（备注/分类/周期/通知状态） |
+| `data/characters/<角色>/usage.json` | 使用时长（最近 14 天） |
+| `data/characters/<角色>/对话记录/对话记录.json` + `YYYY-MM-DD.md` | 对话记录（私人数据） |
+| `data/characters/<角色>/memory-review.json` | 已审阅的旧对话标记 |
+| `data/computer-assistant.json`、`data/computer-tasks/` | 文件助手配置与每次任务记录 |
+| `data/research-watch.json`、`data/research-profile.json` | 文献筛选状态与关注方向 |
+| `data/weixin-state.json` | 微信绑定与消息状态 |
+| `data/_pending_update.json` | 待弹出的更新公告标记（弹完删除） |
+| `data/startup_error.log` / `data/error.log` / `data/sound.log` / `data/tts_server.log` | 日志 |
+
+> 0.7.4 的数据在 `data/` 根下，0.7.6 起在 `data/characters/<角色>/`；迁移时注意这个差异。
 
 ---
 
-## 六、更新说明（版本历史）
+## 六、版本历史（简）
 
-> 版本号规则 `X.Y.Z`：大功能进中间位，小优化/修复进末位。
+### 2026-09-15 — V0.7.7
 
-### 2026-09-13 — V0.6.0（合并版）
+- 补回 0.7.6 丢掉的功能：语音朗读（GPT-SoVITS）、背景音乐 i wanna + 旋转唱片、窗口使用时长与时长日报、使用统计意图、开机自动启动、查询余额、微信识图、提示音「全部消息」档。
+- 新增天气查询、新闻播报、检查更新与更新公告（`weather.py`/`news.py`/`updater.py`/`update_features.py`）。
+- 修复：自然语言设待办失效（`_route_intent` 的 `add_todo` 分支被换成「请用 /待办」，`_handle_add_todo` 成了死代码）、粘贴板/截图按长间隔卡住（改为按内容去重）、圆角只有上半（底栏没缩进把下面两角盖住 + `smooth=True` 只切 1px）、API Key 读取兼容、左键拖动、折叠头像拖动、聊天框加载、语音服务卡死自愈、`[历史消息时间]` 被念出、聊天回复不响提示音。
+- 「更多设置」从独立窗口改成二级菜单（原窗口在开着语音时点开会崩：`_add_menu_tts_release` 给 `_add_menu_option` 传了它不接受的 `width`），菜单顺序按 6 组重排。
 
-- **角色包与微动差分**（来自朋友的 0.5.6 大改版）：新增 `characters/` 角色包机制（`shizuka-side-motion` 微动版 + `shizuka-classic` 单图版），模块化拆分 `layered_renderer`/`local_mesh`/`pet_motion`/`pet_triggers`/`pet_ground`/`pet_surfaces`。
-- **鼠标互动**：左键拖头抚摸、右键拖动提起/落下、左键单击聊天、双击跳两下、滚轮缩放、空闲打盹；新增「落在窗口上（试验）」、动作面板、角色切换。
-- **性能**：拖动从 ~17fps 提到 ~60fps（网格折叠变换、基础组缓存、动态补丁、后台渲染线程、姿态量化跳过重绘、待机单核 ~12%）。
-- **新增背景音乐「i wanna」**：设置菜单播放/暂停/继续/结束；齿轮下方显示**旋转唱片**（歌曲封面裁圆 + 中心挖孔），单击唱片暂停/继续，长按 3 秒结束，播放淡入、结束淡出。
-- **修复聊天口癖**：模型老爱用「哦，……啊」「呵呵」起手；提示词压不住，改为在输出侧加确定性兜底 `clean_reply_style()`，对所有回复统一去起手语气词（含历史喂回也清理，减少自我模仿）。
-- **音量统一**：提示音/音乐统一降到 85%（`850/1000`）。
-- **语音朗读改为「自动检测」**：应用保留语音能力，启动时自动寻找本机 GPT-SoVITS；装了就能用（参考音色随包），没装则菜单显示「未检测到 gpt-sovits，语音功能暂时无法使用」，可点击手动指定目录，不影响其他功能。GPT-SoVITS 本体约 14GB，不随包发布。
-- **新增开机自动启动**：菜单开关，写注册表 Run 键。
-- **新增周期提醒**：识别「每天/每周/工作日」类文本 → 定期提醒；与待办同窗口、分「待办 / 周期待办」两个页签，可编辑频率/时间/星期。
-- **新增使用时长统计**：每 5 秒采样前台程序累计时长；连续无键鼠超过阈值（默认 5 分钟、可调）且无音频播放时视为离开、暂停统计；菜单「时长统计」打开面板查看今日各应用时长；小概率触发「今天你都在忙什么」小日报。
-- **新增自动检查更新**：启动后台检查 GitHub Release，菜单显示「已是最新版本咯~」或「·有更新·」，点击可下载并自动替换、重启。
+### 2026-09-15 — V0.7.6（朋友的功能共享版，已整合）
 
-### 2026-09-12（0.4.x 收尾）
+- 模块化重构；统一近期上下文（最多 100 条 / 48000 字）+ 自动摘要 + 原话来源记忆与主题索引。
+- 待办大改（`/待办`、生活/研究、提前/周期提醒、桌面+微信双通道）；DSH 文件助手；文献筛选；签名同步。
+- 可滚动气泡、活动帧、更多设置窗口、角色 persona 化；有界等待 API。
 
-- 新增「设置 API Key」居中窗口 + **Windows DPAPI 加密**存储 + **服务商自动识别**。
-- 修复滚轮缩放卡顿/黑边（bytearray + BOX/BILINEAR + 事件合并 + 延后写盘）；修复窗口「先闪一下」（去掉重复事件绑定、去掉不可靠的 `-alpha` 淡入）。
-- 剪贴板增强：图片文件路径 → 识图；网址 → 抓网页概括（修 gzip 解压）；翻译支持日/韩。
-- 待办/记忆健壮性：读坏先备份再重建、全程加锁、id 改 uuid、相对时间本地算。
-- 新增空闲主动搭话、随机新闻、前台感知；开机问候概率调整 35/35/10/20。
+### 更早（0.7.4 及以前）
 
-### 2026-09-11（0.4.x）
-
-- 首次搭起：DeepSeek 聊天、流式输出、多轮上下文、记忆系统、待办提醒、剪贴板检测、开机问候、提示音三态、底部三按钮（待办/对话/设置）、拖动折叠、位置/缩放记忆、对话记录持久化。
+聊天/记忆/待办/剪贴板/开机问候/提示音三态/底部三按钮/拖动折叠/位置缩放记忆/对话记录；0.7.0 起加入更新公告与自动更新；0.7.2 天气新增国内源；0.7.3 更新走镜像 + token 余额 + GPT-SoVITS 自动配置。
 
 ---
 
 ## 七、未解决 / 待验证
 
-- 语音朗读依赖本机 GPT-SoVITS（约 14GB，需 NVIDIA 显卡）；未安装时功能不可用（菜单会提示），参考音色已随包。
-- 落窗口上（试验）：自定义边框窗口边缘可能有几像素偏差，靠 `GetWindowRect` 与 Tk DPI 坐标一致性缓解；欢迎实测。
-- 头部是平面旋转，没有立体转头；点头/摇头/甩发梢/晃腿因不自然已停用；**未完成 Live2D Cubism 的 cmo3/moc3 绑定**（分层 PSD 供继续制作）。
-- 双端记忆同步未启用。
-- 唱片的封面提取只支持 ID3v2 的 APIC 帧；无内嵌封面时用深色兜底圆盘。
-- 背景音乐走 MCI `mpegvideo`，个别声卡驱动对 `setaudio` 音量响应可能不准。
+- **Responses API 未接**：`api_mode` / `_responses_via_chat` 在 0.7.4 有，0.7.6 重构后没移植。方案已确认：在 `api_runtime.configure_client` 里按 `api_mode` 分流，`_responses_via_chat` 用非流式 `responses.create` 包成「假流」；**DeepSeek 的 `/responses` 实测 400 + 偶发空，必须记住不支持并退回 chat**；带图片的消息要把内容转成 `input_text`/`input_image`。
+- 翻译只对 `foreign` 生效（拉丁字母 ≥12 且远多于汉字），`hello world` 这类短英文不翻译，阈值可放宽。
+- 圆角用色键透明实现，系统关「透明效果」时四角可能显黑。
+- 落窗口上（试验）：自定义边框窗口边缘可能有几像素偏差。
+- 头部是平面旋转，没有立体转头；**未完成 Live2D Cubism 的 cmo3/moc3 绑定**。
+- 唱片的封面提取只支持 ID3v2 的 APIC 帧；背景音乐走 MCI `mpegvideo`，个别声卡对 `setaudio` 音量响应不准。
+- 天气/新闻/更新都依赖网络：GitHub 直连被墙时靠镜像，镜像也可能失效。
 
 ---
 
@@ -199,13 +210,15 @@
 
 - **不引入未确认的新依赖**；遵循现有风格，改动尽量小。
 - 跨线程不要直接碰 Tk，走 `_ui`/`_poll_ui`。
-- 写含中文的脚本/文档注意编码；本机 PowerShell 5.1 按 GBK 处理中文路径，涉及中文文件名用 Python。
+- 写含中文的脚本/文档注意编码；本机 PowerShell 5.1 按 GBK 处理中文路径，含中文文件名用 Python 处理。
 - 删文件走回收站；替换 EXE 前先停掉正在运行的实例。
 - 改完源码**不会影响已打包的 EXE**，要重新构建。
+- 版本号只在 `src/app_identity.py` 改一处；改完记得同步 `更新公告.md` 和 `version.json`（`tools/make_release.py` 会处理后者）。
 
 ---
 
 ## 九、构建环境与凭据
 
-- 依赖锁定见 `src/requirements-win-py314.lock`（本项目实际用 Python 3.13 构建）；构建额外依赖 `tools/requirements-build.txt`（PyInstaller）。`LICENSES/build-versions.json` 记录构建环境。
-- 发布审计（`tools/build_release.py`）会扫描 `sk-/AIza/gsk_/xai-` 等凭据模式与个人数据；**Key 不应出现在日志、ZIP 或截图里**。
+- 依赖锁定见 `src/requirements-win-py314.lock`（本项目实际用 Python 3.13 构建）；`LICENSES/build-versions.json` 记录构建环境。
+- 发布前跑 `python tools/make_release.py` 重生成 `MANIFEST.json`，再用 `python verify_package.py` 校验；`VERIFICATION.json` 记录版本、单测数、离线验收项数与审计结果。
+- 审计要求：**Key 不应出现在日志、ZIP、仓库或截图里**；发布前扫一遍 `sk-`、`Bearer`、本机路径、`data/` 是否泄漏。

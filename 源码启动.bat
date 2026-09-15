@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-start "" "%~dp0Shizuka.exe"
+start "" pythonw "%~dp0src\run_pet.py"

@@ -8,7 +8,7 @@ import tkinter as tk
 from tkinter import messagebox
 from tkinter.scrolledtext import ScrolledText
 from PIL import Image, ImageTk
-from computer_agent import dsh_available, load_config
+from computer_agent import load_config
 from computer_ui import computer_command
 from weixin_channel import BASE_URL, ILinkClient, ProtectedStore, WeixinChannel, session_from_login, trusted_base, IMAGE_BLOCK_MARK
 
@@ -33,7 +33,7 @@ class WeixinMixin:
             self._weixin_boot_error = "微信连接配置无法读取，请打开微信连接窗口检查。"
 
     def _weixin_media_dir(self):
-        """微信发来的图片落到「文件工作区\微信图片」，方便后续 /电脑 任务直接读取。"""
+        """微信发来的图片存到「文件工作区\\微信图片」，方便 /电脑 任务直接读取。"""
         config = load_config(self._computer_data_dir())
         target = Path(config["workspace"]) / "微信图片"
         target.mkdir(parents=True, exist_ok=True)
@@ -50,6 +50,7 @@ class WeixinMixin:
                     self._weixin_state.update(value)
             self._ui(apply)
         channel.status = status
+        channel.answer_pending=lambda text:self._answer_computer_question(text,origin="weixin")
         self._weixin_channel = channel
         self._weixin_store.update(enabled=True)
         channel.start()
@@ -68,19 +69,31 @@ class WeixinMixin:
 
     def _weixin_reply(self, text, cancel, progress):
         import pet as engine
+        self._last_user_dialogue_at=time.monotonic()
         if cancel.is_set():
             return "任务已取消。"
+        completion=self._weixin_complete_reply(text,cancel)
+        if completion is not None:
+            self._log_chat('user',text,kind='weixin_todo');self._log_chat('assistant',completion,kind='weixin_todo')
+            return completion
+        from todo_model import command as todo_command
+        todo_text=todo_command(text)
+        if todo_text is not None:
+            self._log_chat('user',text,kind='weixin_todo')
+            reply=self._weixin_todo_command(todo_text,cancel)
+            self._log_chat('assistant',reply,kind='weixin_todo')
+            return reply
         task = computer_command(text)
         if task is None and engine.has_api_key():
             if IMAGE_BLOCK_MARK in text:
-                task = text      # 带图片的消息交给电脑助手（它能直接看图）
+                task = text      # 带图片的信息：交给文件执行器，让它直接看图做事
             else:
                 intent = self._classify_intent(text)
                 if (intent or {}).get("action") == "computer_task":
                     task = text
         if cancel.is_set():
             return "任务已取消。"
-        self._log_chat("user", text, kind="weixin")
+        self._log_chat("user", text, kind="weixin_file" if task is not None else "weixin")
         if task is not None:
             if not task:
                 return "在 /电脑 后写具体文件任务，例如：/电脑 列出工作文件夹中的文件。"
@@ -89,48 +102,56 @@ class WeixinMixin:
             config = load_config(self._computer_data_dir())
             if not config.get("enabled", True):
                 return "电脑助手已关闭，请先在电脑端开启。"
-            if not dsh_available(config):
-                # 本机没装 dsh / Node.js：微信远程仍可用，但只有聊天，不做文件任务
-                return "这台电脑还没装好文件任务要用的 dsh（Node.js 组件），现在只能陪你聊天哦。"
-            result = self._computer_agent.run(task, config, cancel=cancel,
-                progress=lambda state: progress({"status": "正在处理文件 · %s 秒" % state["elapsed"]}))
+            if not self._computer_claim(cancel):return '上一件文件任务还在处理，等我把它做完。'
+            self._computer_state={'busy':True,'status':'正在启动 DSH','output':'','task':task}
+            if hasattr(self,'root'):self._ui(lambda:self._computer_open_progress(task,cancel))
+            channel=getattr(self,'_weixin_channel',None)
+            def file_progress(state):
+                self._computer_receive_progress(state,cancel,origin='weixin',channel=channel)
+                progress({'status':'等待您回复静香' if state.get('waiting') else self._scene('file_running',seconds=state['elapsed'])})
+            try:
+                result=self._computer_agent.run(task,config,cancel=cancel,progress=file_progress)
+            except Exception as exc:result={'status':'failed','error':str(exc),'output':''}
+            finally:
+                self._computer_execution_finished(cancel)
+                self._computer_release(cancel)
+            self._computer_state.update(busy=False,status='执行已返回',output=result.get('output',''))
+            if hasattr(self,'root'):self._ui(lambda:self._computer_finish_progress(result,cancel))
             progress({"directory": result.get("directory", "")})
             if result["status"] == "completed":
-                reply = result.get("output") or "本机助手已返回，请核对任务记录。"
+                reply = self._file_reply(result)
             elif result["status"] == "cancelled":
-                reply = "文件任务已停止，已完成的更改会保留。"
+                reply = self._scene('file_cancelled')
             elif result["status"] == "timeout":
-                reply = "文件任务达到时限，已停止。请在电脑的任务记录中核对已完成的部分。"
+                reply = self._scene('file_timeout')
             else:
-                reply = "文件任务未完成。" + (result.get("error") or result.get("stderr") or result.get("output") or "请查看电脑端的任务记录。")[:1000]
-            if self._weixin_store.data.get("persona_wrap", True):
-                reply = self._weixin_style_wrap(reply, cancel)
+                reply = self._file_reply(result)
             self._append_history(text, reply[:1000])
-            self._log_chat("assistant", reply[:1500], kind="weixin")
+            if result['status']=='completed' and self._should_sound(event='file_complete'):self._ui(self.play_sound)
+            self._log_chat("assistant", reply[:1500], kind="weixin_file")
             return reply
         if not engine.has_api_key():
             return "请先在电脑桌宠中设置聊天 API Key。已有 dsh 配置时，仍可使用 /电脑 文件任务。"
-        system = engine.load_persona()
-        system += "\n\n（背景）" + engine.time_hint() + "除非和话题有关，不用主动报时间。"
-        system += ("\n当前通过手机微信交流。只回复需要发给用户的文字；没有调用文件执行器时，不要声称已读取或修改电脑文件。"
-                   "文件操作请让用户发 /电脑 加具体任务。用户发来的图片已存在电脑工作区，需要看图时请让用户发 /电脑 加要求。")
+        option = getattr(engine, "character_option", lambda key, default: default)
+        system = engine.load_persona() + option("chat_style", engine.CHAT_STYLE_HINT)
+        from conversation_memory import CONTINUATION_HINT
+        system+='\n'+CONTINUATION_HINT
+        system+='\n'+self._capability_context()
+        notes=self._todo_note_context(text,channel='weixin',cancel=cancel.is_set)
+        if cancel.is_set():return '本轮回复已停止。'
+        system+='\n只有应用明确回传保存成功时才能说已增加待办备注。'
+        if notes:system+='\n'+notes
+        system += "\n当前通过手机微信交流。只回复需要发给用户的文字；没有调用文件执行器时，不要声称已读取或修改电脑文件。文件操作请让用户发 /电脑 加具体任务。"
         memory = self._get_memory_block(text)
         if memory:
             system += "\n\n" + memory
         messages = [{"role": "system", "content": system}]
-        with self._hist_lock:
-            recent = list(self._history[-self._history_max:]) if self._history_max > 0 else []
-        for turn in recent:
-            messages.append({"role": "user", "content": turn.get("user", "")})
-            if turn.get("assistant"):
-                messages.append({"role": "assistant", "content": turn["assistant"]})
-        if len(messages) > 1:
-            messages.append({"role": "system", "content": engine.STYLE_REMINDER})
+        messages.extend(self._recent_messages(current_text=text,channel='weixin'))
         messages.append({"role": "user", "content": text})
         output = []
         client = engine.get_client()
         with client.chat.completions.create(model=engine.api_model(), messages=messages,
-                temperature=.8, max_tokens=1000, stream=True) as stream:
+                temperature=.7, max_tokens=3200, stream=True) as stream:
             for chunk in stream:
                 if cancel.is_set():
                     return "本轮回复已停止。"
@@ -143,48 +164,13 @@ class WeixinMixin:
             # Plain conversation shares long-term memory; file results bypass this path.
             def remember():
                 try:
-                    self._record_new_memories(text, reply)
                     self._refresh_memories(reply)
                     engine.get_memory().save()
+                    self._maybe_review_memory()
                 except Exception:
                     pass
             threading.Thread(target=remember, daemon=True).start()
         return reply
-
-    def _weixin_style_wrap(self, body, cancel):
-        import pet as engine
-        if not body or cancel.is_set() or not engine.has_api_key():
-            return body
-        system = engine.load_persona()
-        system += (
-            "\n\n用户刚通过手机微信让你在这台电脑上处理了一个文件任务，下面是执行结果的正文。"
-            "请用静香本人的口吻，为这段结果配一句简短自然的开场白，必要时再加一句收尾。"
-            "只输出 JSON：{\"prefix\": \"开场白\", \"suffix\": \"收尾或空字符串\"}。"
-            "开场白像平时说话，告诉他结果出来了或事情办好了；若结果是失败或未完成，语气温和些。"
-            "绝对不要复述、概括或改动正文里的任何内容，不要提编号，不要用括号旁白或破折号解释。"
-        )
-        try:
-            client = engine.get_client()
-            resp = client.chat.completions.create(
-                model=engine.api_model(),
-                messages=[{"role": "system", "content": system},
-                          {"role": "user", "content": "任务结果正文：\n" + body[:4000]}],
-                temperature=.7, max_tokens=200)
-            raw = (resp.choices[0].message.content or "").strip()
-            prefix = suffix = ""
-            start, end = raw.find("{"), raw.rfind("}")
-            if start >= 0 and end > start:
-                data = json.loads(raw[start:end + 1])
-                prefix = str(data.get("prefix") or "").strip()
-                suffix = str(data.get("suffix") or "").strip()
-            if cancel.is_set():
-                return body
-            prefix = engine.clean_reply_style(prefix).strip()
-            suffix = engine.clean_reply_style(suffix).strip()
-            parts = [p for p in (prefix, body, suffix) if p]
-            return "\n\n".join(parts) if len(parts) > 1 else body
-        except Exception:
-            return body
 
     def _weixin_begin_login(self):
         self._weixin_stop()
@@ -217,7 +203,7 @@ class WeixinMixin:
                         def finish():
                             if self._weixin_login_cancel is not cancel or cancel.is_set():
                                 return
-                            self._weixin_store.update(session=session, cursor="", seen={}, enabled=True, last_result="")
+                            self._weixin_store.update(session=session, cursor="", seen={}, enabled=True, last_result="",notification_context=None)
                             self._weixin_state.update(qr=None, verify=False, status="已绑定，正在连接…")
                             self._weixin_connect()
                         self._ui(finish)
@@ -285,16 +271,6 @@ class WeixinMixin:
         remote = tk.BooleanVar(value=bool(self._weixin_store.data.get("allow_computer")))
         tk.Checkbutton(top, text="允许绑定的微信账号执行文件任务（使用电脑助手的工作文件夹）", variable=remote,
             command=lambda: self._weixin_store.update(allow_computer=remote.get())).pack(anchor="w", pady=(12, 4))
-        try:
-            _dsh_ok = dsh_available(load_config(self._computer_data_dir()))
-        except Exception:
-            _dsh_ok = False
-        if not _dsh_ok:
-            tk.Label(top, text="本机未检测到 dsh（Node.js 组件），微信远程目前只能聊天，文件任务不可用。",
-                     fg="#b04a4a", anchor="w", wraplength=610).pack(anchor="w")
-        wrap = tk.BooleanVar(value=bool(self._weixin_store.data.get("persona_wrap", True)))
-        tk.Checkbutton(top, text="文件任务结果用静香语气包装（不改动结果内容）", variable=wrap,
-            command=lambda: self._weixin_store.update(persona_wrap=wrap.get())).pack(anchor="w")
         tk.Button(top, text="设置文件工作文件夹…", command=self.show_computer_assistant).pack(anchor="w")
         status_label = tk.Label(top, text="", wraplength=610, anchor="w", justify="left")
         status_label.pack(fill="x", pady=8)

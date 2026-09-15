@@ -37,6 +37,53 @@ class LayeredRenderer:
         self._split_ok = False
         self._fonts = {}
         self._figure_bbox = None
+        self.expression_frames={}
+        reference_alpha=None
+        for name,relative in pack.manifest.get("expression_frames",{}).items():
+            with Image.open(pack.asset(relative)) as source:
+                if source.mode!="RGBA" or source.size!=self.canvas_size or source.getchannel("A").getextrema()[0]!=0:
+                    raise ValueError("Expression frames need matching full-canvas RGBA images")
+                frame=source.copy()
+            alpha=frame.getchannel("A").tobytes()
+            if reference_alpha is not None and alpha!=reference_alpha:
+                raise ValueError("Expression frames must preserve one identical alpha silhouette")
+            reference_alpha=alpha
+            self.expression_frames[name]=frame
+        # Full-body differences have their own silhouettes and already contain
+        # eyes/mouth. Never put old facial overlays on these frames.
+        self.body_frames={}
+        for name,relative in pack.manifest.get("body_frames",{}).items():
+            with Image.open(pack.asset(relative)) as source:
+                if source.mode!="RGBA" or source.size!=self.canvas_size or source.getchannel("A").getextrema()[0]!=0:
+                    raise ValueError("Body frames need matching full-canvas RGBA images")
+                if not source.getchannel("A").getbbox():raise ValueError("Empty body frame")
+                self.body_frames[name]=source.copy()
+        self.activity_frames={}
+        for name,relative in pack.manifest.get('activity_frames',{}).items():
+            with Image.open(pack.asset(relative)) as source:
+                if source.mode!='RGBA' or source.size!=self.canvas_size or source.getchannel('A').getextrema()[0]!=0 or not source.getchannel('A').getbbox():
+                    raise ValueError('Activity frames need matching full-canvas RGBA images')
+                self.activity_frames[name]=source.copy()
+        self.question_effect=None
+        spec=pack.manifest.get('question_effect')
+        if spec:
+            with Image.open(pack.asset(spec['body'])) as body, Image.open(pack.asset(spec['icon'])) as icon:
+                if body.mode!='RGBA' or body.size!=self.canvas_size or icon.mode!='RGBA':
+                    raise ValueError('Question effect needs an RGBA body canvas and icon')
+                if any(spec['xy'][i]+icon.size[i]>self.canvas_size[i] for i in (0,1)):
+                    raise ValueError('Question icon is outside its authored canvas')
+                self.question_effect=(body.copy(),icon.copy(),tuple(spec['xy']))
+        self.recover_frames={}
+        loaded={}
+        for index,spec in enumerate(pack.manifest.get('recover_frames',[])):
+            path=pack.asset(spec['path'])
+            if path not in loaded:
+                with Image.open(path) as source:
+                    if source.mode!='RGBA' or source.size!=self.canvas_size or source.getchannel('A').getextrema()[0]!=0:
+                        raise ValueError('Recovery frames need matching full-canvas RGBA images')
+                    if not source.getchannel('A').getbbox():raise ValueError('Empty recovery frame')
+                    loaded[path]=source.copy()
+            self.recover_frames[f'frame-{index}']=loaded[path]
 
     def _resize(self,height):
         if self._height == height:
@@ -117,13 +164,40 @@ class LayeredRenderer:
         self._base_cache[expression]=groups
         return groups
 
-    def _groups(self,closed,mouth,expression):
+    def _groups(self,closed,mouth,expression,state="idle",phase="loop"):
         lifted=expression=="lifted"
         falling=expression=="falling"
-        key=(closed,mouth,expression)
+        body=self.activity_frames.get(state) or self.body_frames.get(state)
+        if state=="recover" and body is not None:
+            body=self.expression_frames['neutral'] if phase=='prepare' else self.recover_frames.get(phase,body)
+        key=("body",state,phase) if body is not None else (closed,mouth,expression)
         if key in self._cache:
             groups,fbox=self._cache[key]
             self._figure_bbox=fbox
+            return groups
+        if body is not None:
+            frame=body.copy() if body.size==self.size else body.convert("RGBa").resize(self.size,Image.Resampling.LANCZOS).convert("RGBA")
+            if state in ("landing","recover"):
+                reference=self.expression_frames.get("neutral")
+                if reference is not None:
+                    reference=reference.convert("RGBa").resize(self.size,Image.Resampling.LANCZOS).convert("RGBA")
+                    floor=reference.getchannel("A").point(lambda a:255 if a>=128 else 0).getbbox()[3]
+                    sole=frame.getchannel("A").point(lambda a:255 if a>=128 else 0).getbbox()[3]
+                    shifted=Image.new("RGBA",self.size)
+                    shifted.alpha_composite(frame,(0,floor-sole))
+                    frame=shifted
+            groups={"figure":frame}
+            self._figure_bbox=frame.getchannel("A").point(lambda a:255 if a>=128 else 0).getbbox()
+            self._cache[key]=(groups,self._figure_bbox)
+            return groups
+        if self.expression_frames:
+            name=expression if expression in self.expression_frames and expression!="neutral" else (
+                "content_speak" if closed and mouth else "blink" if closed else "speak" if mouth else "neutral")
+            original=self.expression_frames.get(name,self.expression_frames["neutral"])
+            frame=original.copy() if original.size==self.size else original.convert("RGBa").resize(self.size,Image.Resampling.LANCZOS).convert("RGBA")
+            groups={"figure":frame}
+            self._figure_bbox=frame.getchannel("A").point(lambda a:255 if a>=128 else 0).getbbox()
+            self._cache[key]=(groups,self._figure_bbox)
             return groups
         if self._split_ok:
             # 复制已缩放好的基础组，再把本状态要显示的动态小图块（已按比例缩放）叠上去
@@ -176,7 +250,7 @@ class LayeredRenderer:
         return result
 
     @classmethod
-    def _bound_sway(cls,box,size,angle,dy,anchor):
+    def _bound_sway(cls,box,size,angle,dy,anchor,pinned=False):
         """Bound the swing within the existing transparent window, without scaling."""
         if not box:
             return angle,dy
@@ -190,6 +264,8 @@ class LayeredRenderer:
             return min(x for x,y in points),min(y for x,y in points),max(x for x,y in points),max(y for x,y in points)
         def fits(degrees):
             left,top,right,bottom=extents(degrees)
+            if pinned:
+                return left>=2 and right<=w-2 and top>=2 and bottom<=h-2
             return left>=2 and right<=w-2 and bottom-top<=h-4
         if not fits(angle):
             low,high=0.0,1.0
@@ -199,17 +275,25 @@ class LayeredRenderer:
                 else:high=mid
             angle*=low
         left,top,right,bottom=extents(angle)
-        dy=max(2-top,min(h-2-bottom,dy))
+        # While held, preserve the cursor pivot; limit extreme angles instead
+        # of translating the whole character away from the grabbed point.
+        dy=0.0 if pinned else max(2-top,min(h-2-bottom,dy))
         return angle,dy
 
     @classmethod
-    def _safe_move(cls,img,angle,dy,anchor):
+    def pickup_limits(cls,box,size,anchor,maximum=95.0):
+        """Keep physics and rendering on the same bounds for this grab point."""
+        return tuple(cls._bound_sway(box,size,a,0,anchor,pinned=True)[0]
+                     for a in (-maximum,maximum))
+
+    @classmethod
+    def _safe_move(cls,img,angle,dy,anchor,pinned=False):
         if abs(angle)+abs(dy)<1e-8:
             return img            # 无位移直接返回，省一次全图 getbbox
         box=img.getchannel("A").point(lambda a:255 if a>=128 else 0).getbbox()
         if not box:
             return img
-        angle,dy=cls._bound_sway(box,img.size,angle,dy,anchor)
+        angle,dy=cls._bound_sway(box,img.size,angle,dy,anchor,pinned=pinned)
         return cls._move(img,angle,dy=dy,anchor=anchor)
 
     def _sleep_effect(self, pose, color_key):
@@ -246,10 +330,43 @@ class LayeredRenderer:
                 effect.putalpha(alpha)
         return effect
 
+    def _question_frame(self,progress):
+        """Animate only the authored icon; character pixels stay at their fixed canvas position."""
+        body,icon,(x,y)=self.question_effect
+        key=('question-body',)
+        if key not in self._base_cache:
+            self._base_cache[key]=body.copy() if body.size==self.size else body.convert('RGBa').resize(self.size,Image.Resampling.LANCZOS).convert('RGBA')
+        result=self._base_cache[key].copy()
+        p=1-(1-max(0,min(1,progress)))**3
+        if p<=0:return result
+        scale=.7+.3*p
+        size=tuple(max(1,round(n*self.scale*scale)) for n in icon.size)
+        effect=icon.convert('RGBa').resize(size,Image.Resampling.LANCZOS).convert('RGBA')
+        effect.putalpha(effect.getchannel('A').point(lambda a:round(a*p)))
+        left=round((x+icon.width/2)*self.scale-size[0]/2)
+        top=round((y+icon.height/2+18*(1-p))*self.scale-size[1]/2)
+        result.alpha_composite(effect,(left,top))
+        return result
+
     def frame(self,height,seconds=0.0,gaze=(0.0,0.0),speaking=False,
               animated=True,eye_open=None,mouth_open=None,color_key=False,pose=None):
         self._resize(max(1,int(height)))
-        pose=(pose or Pose(gaze=gaze)) if animated else Pose()
+        pose=(pose or Pose(gaze=gaze)) if animated or pose is not None and pose.state in self.activity_frames else Pose()
+        profile=self.pack.manifest.get("motion_profile",{})
+        settings={**profile.get("default",{}),**profile.get(pose.state,{})}
+        if settings:
+            updates={}
+            for field in ("angle","head_angle","head_dx","head_dy","dy","hair_sway","breath"):
+                updates[field]=getattr(pose,field)*settings.get(field+"_scale",1)
+            if "angle_limit" in settings:
+                limit=settings["angle_limit"];updates["angle"]=max(-limit,min(limit,updates["angle"]))
+            updates["body_stretch"]=1+(pose.body_stretch-1)*settings.get("body_stretch_scale",1)
+            pose=replace(pose,**updates)
+        pinned=pose.state=="dragging"
+        if pinned:
+            # A held point cannot drift with gaze, breath or local hair motion.
+            pose=replace(pose,gaze=(0,0),head_angle=0,head_dx=0,head_dy=0,
+                         hair_sway=0,leg_sway=0,breath=0,body_stretch=1,dy=0)
         t=seconds if animated else 0.0
         gx,gy=(max(-1,min(1,n)) for n in pose.gaze)
         blink=min(1.0,abs(t%4.3-3.75)/0.10)
@@ -261,7 +378,10 @@ class LayeredRenderer:
         if lifted or pose.expression=="falling":
             eye=1.0
             mouth=False
-        groups=self._groups(eye<0.5,bool(mouth),pose.expression)
+        expression=pose.expression
+        if self.expression_frames and pose.state in ("pat","happy"):
+            expression="content" if eye<.5 else "gentle"
+        groups=self._groups(eye<0.5,bool(mouth),expression,pose.state,pose.phase)
         h=self.size[1]
         breath=math.sin(t*1.6)*0.0012*h if animated else 0.0
         head_angle=gx*0.55+pose.head_angle
@@ -274,7 +394,18 @@ class LayeredRenderer:
             head_dx=pose.head_dx+gx*.0015,head_dy=pose.head_dy+gy*.0008)
         # 折叠路径：侧身包全部图层都在 figure 组，把「拉伸 + 整图摆动」并进 mesh 的
         # 一次变换，省掉 _stretch_body / _safe_move 两次整图重采样（约省 15ms）。
-        if animated and self.mesh and has_figure and not has_body and not has_head:
+        if pose.state in self.activity_frames:
+            result=groups['figure'].copy()
+            if pose.state=='awaiting_answer' and self.question_effect and pose.activity_progress<1:
+                result=self._question_frame(pose.activity_progress)
+        elif pose.state in self.body_frames:
+            # Preserve the authored face/head and body pose. Only actual mouse
+            # inertia rotates the whole figure, around the existing cursor pivot.
+            result=(groups["figure"].copy() if pose.state in ("landing","recover") else
+                    self._safe_move(groups["figure"],pose.angle,pose.dy*h,pose.anchor,pinned=pinned))
+        elif not animated and self.expression_frames:
+            result=groups["figure"].copy()
+        elif animated and self.mesh and has_figure and not has_body and not has_head:
             angle=pose.angle
             ty=pose.dy*h          # 呼吸由 mesh 的 chest 处理，这里不再叠加整图呼吸平移
             stretch=pose.body_stretch
@@ -283,7 +414,7 @@ class LayeredRenderer:
                 join=round(h*hinge)
                 if box[3]>join:
                     stretch=min(stretch,(h-2-join)/(box[3]-join))
-            angle,ty=self._bound_sway(box,self.size,angle,ty,pose.anchor)
+            angle,ty=self._bound_sway(box,self.size,angle,ty,pose.anchor,pinned=pinned)
             result=self.mesh.deform(groups["figure"],pose_m,t,
                 fold={"stretch":stretch,"hinge":hinge,"angle":angle,"translate":ty,"anchor":pose.anchor})
         else:
@@ -304,8 +435,9 @@ class LayeredRenderer:
                 result.alpha_composite(figure)
             result=self._stretch_body(result,pose.body_stretch,hinge)
             if animated:
-                result=self._safe_move(result,pose.angle,pose.dy*h-breath,pose.anchor)
-        if animated and pose.sleep_fx>0:
+                result=self._safe_move(result,pose.angle,0 if pinned else pose.dy*h-breath,
+                                       pose.anchor,pinned=pinned)
+        if animated and pose.sleep_fx>0 and pose.state not in self.activity_frames:
             result.alpha_composite(self._sleep_effect(pose,color_key))
         if color_key:
             rgb=Image.new("RGB",result.size,(0,0,1))
