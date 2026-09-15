@@ -9,7 +9,7 @@
 
 《World Dai Star》静香的 Windows 桌面宠物。她会待在桌面陪着你：聊天、记事、提醒，对复制的内容做出反应，能报天气和新闻，还能播放i wanna（激烈的5k楼梯转仁王盾ing）。
 
-- 平台：**Windows x64**（Windows 11 实测；Windows 10 待测，不提供 Mac 版）
+- 平台：**Windows x64**（Windows 11 实测；Windows 10 待测， Mac 版开发中）
 - 技术：Python + Tkinter + Pillow，PyInstaller 打包
 - 版本：**V0.8.0**
 - 本仓库同时提供**免装 Python 的打包版**（`Shizuka.exe` + `_internal/`）和**完整源码**（`src/`）。
