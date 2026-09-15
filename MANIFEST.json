@@ -1,9 +1,9 @@
 {
   "version": "0.8.0",
   "kind": "public",
-  "created": "2026-09-16T00:33:39.211712+08:00",
+  "created": "2026-09-16T00:38:29.225343+08:00",
   "files": {
-    "AI-DEVELOPMENT.md": "465481d5769f99dd3a9abf26fbc36f90ecaaa9b1b42f80918237458d5653042b",
+    "AI-DEVELOPMENT.md": "1a10a6a02249f8c81c91e5081802064d39ee15fa521704cd6f61496cdad04b94",
     "LICENSES/Python-LICENSE.txt": "935cf13e19f8c31b497d20b05d73623431a226b230c3599bc30fa3348979bc68",
     "LICENSES/altgraph/LICENSE": "6c194d6db0c64d45535d10c95142b9b0cda7b7dcc7f1ddee302b3d536f3dbe46",
     "LICENSES/annotated-types/LICENSE": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d",
@@ -38,7 +38,7 @@
     "LICENSES/truststore/LICENSE": "33be7b7e8fa4fd19b1760e1a8ed8a668bdab852c91b692dd41424bcb725a9fca",
     "LICENSES/typing-inspection/LICENSE": "804b59b25f2c31bd278f9202a19ae49a3945aa2664387e2d0a128c7cacc61ec3",
     "LICENSES/typing_extensions/LICENSE": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
-    "README.md": "7301369d5efdf00fbe696711af7f8fe40acdaa1bd26a97c4b4abec264551caad",
+    "README.md": "b2a229ea658a845882bc9a943f006d9ed197c77f9fdbdd77326569f31f76d833",
     "Shizuka.exe": "ce6a30bde1d3433610379006937ace278a05c927189be870536d31b04eb394cc",
     "VERIFICATION.json": "9d53116608cf5e2e83c5c0f5b121d4a91e7750c1d1d1dba328dab65d690b2024",
     "_internal/PIL/_avif.cp313-win_amd64.pyd": "2e3e5cce3aea38c603680ca3da5d161fad123ce23a803bb692a56aff608989be",
