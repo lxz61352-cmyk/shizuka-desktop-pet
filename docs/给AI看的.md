@@ -1,7 +1,7 @@
-# 给 AI / 开发者看的：Shizuka 桌宠 V0.7.7
+# 给 AI / 开发者看的：Shizuka 桌宠 V0.8.0
 
 > 这是一份**自包含**的技术交接文档：程序是什么、怎么跑、怎么改、每个功能怎么实现的、还有什么没解决。
-> 相对路径都以解压目录为根。上一版本文档对应 V0.6.0，架构已在 V0.7.6 全部模块化，本文按 0.7.7 重写。
+> 相对路径都以解压目录为根。上一版本文档对应 V0.6.0，架构已在 V0.7.6 全部模块化，本文按 0.8.0 重写。
 
 ---
 
@@ -62,7 +62,7 @@
 | `src/updater.py` / `src/update_features.py` | 检查更新、镜像下载、覆盖安装、更新公告 |
 | `src/computer_agent.py`、`computer_ui.py`、`computer_progress.py` | 本机 DSH 文件助手（配置、任务、只读进度窗） |
 | `src/weixin_channel.py`、`weixin_ui.py` | 微信绑定、收发、识图、远程指令 |
-| `src/research_watch.py`、`assistant_features.py` | 文献筛选与「更多设置」二级菜单 |
+| `src/research_watch.py`、`assistant_features.py` | 文献筛选与「更多设置」二级菜单（**研究进展当前整体禁用**，见下） |
 | `src/sync_*.py` | 双端记忆/聊天/待办同步（签名 journal、设备身份、冲突记录） |
 | `src/character_packs.py`、`character_persona.py` | 角色包校验与路径限制、人设卡读取 |
 | `src/layered_renderer.py`、`local_mesh.py`、`pet_motion.py`、`pet_triggers.py`、`pet_ground.py`、`pet_surfaces.py` | 局部网格变形、弹簧/单摆、动作触发、重力与窗口承接 |
@@ -98,11 +98,13 @@
 - `todos.json` 只存核心字段（`text/due/on_boot/done`）；`todo-details.json` 存备注、分类（生活/研究）、周期规则、提醒渠道和投递状态（**旁表，不跨端覆盖**）。
 - 建待办两条路：自然语言（`intent_routing` → `add_todo` → `_handle_add_todo`，相对时间本地算、模糊追问）和 `/待办`（模型整理成多条，带备注/时间/提前量/周期）。
 - `_reminder_loop` 每 20 秒检查到期；开机类在启动时触发；折叠时只发声、下次打开补说。提前提醒/周期由 `todo_schedule` 算，事件类默认提前 1 小时，「有空时」默认每天 09:00 直到完成。
+- **完成即收尾**：待办被标记完成（含提前完成、`_todo_end_series` 结束周期）时会清掉 `notice` 并 `_todo_cancel_notices`，不留「已完成但未提醒」的尾巴。
+- **准点提醒**：`lead_minutes=0` 时 `due == event_at`，事件一开始 `event_expired` 就成立、会被整条跳过；`_todo_check_reminders` 因此留了 `REMINDER_GRACE=600` 秒宽限，保证这次提醒还能发出去（只发一次）。
 
 ### 5. 剪贴板 / 截图
 
 - `_clip_loop` 每 1.5 秒查 `GetClipboardSequenceNumber`；仅对启动后的新内容反应。路由：图片文件路径 → 识图；网址 → `fetch_page_text`（`http_get` 解 gzip/deflate）→ 概括；失效路径 → 试取图；外语 → 翻译；否则 → 普通反应。
-- **去重**：`_clip_repeat/_clip_remember` 记住最近回应过的内容（文字还认「同一段被逐渐加长/截短」），同一张图按哈希去重。频率只留 3~5 秒防抖，不再用长间隔卡（长间隔会让「复制了却不理人」）。
+- **去重**：`_clip_repeat/_clip_remember` 记住最近回应过的内容（文字还认「同一段被逐渐加长/截短」；图片按 sha1 精确匹配 + `clip_image_phash()` 的 dHash 16×16 近似匹配，所以「同一画面重新截一次 / 换个程序再复制」也算重复）。记录落盘在 `data/clip-recent.json`（`load_clip_recent`/`_save_clip_recent`，保留 `CLIP_MEMORY=200` 条、`CLIP_RECENT_TTL` 内有效），**重启不清空**；启动时 `_clip_primed` 会把剪贴板里已有的图片也记成基线（`_prime_clip_image`），所以重启后不会对启动前的旧截图再反应一次。频率只留 3~5 秒防抖，不再用长间隔卡（长间隔会让「复制了却不理人」）。
 - 被动发言的闸门在 `dialogue_grounding`：`_claim_passive` 对剪贴板/截图用独立短间隔，且不占用「主动搭话间隔」，否则主动搭话会被饿死。剪贴板内容**不当指令**、不设待办。
 
 ### 6. 天气 / 新闻
@@ -175,6 +177,15 @@
 
 ## 六、版本历史（简）
 
+### 2026-09-16 — V0.8.0
+
+- 「研究进展」整体禁用：`assistant_features.RESEARCH_ENABLED = False`，菜单显示「研究进展（开发中）」，`_research_loop` 不排期、不自动检查、不主动播报；代码都在，改回 `True` 恢复。
+- 修复召回自抄袭：`conversation_memory.recall()` 只召回用户原话 + 自动摘要（原来助手自己的旧回复也会被召回，模型会整段照抄），词重合门槛提到 2；风格提示词加「别照抄历史 / 看不懂就说不明白」。
+- 修复剪贴板/截图重复反应：去重记录落盘（`data/clip-recent.json`，重启不清空）、启动时把已有图片也记成基线、处理时加锁、图片加 dHash 近似去重（详见「剪贴板 / 截图」一节）。
+- 删除 `pet.py` 里两组重复定义的函数（`_kill_proc_tree`、`_emb_port_open`）。
+- `更新公告.md` 的 `## v0.7.6` 更正为 `## v0.7.6beta`；README 与本文档同步 0.8.0。
+- 新增 `tests/test_conversation_recall.py`、`tests/test_clip_dedup.py`。
+
 ### 2026-09-15 — V0.7.7
 
 - 补回 0.7.6 丢掉的功能：语音朗读（GPT-SoVITS）、背景音乐 i wanna + 旋转唱片、窗口使用时长与时长日报、使用统计意图、开机自动启动、查询余额、微信识图、提示音「全部消息」档。
@@ -188,6 +199,14 @@
 - 待办大改（`/待办`、生活/研究、提前/周期提醒、桌面+微信双通道）；DSH 文件助手；文献筛选；签名同步。
 - 可滚动气泡、活动帧、更多设置窗口、角色 persona 化；有界等待 API。
 
+### 版本线：正式版 vs beta（乌贼版）
+
+- **正式版**：本仓库这条线，版本号 `0.7.x`，从 `E:\Shizuka-v0.8.0-test` 构建，发到 GitHub Release。
+- **beta（乌贼版）**：朋友（乌贼）那条线，代码差别很大，**没有功能说明文档**，一律按「**版本号 + beta**」存档在 `E:\Shizuka-版本存档\beta\`，例如 `Shizuka-0.7.6beta-Windows-x64.zip`、`Shizuka-0.5.6beta-Windows-x64.zip`；包内顶层文件夹同名、**内容一字不改**。
+- **新功能的来源**：拿两个 beta 之间的差异来挑要吸收什么（0.6.0 吸收了 0.5.6 的角色包与微动差分；0.7.7 吸收了 0.7.6 的全部并补回 0.7.4 的功能），吸收进正式版后按正式版流程发版。所以 beta 包不要改动内容，否则 diff 会混入噪声。
+- 乌贼那条线目前没接 git；如果他愿意往正式版仓库推一个分支，再改成按分支管理。
+- 注意：`更新公告.md` 里的 `## v0.7.6beta` 一节描述的是**合并基线**（乌贼那版带来的东西），我们正式发布过的版本只有 0.7.0 / 0.7.3 / 0.7.4 / 0.7.7 / 0.8.0。
+
 ### 更早（0.7.4 及以前）
 
 聊天/记忆/待办/剪贴板/开机问候/提示音三态/底部三按钮/拖动折叠/位置缩放记忆/对话记录；0.7.0 起加入更新公告与自动更新；0.7.2 天气新增国内源；0.7.3 更新走镜像 + token 余额 + GPT-SoVITS 自动配置。
@@ -196,6 +215,8 @@
 
 ## 七、未解决 / 待验证
 
+- **研究进展整体禁用**：这个功能朋友那边也确认还没完全做好，所以先关掉了。开关在 `assistant_features.RESEARCH_ENABLED = False`：菜单显示「研究进展（开发中）」，点了只回一句提示；`_research_loop` 不再排期、不自动检查、不主动播报；聊天里被路由到 `research` 也只会得到「还在开发中」。代码（`research_watch.py` + `_research_*`）都还在，改回 `True` 即可恢复。
+- **没有角色选择器**：`character_packs.selected_pack()` 会读 `settings.json` 的 `character_pack`，但最后**固定返回 `shizuka-side-motion`**（注释写明「one fixed identity and no character picker」）。`characters/shizuka-classic` 还留在磁盘上但选不到；如果以后要做切换，得把那个返回值改回 `chosen`。
 - **Responses API 未接**：`api_mode` / `_responses_via_chat` 在 0.7.4 有，0.7.6 重构后没移植。方案已确认：在 `api_runtime.configure_client` 里按 `api_mode` 分流，`_responses_via_chat` 用非流式 `responses.create` 包成「假流」；**DeepSeek 的 `/responses` 实测 400 + 偶发空，必须记住不支持并退回 chat**；带图片的消息要把内容转成 `input_text`/`input_image`。
 - 翻译只对 `foreign` 生效（拉丁字母 ≥12 且远多于汉字），`hello world` 这类短英文不翻译，阈值可放宽。
 - 圆角用色键透明实现，系统关「透明效果」时四角可能显黑。

@@ -44,7 +44,10 @@ class TodoRecurrenceMixin:
             self._todo_transition(item,updated,due,'完成本次',now)
         else:
             item['done']=done
-            if not done and rule:
+            if done:
+                # 提前/直接完成：连同这次尚未发出的提醒状态一起清掉，不留「已完成但未提醒」的尾巴
+                options.pop('notice',None)
+            elif rule:
                 updated,due=next_schedule(schedule,now)
                 self._todo_install_schedule(item,options,updated);item['due']=due;options['schedule']['reminder_at']=due;options.pop('notice',None)
             self._save_todos();self._todo_queue_routine(item,'结束' if done else '恢复');self._save_todo_details()
@@ -54,7 +57,9 @@ class TodoRecurrenceMixin:
     def _todo_end_series(self,tid):
         item=next((it for it in self.todos if it['id']==tid),None)
         if not item:return
-        item['done']=True;self._save_todos();self._todo_queue_routine(item,'结束');self._save_todo_details()
+        item['done']=True;self._todo_options(item).pop('notice',None)
+        self._save_todos();self._todo_queue_routine(item,'结束');self._save_todo_details()
+        self._todo_cancel_notices(tid)
         self._refresh_todo_view();self._todo_start_memory_review()
 
     def _todo_queue_routine(self,item,action):

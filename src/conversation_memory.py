@@ -9,6 +9,7 @@ CONTINUATION_HINT='用户的短回复可能是在接您上一条主动消息（�
 SUMMARY_KIND="memory_summary"
 RECENT_MESSAGE_LIMIT=100
 RECENT_CHARACTER_BUDGET=48000
+MIN_RECALL_OVERLAP=2   # 至少两个词重合才算相关：一个词的巧合太多
 
 
 def eligible(rows):
@@ -80,18 +81,26 @@ def tokens(text):
 
 
 def recall(rows, query, recent_count=6, budget=10000):
-    """Return dated excerpts as quoted data, never merge them into role instructions."""
+    """Return dated excerpts as quoted data, never merge them into role instructions.
+
+    只召回**用户说过的话**和自动摘要：助手自己的旧回复既不算资料，也容易被模型原样照抄
+    （之前出过一次：输入里只有「压力」一个词重合，就把一条无关旧回复整段背了出来）。"""
     recent={ident for turn in recent_turns(rows,recent_count) for ident in turn["ids"]}
     query_tokens=tokens(query)
+    # 本轮这句刚落库、还没配回复：它是最后一条用户消息，别当历史资料召回
+    current=(query or "").strip()
+    last_user=next((row for row in reversed(rows)
+                    if row.get("role")=="user" and row.get("kind","chat") in CHAT_KINDS),None)
+    current_id=last_user.get("id") if last_user and (last_user.get("text") or "").strip()==current else None
     candidates=[]
     for row in rows:
-        if row.get("id") in recent:continue
+        if row.get("id") in recent or row.get("id")==current_id:continue
         summary=row.get("kind")==SUMMARY_KIND
-        if not summary and (row.get("kind","chat") not in CHAT_KINDS
-                or row.get("role") not in ("user","assistant")):continue
+        if not summary and (row.get("role")!="user" or row.get("kind","chat") not in CHAT_KINDS):
+            continue
         text=row.get("text","")
         overlap=len(query_tokens & tokens(text))
-        if overlap or summary:
+        if summary or overlap>=MIN_RECALL_OVERLAP:
             candidates.append((overlap+(0.2 if summary else 0),row.get("created",0),row))
     result=[];size=0
     for _,_,row in sorted(candidates,key=lambda x:(x[0],x[1]),reverse=True)[:10]:

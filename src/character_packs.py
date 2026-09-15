@@ -57,7 +57,8 @@ def load_pack(directory):
     manifest = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(manifest, dict):
         raise ValueError("Character manifest must be an object")
-    if manifest.get("schema_version") != 1:
+    schema_version = manifest.get("schema_version")
+    if isinstance(schema_version, bool) or schema_version != 1:
         raise ValueError("Unsupported character manifest version")
     for field in ("id", "character_id"):
         if not isinstance(manifest.get(field), str) or not IDENTIFIER.fullmatch(manifest[field]):

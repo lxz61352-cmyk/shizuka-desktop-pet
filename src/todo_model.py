@@ -58,7 +58,10 @@ def parse_time(text,now=None):
             hour=number(chinese[0][0]);suffix=chinese[0][1]
             minute=30 if suffix=='半' else number(suffix.rstrip('分')) if suffix else 0
         if hour is None or minute is None:return None,False,text
-        if re.search('下午|晚上|傍晚|中午',text) and 1<=hour<12:hour+=12
+        if hour==12 and re.search('晚上|夜里|半夜',text):
+            # 「晚上12点」指次日 0 点，不是当天正午
+            day+=timedelta(days=1);hour=0
+        elif re.search('下午|晚上|傍晚|中午',text) and 1<=hour<12:hour+=12
         elif re.search('凌晨|早上|上午',text) and hour==12:hour=0
         target=datetime.combine(day,datetime.min.time()).replace(hour=hour,minute=minute)
         if target<=now:return None,False,'时间已过，请重新选择：'+text

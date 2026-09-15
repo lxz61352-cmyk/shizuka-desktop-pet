@@ -14,8 +14,9 @@ def clean(value):
 
 
 def zotero_profile(database):
+    from contextlib import closing
     path=Path(database).expanduser().resolve()
-    with sqlite3.connect(path.as_uri()+"?mode=ro",uri=True,timeout=3) as db:
+    with closing(sqlite3.connect(path.as_uri()+"?mode=ro",uri=True,timeout=3)) as db:
         collections=[row[0] for row in db.execute("SELECT collectionName FROM collections")]
         rows=db.execute("SELECT d.itemID,f.fieldName,v.value FROM itemData d JOIN fields f ON f.fieldID=d.fieldID "
             "JOIN itemDataValues v ON v.valueID=d.valueID WHERE f.fieldName IN ('title','DOI') "

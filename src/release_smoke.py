@@ -44,11 +44,16 @@ def run(pet):
             menu.destroy()
             checks.append('Compact settings, five-minute default and notification sound policy')
             app.show_research();app.root.update()
+            app._research_init()
             assert not app._research.profile['queries']
             row={'title':'Synthetic paper','journal':'Fixture Journal','url':'https://example.invalid/paper',
                  'evidence_basis':'title','comment':'可以进一步阅读。','reason':'相关。'}
             text=app._research_notice(row);assert 'Fixture Journal' in text and '题名信息' in text
-            checks.append('Configurable research with journal in announcement; no private topic preset')
+            import assistant_features
+            assert assistant_features.RESEARCH_ENABLED is False
+            app._research_check(force=True)
+            assert not getattr(app,'_research_running',False)
+            checks.append('Research code stays inert while the feature is disabled')
             import news, updater, weather, weather_features, update_features
             assert weather._wmo_zh(0)=='晴' and updater.version_tuple('0.10.0')>updater.version_tuple('0.9.9')
             assert isinstance(updater.read_announcement(pet.APP_VERSION),str)

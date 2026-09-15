@@ -6,6 +6,11 @@ from tkinter.scrolledtext import ScrolledText
 from research_watch import ResearchWatch
 from sync_bridge import atomic_json
 
+# 研究进展还没完全做好（朋友那边也这么说），先整体关掉：菜单只显示「开发中」，
+# 后台不自动检查、不主动播报、聊天里问到也不进流程。改 True 即可恢复。
+RESEARCH_ENABLED = False
+RESEARCH_WIP_REPLY = "研究进展这块还在开发中，暂时先没开哦～"
+
 
 class AssistantFeaturesMixin:
     def _build_more_settings(self, sub, level):
@@ -64,14 +69,14 @@ class AssistantFeaturesMixin:
             self._research_win=None
 
     def _research_loop(self):
-        if getattr(self,"_quitting",False):return
+        if not RESEARCH_ENABLED or getattr(self,"_quitting",False):return
         self._research_init()
         self._research_check()
         self._deliver_research_alert()
         self.root.after(30000,self._research_loop)
 
     def _deliver_research_alert(self):
-        if getattr(self,'_quitting',False):return
+        if not RESEARCH_ENABLED or getattr(self,'_quitting',False):return
         if (self._research.profile.get("enabled",True) and not self._research_running
                 and self.visible and not self._actions_busy(time.monotonic())):
             alert=next((r for r in self._research.state["alerts"] if not r.get("notified")),None)
@@ -96,6 +101,7 @@ class AssistantFeaturesMixin:
                 '\n\n具体方法和结论还需要结合全文核对。\n'+alert['url'])
 
     def _research_check(self, force=False):
+        if not RESEARCH_ENABLED:return
         self._research_init()
         import pet as engine
         if self._research_running:return
@@ -142,6 +148,9 @@ class AssistantFeaturesMixin:
         return json.loads(response.choices[0].message.content)["papers"]
 
     def show_research(self):
+        if not RESEARCH_ENABLED:
+            self.say(RESEARCH_WIP_REPLY)
+            return
         self._research_init()
         if self._research_win and self._research_win.winfo_exists():self._research_win.lift();return
         win=self._research_win=tk.Toplevel(self.root)

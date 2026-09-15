@@ -27,7 +27,7 @@ def grounded_facts(payload,batch):
 
 def organized_index(payload,items):
     allowed={row['id'] for row in items};result=[]
-    for group in payload.get('topics',[])[:24]:
+    for group in (payload.get('topics') or [])[:24]:
         if not isinstance(group,dict):continue
         title=group.get('title');ids=group.get('memory_ids')
         if isinstance(title,str) and 1<=len(title)<=40 and isinstance(ids,list):
@@ -43,7 +43,7 @@ class MemoryFeaturesMixin:
         defaults={'version':1,'processed':[],'sources':{},'topics':[],'checked_at':0,'organized_at':0}
         if self._memory_review_path.exists():
             try:
-                state=json.loads(self._memory_review_path.read_text('utf-8'))
+                state=json.loads(self._memory_review_path.read_text('utf-8-sig'))
                 if not isinstance(state,dict) or not isinstance(state.get('processed',[]),list) or not isinstance(state.get('topics',[]),list):raise ValueError('Invalid memory index')
                 self._memory_review_state={**defaults,**state}
             except (OSError,ValueError):
@@ -135,8 +135,10 @@ class MemoryFeaturesMixin:
     def _memory_index_context(self,query):
         self._memory_review_init();state=self._memory_review_state
         terms=cm.tokens(query)
-        groups=[group for group in state.get('topics',[]) if terms & cm.tokens(group['title'])][:4]
+        groups=[group for group in state.get('topics',[])
+                if isinstance(group,dict) and isinstance(group.get('title'),str)
+                and terms & cm.tokens(group['title'])][:4]
         import pet as engine
-        ids={ident for group in groups for ident in group['memory_ids']}
+        ids={ident for group in groups for ident in (group.get('memory_ids') or [])}
         records=[row for row in engine.get_memory().snapshot() if row['id'] in ids][:12]
         return {'相关主题索引':groups,'索引中的原记忆':records,'说明':'索引仅组织原记录；若有更正，以最新明确原话为准。'}

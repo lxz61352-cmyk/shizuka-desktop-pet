@@ -36,7 +36,7 @@ class ConversationUIMixin:
         win.bind('<Escape>',lambda e:close())
         self._chat_win=win;self._chat_entry=entry
         apply(win);round_window(win,R);win.update_idletasks();win.geometry(f'430x{win.winfo_reqheight()}')
-        self.update_chat_pos();win.deiconify();win.lift();entry.focus_force()
+        win.deiconify();win.update_idletasks();self.update_chat_pos();win.lift();entry.focus_force()
         win.after(120,lambda:self._poll_chat_outside(win))
 
     def show_chat_log(self,event=None):

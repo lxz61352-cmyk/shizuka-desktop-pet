@@ -13,6 +13,9 @@ from todo_voice import TodoVoiceMixin,confirmation_text
 from dialogue_grounding import event_expired
 from todo_reply import TodoReplyMixin
 
+REMINDER_GRACE = 600   # 秒。准点提醒（lead=0）的 due 等于事件开始时间，事件一开始 event_expired 就成立；
+                       # 到点后留一点宽限，保证这一次提醒还能发出去（只发一次），不至于永远发不出来。
+
 class TodoFeaturesMixin(TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNotesMixin,TodoUIMixin):
     def _todo_init(self):
         if hasattr(self,'_todo_details'):return
@@ -176,9 +179,13 @@ class TodoFeaturesMixin(TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNo
         for item in list(self.todos):
             if item.get('done'):continue
             self._todo_prepare_occurrence(item,now)
-            if event_expired(item,self._todo_options(item),now):continue
+            options=self._todo_options(item)
+            first_due=item.get('due')
+            # 事件类待办开始时间已过就不再提醒；但准点提醒（due 就是开始时间）到点后留宽限，别被直接跳过。
+            if event_expired(item,options,now) and not (first_due is not None and 0<=now-first_due<=REMINDER_GRACE):
+                continue
             self._todo_prepare_phrase(item,now)
-            options=self._todo_options(item);signature=self._todo_notice_signature(item)
+            signature=self._todo_notice_signature(item)
             prior=options.get('notice',{})
             due=item.get('due')
             if not ((due is not None and due<=now) or item.get('on_boot') and (startup or prior.get('signature')==signature)):continue

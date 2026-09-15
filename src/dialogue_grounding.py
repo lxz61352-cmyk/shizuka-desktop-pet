@@ -9,7 +9,9 @@ PASSIVE_SOURCES={'启动问候','开机待办提醒','主动搭话','前台程�
 CLIP_PASSIVE_SOURCES={'粘贴板','截图','识图'}
 CLIP_PASSIVE_GAP=3.0           # 粘贴板（文字）：仅防抖
 IMAGE_PASSIVE_GAP=5.0          # 截图 / 识图（图片）：仅防抖
-CLIP_MEMORY=12                 # 记住最近回应过的内容条数
+CLIP_MEMORY=200                # 记住最近回应过的内容条数（落盘，重启不清空）
+CLIP_RECENT_TTL=14*24*3600     # 已回应记录保留多久（秒）：太老的记录不再参与去重
+PHASH_TOLERANCE=16             # 图片感知哈希（dHash 16x16=256bit）允许的汉明距离：近似画面算同一张
 GROUNDING_RULES=('当前日期与时间只以本轮系统时钟为准，历史中的今天、明天按原消息日期理解。'
  '当前待办状态高于历史安排；已完成事项不要再催，未勾选只表示记录未完成，不能断言用户没做。'
  '活动开始时间与提醒时间不同；已过开始时间不自动推到明天，不推断用户是否参加。'
@@ -49,26 +51,63 @@ def _clip_norm(text):
 def clip_image_signature(data):
     return hashlib.sha1(data).hexdigest()
 
+def clip_image_phash(img):
+    """dHash 16x16（256bit，hex 64 位）：画面相近时哈希也相近，用于「同一张图换个程序再复制」的去重。"""
+    try:
+        small=img.convert('L').resize((17,16))
+        px=small.tobytes()
+        bits=''.join('1' if px[r*17+c]>px[r*17+c+1] else '0' for r in range(16) for c in range(16))
+        return format(int(bits,2),'064x')
+    except Exception:
+        return ''
+
+def _hamming_hex(a,b):
+    try:
+        return bin(int(a,16)^int(b,16)).count('1')
+    except Exception:
+        return 1<<30
+
 class GroundingMixin:
+    def _clip_recent_lock(self):
+        lock=getattr(self,'_clip_recent_lock_obj',None)
+        if lock is None:
+            lock=threading.Lock();self._clip_recent_lock_obj=lock
+        return lock
+
     def _clip_repeat(self,kind,payload):
         """这段内容是否已经回应过。文字还认「同一段被逐渐加长/截短」的情况
-        （反复复制同一处、选区慢慢变大），避免对同一段内容反复点评。"""
-        recent=list(getattr(self,'_clip_recent',[]))
-        if kind=='image':
-            return any(k=='image' and v==payload for k,v in recent)
-        text=_clip_norm(payload)
-        if not text:return True
-        for k,v in recent:
-            if k!='text':continue
-            if v==text:return True
-            if min(len(v),len(text))>=6 and (v in text or text in v):return True
+        （反复复制同一处、选区慢慢变大），避免对同一段内容反复点评；
+        图片除了 sha1 精确匹配，还按 dHash 近似匹配（重新截图 / 换程序复制同一画面也算重复）。"""
+        now=time.time()
+        text=_clip_norm(payload) if kind=='text' else ''
+        if kind=='text' and not text:return True
+        with self._clip_recent_lock():
+            recent=list(getattr(self,'_clip_recent',[]))
+        for k,v,at in recent:
+            if now-at>CLIP_RECENT_TTL:continue
+            if kind=='image':
+                if k=='image' and v==payload:return True
+            elif kind=='phash':
+                if k=='phash' and _hamming_hex(v,payload)<=PHASH_TOLERANCE:return True
+            else:
+                if k!='text':continue
+                if v==text:return True
+                if min(len(v),len(text))>=6 and (v in text or text in v):return True
         return False
 
     def _clip_remember(self,kind,payload):
-        recent=[(k,v) for k,v in getattr(self,'_clip_recent',[]) if k!=kind or v!=(
-            _clip_norm(payload) if kind=='text' else payload)]
-        recent.append((kind,_clip_norm(payload) if kind=='text' else payload))
-        self._clip_recent=recent[-CLIP_MEMORY:]
+        now=time.time()
+        value=_clip_norm(payload) if kind=='text' else payload
+        save=getattr(self,'_save_clip_recent',None)
+        # 落盘也放进锁里：并发 remember 时保证写出去的是最新一份，别被旧列表覆盖
+        with self._clip_recent_lock():
+            recent=[(k,v,at) for k,v,at in getattr(self,'_clip_recent',[]) if not (k==kind and v==value)]
+            recent.append((kind,value,now))
+            recent=recent[-CLIP_MEMORY:]
+            self._clip_recent=recent
+            if save:
+                try:save(recent)
+                except Exception:pass
 
     def _todo_state_context(self):
         items=list(getattr(self,'todos',[]))

@@ -10,7 +10,9 @@ PLAIN_STYLE=('用自然段表达，篇幅服从问题需要。日常话语简短
              '否则就当第一次看到，平实地说，不要用这类表示“经常/重复”的词。'
              '不要用“X啊……”“X呢……”这种拖长音的公式化开头，也不要句句以“啊/呀/呢/哦/啦”收尾，'
              '语气词能省就省，别每句都一样。'
-             '不要在回复里复述“[历史消息时间：…]”“[图片]（…）”这类元信息或括号标注，直接说内容。')
+             '不要在回复里复述“[历史消息时间：…]”“[图片]（…）”这类元信息或括号标注，直接说内容。'
+             '历史对话与摘要只用来理解上下文：不要照抄或复述其中任何句子，尤其不要重复你自己当时说过的话。'
+             '用户这句话如果确实看不懂（乱码、误触、无意义），就直接说不明白、请他重说，不要硬接，也不要拿历史内容顶上。')
 
 class LiteralReply(str):
     """Application wording with exact user-supplied slots, already ready to display."""
@@ -84,7 +86,7 @@ DEFAULT_LINES={
 
 def load_style(path):
     try:
-        data=json.loads(Path(path).read_text('utf-8'))
+        data=json.loads(Path(path).read_text('utf-8-sig'))
         return data if isinstance(data,dict) else {}
     except (OSError,ValueError):return {}
 

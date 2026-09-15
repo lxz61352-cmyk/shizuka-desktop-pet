@@ -59,8 +59,12 @@ class UpdateFeaturesMixin:
                 m.config(text="已禁用更新", fg="#8a8a8a")
             elif info and info[0]:
                 m.config(text="·有更新·", fg="#c0392b")
-            else:
+            elif info and info[1]:
                 m.config(text="已是最新版本咯~", fg="#7a7a7a")
+            elif info is None:
+                m.config(text="检查更新", fg="#7a7a7a")
+            else:
+                m.config(text="检查更新失败，可重试", fg="#c0392b")
         except Exception:
             pass
 
@@ -253,13 +257,13 @@ class UpdateFeaturesMixin:
                 on_progress=lambda d, t, ex=False: self._ui(
                     lambda: self._update_progress(d, t, ex)),
                 on_note=lambda text: self._ui(lambda: self._update_note(text)))
-            write_pending_update(ver, notes)
             if getattr(sys, "frozen", False):
-                restart = os.path.join(engine.ROOT_DIR, "Shizuka.exe")
+                restart = '"%s"' % os.path.join(engine.ROOT_DIR, "Shizuka.exe")
             else:
                 restart = '"%s" "%s"' % (engine._find_pythonw(),
                                          os.path.join(engine.APP_DIR, "run_pet.py"))
             launch_swap(src, tmp, restart)
+            write_pending_update(ver, notes)
             time.sleep(0.5)
             self._ui(self.quit)
         except Exception:
