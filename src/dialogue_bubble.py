@@ -26,7 +26,7 @@ def make_bubble(parent,**unused):
     show=tk.Button(foot,text='显示全部',bg=CARD,fg=MUTED,relief='flat',bd=0,
                    command=lambda:getattr(win,'_reveal_all',lambda:None)())
     show.pack(side='right',padx=8)
-    win._text_box=box;win._reading_until=0;win._show_all_button=show
+    win._text_box=box;win._show_all_button=show
     max_lines=max(4,min(14,(parent.winfo_screenheight()//2-70)//max(1,font.metrics('linespace')+7)))
     state={'text':''}
     def set_text(value):

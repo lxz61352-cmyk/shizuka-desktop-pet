@@ -172,7 +172,6 @@ class WeixinMixin:
                 reply = self._scene('file_timeout')
             else:
                 reply = self._file_reply(result)
-            self._append_history(text, reply[:1000])
             if result['status']=='completed' and self._should_sound(event='file_complete'):self._ui(self.play_sound)
             self._log_chat("assistant", reply[:1500], kind="weixin_file")
             return reply
@@ -216,7 +215,6 @@ class WeixinMixin:
                     output.append(chunk.choices[0].delta.content or "")
         reply = engine.clean_reply_style("".join(output)).strip() or "刚才没有收到完整回复，请再试一次。"
         if not cancel.is_set():
-            self._append_history(visible, reply)
             self._log_chat("assistant", reply, kind="weixin")
             # Plain conversation shares long-term memory; file results bypass this path.
             def remember():

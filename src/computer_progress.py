@@ -175,6 +175,7 @@ class ComputerProgressMixin:
             elif kind=='text':self._computer_progress_append(row.get('text',''))
             elif kind=='bridge_ready':self._computer_progress_append('DSH 已连接\n')
             elif kind=='bridge_warning':self._computer_progress_append('\n提示：'+row.get('text','')+'\n','error')
+            elif kind=='model':self._computer_progress_append('\n'+row.get('text','')+'\n','detail')
             elif kind=='question':self._computer_progress_append('\n静香正在等您的回答。\n','step')
             elif kind=='question_answered':self._computer_progress_append('\n已收到回答，继续处理。\n','step')
             elif kind=='question_cancelled':self._computer_progress_append('\n这次提问已取消。\n','step')

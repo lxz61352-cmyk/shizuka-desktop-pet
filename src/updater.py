@@ -192,13 +192,18 @@ def launch_swap(src_dir, tmp_dir, restart_cmd, pid=None):
     """写一个等待本进程退出的 bat：robocopy 覆盖到安装目录，然后重启并清理临时目录。
     保留 data / voice_model / experiments 和 api_key.txt，避免覆盖用户数据。"""
     pid = os.getpid() if pid is None else pid
+
+    def esc(value):
+        # bat 里 % 会被当变量展开，引号挡不住它；路径里带 % 会把整行搞坏。
+        return str(value).replace("%", "%%")
+
     bat = os.path.join(tmp_dir, "_update.bat")
     with open(bat, "w", encoding="gbk", errors="ignore") as f:
         f.write("@echo off\r\n")
         f.write(":wait\r\n")
         f.write('tasklist /FI "PID eq %d" | find "%d" >nul && (ping -n 2 127.0.0.1 >nul & goto wait)\r\n' % (pid, pid))
         f.write('robocopy "%s" "%s" /E /XD data voice_model experiments /XF api_key.txt /R:2 /W:1 >nul\r\n'
-                % (src_dir, ROOT_DIR))
-        f.write('start "" %s\r\n' % restart_cmd)
-        f.write('rmdir /S /Q "%s"\r\n' % tmp_dir)
+                % (esc(src_dir), esc(ROOT_DIR)))
+        f.write('start "" %s\r\n' % esc(restart_cmd))
+        f.write('rmdir /S /Q "%s"\r\n' % esc(tmp_dir))
     subprocess.Popen(["cmd", "/c", bat], creationflags=0x08000000, close_fds=True)

@@ -79,6 +79,22 @@ def load_pack(directory):
             low,high=bounds[key]
             if type(value) not in (int,float) or not math.isfinite(value) or not low<=value<=high:
                 raise ValueError('Invalid interaction physics value')
+    hit_regions=manifest.get('interaction_regions')
+    if hit_regions is not None:
+        # pet.py 会直接对 region[0]..region[3] 做下标比较，写错就在运行时崩；这里先卡住。
+        if not isinstance(hit_regions,dict) or not hit_regions:
+            raise ValueError('Invalid interaction regions')
+        for name,box in hit_regions.items():
+            if not isinstance(name,str) or not IDENTIFIER.fullmatch(name):
+                raise ValueError('Invalid interaction region name')
+            if (not isinstance(box,list) or len(box)!=4
+                    or any(type(n) not in (int,float) or not math.isfinite(n) or abs(n)>8192 for n in box)
+                    or box[0]>=box[2] or box[1]>=box[3]):
+                raise ValueError('Interaction region must be [left, top, right, bottom]')
+    sleep_anchor=manifest.get('sleep_effect_anchor')
+    if sleep_anchor is not None and (not isinstance(sleep_anchor,list) or len(sleep_anchor)!=2
+            or any(type(n) not in (int,float) or not math.isfinite(n) or abs(n)>8192 for n in sleep_anchor)):
+        raise ValueError('Invalid sleep effect anchor')
     if pack.renderer == "layered":
         size = manifest.get("canvas_size", [])
         if not isinstance(size, list) or len(size) != 2 or any(type(n) is not int or not 1 <= n <= 4096 for n in size):
@@ -186,6 +202,13 @@ def load_pack(directory):
             feather = layer.get("mask_feather",0)
             if type(feather) not in (int,float) or not math.isfinite(feather) or not 0 <= feather <= 32:
                 raise ValueError("Invalid mask feather")
+        # 有画布尺寸时才做范围校验：static 包没有 canvas_size，只能校验形状。
+        for name,box in (hit_regions or {}).items():
+            if not (0 <= box[0] < box[2] <= size[0] and 0 <= box[1] < box[3] <= size[1]):
+                raise ValueError('Interaction region is outside the canvas: '+name)
+        if sleep_anchor is not None and not (0 <= sleep_anchor[0] <= size[0]
+                                             and 0 <= sleep_anchor[1] <= size[1]):
+            raise ValueError('Sleep effect anchor is outside the canvas')
     return pack
 
 
@@ -212,6 +235,11 @@ def selected_pack(root, settings_path):
         chosen = json.loads(Path(settings_path).read_text(encoding="utf-8-sig")).get("character_pack")
     except (OSError, ValueError, AttributeError):
         chosen = None
+    # settings.json 指定的包存在就用它（内置包都共用同一个 character_id，
+    # 换包不会换数据目录）；指定的包不在磁盘上才退回固定身份。
+    if isinstance(chosen, str):
+        match = next((p for p in packs if p.id == chosen), None)
+        if match is not None:
+            return match, errors
     fallback = next((p for p in packs if p.id == "shizuka-side-motion"), None)
-    # The personal application has one fixed identity and no character picker.
     return fallback, errors

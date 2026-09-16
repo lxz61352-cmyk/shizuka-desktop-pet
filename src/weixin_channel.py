@@ -36,6 +36,16 @@ PENDING_TEXT_SECONDS = 180    # 用户先说「附图…」后，等图片发过
 # 「附图 / 见图 / 如图…」这类说法 = 图片随后就到，先说任务再等图
 ATTACH_WORD_RE = re.compile(r"附图|见图|如图|见下|见上|附上|附件|下附|图中|图里|这张图|那张图|这幅图|上面的图|下面的图")
 _CN_DIGITS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+SEEN_TTL_SECONDS = 30 * 24 * 3600   # 已处理消息的去重记录保留多久（秒）
+SEEN_MAX = 10000                    # 去重记录的硬上限，防御短时间被灌爆
+
+
+def _day_label(day):
+    """'20260916' → '9月16日'；识别不了就原样返回。"""
+    text = str(day or "")
+    if len(text) == 8 and text.isdigit():
+        return "%d月%d日" % (int(text[4:6]), int(text[6:8]))
+    return text
 
 
 def cn_number(value):
@@ -290,8 +300,16 @@ class ProtectedStore:
             seen = self.data["seen"]
             if message_id in seen:
                 return False
-            seen[message_id] = time.time()
-            while len(seen) > 2000:
+            now = time.time()
+            seen[message_id] = now
+            # 按时间淘汰（不再只按条数）：老消息本来就过不了 receive() 里
+            # create_time_ms >= bound_at-5 那道门，保留期与它对齐后判重语义才自洽。
+            cutoff = now - SEEN_TTL_SECONDS
+            for stale in [key for key, at in seen.items()
+                          if not isinstance(at, (int, float)) or at < cutoff]:
+                seen.pop(stale, None)
+            # 再留一个硬上限：万一短时间被灌爆，也不让加密状态文件无限增长。
+            while len(seen) > SEEN_MAX:
                 del seen[next(iter(seen))]
             # Save BEFORE starting a file operation: interrupted tasks are never replayed.
             self.save()
@@ -353,6 +371,20 @@ class ImageIndex:
         items = [i for i in self.data.get("items", [])
                  if i.get("at", 0) >= cutoff and Path(i.get("path", "")).is_file()]
         return items[-limit:]
+
+    def note_for(self, records):
+        """用户明确指了图时给模型的说明。
+
+        序号按天重置，`resolve()` 会跨天回退到「最近一次用过这个序号」的图；命中里
+        只要有不是今天的图，就必须写明是哪天的，否则模型会默默照着另一张图回答。
+        """
+        today = self.data.get("day")
+        others = sorted({_day_label(r.get("day")) for r in records
+                         if r.get("day") and r.get("day") != today and _day_label(r.get("day"))})
+        if not others:
+            return "用户指的是这些图片："
+        return ("用户说的图N不是今天收到的（今天的编号里没有这个序号），下面是 "
+                + "、".join(others) + " 的图；拿不准就请他重说是哪天的图N。")
 
     def resolve(self, text):
         """解析「图2 / 第2张 / 倒数第2张 / 最新那张」；返回 (命中的记录, 今天不存在的序号)。"""
@@ -491,7 +523,7 @@ class WeixinChannel:
             return "", [], False
         found, unknown = index.resolve(text)
         if found:
-            return self.image_block(found, "用户指的是这些图片："), [], False
+            return self.image_block(found, index.note_for(found)), [], False
         if images:
             # 本条消息附带的图片：都带上（最近的排最后）
             return self.image_block(images[-CURRENT_IMAGE_COUNT:], "本条消息附带的图片："), [], False

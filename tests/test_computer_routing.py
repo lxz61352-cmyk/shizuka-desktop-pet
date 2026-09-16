@@ -14,7 +14,7 @@ class RoutingTests(unittest.TestCase):
         app = pet.DeskPet.__new__(pet.DeskPet)
         app._conv_id = 4
         app._sound_mode='none'
-        for name in ("_log_chat", "_append_history", "say", "_start_computer_task", "show_computer_assistant",
+        for name in ("_log_chat", "say", "_start_computer_task", "show_computer_assistant",
                      "_cancel_reply", "_close_think_bubble", "open_chat_input"):
             setattr(app, name, Mock())
         return app

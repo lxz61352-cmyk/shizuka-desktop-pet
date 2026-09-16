@@ -26,6 +26,11 @@ _TAIL_PARTICLE_RE=re.compile(r'^(.{1,30}?)([啊呀哦噢])(?=[。！？!?…，,
 # 上下文里给模型看的时间元信息，模型有时会原样复述出来 → 一律去掉
 _DATE_MARK_RE=re.compile(r'\[历史消息时间[^\]]{0,160}\]')
 
+# 起手语气词与「(你)又在/还在」公式化开头的正则只在这一处定义：
+# pet.clean_reply_style 复用这两个名字，避免两套规则对同一句话给出不同结果。
+ACK_LEAD_RE=_ACK_LEAD_RE
+FORMULA_LEAD_RE=_FORMULA_LEAD_RE
+
 
 def _trim_leads(text):
     out=_DATE_MARK_RE.sub('',text)               # 「[历史消息时间：…；相对日期以此为准]」
@@ -75,6 +80,10 @@ DEFAULT_LINES={
     'todo_waiting':'微信还没连通，提醒我先留着。您连接后给我发条消息就好。',
     'todo_failed':'这次没能把待办保存完整，我把情况留在列表里，请您核对一下。',
     'connection_failed':'刚才没能连上，您稍后再试一次好吗？',
+    # 天气取不到时按原因分开说：不猜同名城市、也不含糊其辞
+    'weather_no_location':'抱歉呀，我这边没认出你在哪个城市，定位没取到。你说一下城市名，我再查一次。',
+    'weather_no_match':'抱歉呀，我没能确认你所在城市的天气站点——地名可能有多个同名的。你说一下具体城市，我再查一次。',
+    'weather_no_network':'抱歉呀，我这边暂时没取到天气数据呢……可能是网络不通，等会儿再问我一次吧。',
     'file_start':'我来处理，弄好后再告诉您。',
     'file_running':'我还在处理，已经过了 {seconds} 秒。',
     'file_completed':'这次处理已经返回，具体结果如下。',

@@ -25,5 +25,7 @@ def make_transport(bridge, config):
         from sync_rustdesk import RustDeskSync
         return RustDeskSync(bridge,config)
     # Compatibility only for old isolated pilot tests, never offered as a new pairing.
-    from sync_taildrop import TaildropSync
+    # 旧通道也在这里校验一次：否则配置错误要等到 TaildropSync 内部才报，来源不直观。
+    from sync_taildrop import TaildropSync, validate_config as validate_legacy
+    validate_legacy(config)
     return TaildropSync(bridge,config)

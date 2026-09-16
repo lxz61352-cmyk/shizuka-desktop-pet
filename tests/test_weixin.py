@@ -162,7 +162,7 @@ class WeixinTests(unittest.TestCase):
         app._computer_data_dir = lambda: self.root
         app._computer_agent = Mock()
         app._computer_agent.run.return_value = {"status":"completed", "output":"file done"}
-        app._append_history = Mock();app._log_chat = Mock()
+        app._log_chat = Mock()
         with patch.object(pet, "has_api_key", return_value=False):
             reply = app._weixin_reply("/电脑 create test.txt", threading.Event(), Mock())
             self.assertIn("尚未开启", reply)

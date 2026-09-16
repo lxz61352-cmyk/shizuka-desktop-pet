@@ -83,7 +83,7 @@ class LayeredRenderer:
                         raise ValueError('Recovery frames need matching full-canvas RGBA images')
                     if not source.getchannel('A').getbbox():raise ValueError('Empty recovery frame')
                     loaded[path]=source.copy()
-            self.recover_frames[f'frame-{index}']=loaded[path]
+            self.recover_frames[spec.get('id') or f'frame-{index}']=loaded[path]
 
     def _resize(self,height):
         if self._height == height:
@@ -169,7 +169,12 @@ class LayeredRenderer:
         falling=expression=="falling"
         body=self.activity_frames.get(state) or self.body_frames.get(state)
         if state=="recover" and body is not None:
-            body=self.expression_frames['neutral'] if phase=='prepare' else self.recover_frames.get(phase,body)
+            # 有些包只提供 body_frames + recover_frames 而没有 expression_frames；
+            # 这里不能直接下标取 neutral，否则渲染线程抛 KeyError 会让动态绘制整体降级成静态立绘。
+            if phase=='prepare':
+                body=self.expression_frames.get('neutral') or body
+            else:
+                body=self.recover_frames.get(phase,body)
         key=("body",state,phase) if body is not None else (closed,mouth,expression)
         if key in self._cache:
             groups,fbox=self._cache[key]

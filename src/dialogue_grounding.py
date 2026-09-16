@@ -6,7 +6,8 @@ from todo_schedule import EVENT_WORDS
 PASSIVE_SOURCES={'启动问候','开机待办提醒','主动搭话','前台程序','粘贴板','截图'}
 # 粘贴板 / 截图这类「随复制随反应」的不按主动搭话间隔卡：只留一点防抖时间，
 # 靠「同一段内容回应过就不再重复」来克制，内容换了才重新说话。
-CLIP_PASSIVE_SOURCES={'粘贴板','截图','识图'}
+CLIP_PASSIVE_SOURCES={'粘贴板','截图'}
+IMAGE_PASSIVE_SOURCES={'截图'}    # 图片类反应另给更长的防抖
 CLIP_PASSIVE_GAP=3.0           # 粘贴板（文字）：仅防抖
 IMAGE_PASSIVE_GAP=5.0          # 截图 / 识图（图片）：仅防抖
 CLIP_MEMORY=200                # 记住最近回应过的内容条数（落盘，重启不清空）
@@ -159,7 +160,7 @@ class GroundingMixin:
         # 粘贴板 / 截图这类「随复制随反应」的只留一点防抖，不按主动搭话间隔卡；
         # 也不占用主动搭话的间隔，否则粘贴板一多，主动搭话就再也轮不到。
         clip=source in CLIP_PASSIVE_SOURCES
-        gap=IMAGE_PASSIVE_GAP if source in ('截图','识图') else CLIP_PASSIVE_GAP
+        gap=IMAGE_PASSIVE_GAP if source in IMAGE_PASSIVE_SOURCES else CLIP_PASSIVE_GAP
         with self._passive_lock:
             if not passive_text_ok(text):return False
             if clip:

@@ -107,7 +107,7 @@
 ### 3. 记忆
 
 - `data/characters/<角色>/memory.json`，`MemoryStore`（带锁）。显式「记住 X」→ 模型解析保留原文 → 永久记忆；未明说时模型判断是否值得长期记。检索优先本地语义检索，回退关键词重合，按相关度注入。
-- 启动清理过期（25 天未引用按概率删）+ 模型合并近义重复；`memory-review.json` 记录哪些旧对话已审阅，避免重复刷记忆。
+- **记忆只增不删**：`MemoryStore.clean()` / `dedup()` 都是空操作（只 `normalize()`），不做按时间/概率/条数的淘汰；`find_similar()` 只在 strip 后**完全相同**时判定重复，不做「互相包含 / 字面重合度很高」的合并（会把不同的事误并成一条）。`memory-review.json` 记录哪些旧对话已审阅，避免重复刷记忆；`topics` 只是索引，不删原记录。
 
 ### 4. 待办 / 提醒
 
@@ -125,7 +125,8 @@
 
 ### 6. 天气 / 新闻
 
-- `weather.py`：`_geo_ip()` 先查国内 IP 库（GBK）再回退 ip-api；`_net_mode()` 探测外网是否可达并缓存。外网可达走 Open-Meteo（地理编码 + 当前/未来三天），否则走中国气象局 `weather.cma.cn`，两边互为兜底。WMO 天气码用 `_WMO_ZH` 转中文。
+- `weather.py`：`_geo_ip()` 按顺序尝试**全部 HTTPS** 的免费定位源——pconline（国内、GBK）→ `api.vore.top/api/IPdata`（国内、中文省市）→ ipwho.is（国外、英文城市）；以前的明文 `http://ip-api.com` 已去掉（它的免费端点不支持 HTTPS，实测 `https://ip-api.com/json/` 返回 403 `SSL unavailable`）。国内源放最前是因为国外源会跟着梯子出口走（实测本机被 ipwho.is 判成 Tokyo，pconline 正确给出四川成都）。`_net_mode()` 探测外网是否可达并**缓存 30 分钟**（`_NET_MODE_TTL`），中途开关梯子不必重启。外网可达走 Open-Meteo（地理编码 + 当前/未来三天），否则走中国气象局 `weather.cma.cn`，两边互为兜底。WMO 天气码用 `_WMO_ZH` 转中文。
+- **天气取不到时按原因直说，不猜城市**：`_cma_station()` **只接受精确匹配**，否则返回 None（以前会退回「第一个候选」，把同名地名的天气静默安到用户头上）；地名变体只用 `_name_variants()`（原样、去「市/省」后缀），**刻意不剥「区/县」**——否则北京的「朝阳区」会剥成「朝阳」撞上辽宁朝阳市。`weather_report(detail)` 返回 `{city,text,source,reason}`，`reason ∈ {'', no-location, no-match, no-network}`：开机问候拿不到天气就退化成不带天气的普通问候（`_greeting_weather()` 返回 `''`），主动提问则按 reason 播 `dialogue_style` 里的 `weather_no_location / no_match / no_network`（角色包可覆盖）。
 - `news.py`：`get_news()` 取 `https://60s.viki.moe/v2/60s` 的当日标题列表。
 - 问答走 `weather_features._weather_worker / _news_worker`（拿数据 → 交给模型用角色口吻回答）；启动时 `_prefetch_geo()` 后台预热，`_greeting_weather()` 有 35% 概率把真实天气带进开机问候。
 
@@ -158,9 +159,9 @@
 ### 11. 电脑助手 / 微信 / 研究 / 同步
 
 - **电脑助手**：`/电脑 <任务>` 或明确文件指令 → 本机 DSH（headless profile + 本次 overlay，`src/shizuka-dsh-bridge.mjs`）。进度窗只读，需要确认的问题回到聊天里问。配置在 `data/computer-assistant.json`（工作文件夹、Node 路径、dsh bin.js、操作范围、任务模型）。**任务没跑成时会写 `data/computer-tasks/<id>/failure.log`**（任务内容、使用模型、最近 40 条事件、stderr 末尾），并在 `data/error.log` 留一行索引——用户常不在电脑前，事后看日志即可。
-- **微信**：`weixin_channel` 负责协议与收发，`weixin_ui` 负责扫码/设置；支持对话、识图、`/图片`、`/电脑` 等远程指令，待办提醒也可走微信。绑定状态存 `data/weixin-state.json`。图片按天编号存到工作区 `微信图片/`，指代用「图N」（支持中文数字）；**没指定图片时带最近 2 张（10 分钟内），本条消息自带的图片全带上（最多 3 张）**；聊天分支会把图转 data URL 直接附给模型（按路径缓存 10 分钟），所以「讲下图3」「那第二问呢」都能看图回答。
+- **微信**：`weixin_channel` 负责协议与收发，`weixin_ui` 负责扫码/设置；支持对话、识图、`/图片`、`/电脑` 等远程指令，待办提醒也可走微信。绑定状态存 `data/weixin-state.json`。图片按天编号存到工作区 `微信图片/`，指代用「图N」（支持中文数字）；**没指定图片时带最近 2 张（10 分钟内），本条消息自带的图片全带上（最多 3 张）**；聊天分支会把图转 data URL 直接附给模型（按路径缓存 10 分钟），所以「讲下图3」「那第二问呢」都能看图回答。序号按天重置、索引只留最近 50 条，`resolve()` 会跨天回退到「最近一次用过这个序号」的图——**这时 `ImageIndex.note_for()` 会在给模型的提示里写明「不是今天收到的，下面是 9月16日 的图」**，免得模型默默照着另一张图回答。去重记录 `seen` 按**时间**保留（`SEEN_TTL_SECONDS=30 天`，另有 `SEEN_MAX=10000` 硬上限），不再只按 2000 条 FIFO 淘汰。
 - **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `topics`/`queries` 检索，模型按摘要判断相关性；缺摘要时只依据题名评论，不编造结论。
-- **同步**：`sync_runtime/sync_client/sync_store/sync_transport/sync_rustdesk/...` 用签名 journal、独立设备身份、幂等事件；默认每 3 小时（`memory_interval_seconds`，60~604800 秒）轻量检查，另有手动同步。
+- **同步**：`sync_runtime/sync_client/sync_store/sync_transport/sync_rustdesk/...` 用签名 journal、独立设备身份、幂等事件；默认每 3 小时（`memory_interval_seconds`，60~604800 秒）轻量检查，另有手动同步。`SyncStore` 现在有**压实**：`compact()` 把当前状态写成快照表、并把已压实的事件搬进 `events_archive` 冷表，本地读只回放「快照 + 基线之后的热事件」；`bundle()`/`conflicts()` 仍读**完整历史**（热表 ∪ 归档表），所以信封格式没变、对端不缺历史、冲突检测也不退化。`SyncBridge` 每 200 次提交检查一次（`maybe_compact()`，阈值 `COMPACT_AFTER_EVENTS=5000`），失败只记在 `status()['compact_error']`、不影响保存。实测 2 万条记录 `rows()` 从 221ms 降到 48ms。
 
 ### 12. 线程 / 锁 / 设置 / 凭据
 
@@ -199,6 +200,25 @@
 ---
 
 ## 六、版本历史（简）
+
+### 2026-09-16 — 源码修复（未发版，待并入下次发版）
+
+> 只改了源码与测试，**没有动 `APP_VERSION` / `version.json` / `MANIFEST.json`**。发版前请按第二章跑一次 `tools/make_release.py` 重生成清单（现在 `MANIFEST.json` 与 `VERIFICATION.json` 还是 0.8.1 发版时的旧快照）。
+
+- **渲染**：`LayeredRenderer._groups()` 在 `recover + prepare` 时不再无条件取 `expression_frames['neutral']`（缺该帧的角色包会让渲染线程抛 KeyError，`_take_render` 随即永久退回静态立绘）；恢复帧的键改用 `character.json` 里作者写的 `id`，`pet_motion.recovery_phase` 与渲染器同源，不再两边各自按下标拼 `frame-N`。
+- **角色包校验**：新增 `interaction_regions`（键名、四元组、方向、坐标范围）与 `sleep_effect_anchor` 校验——`pet.py` 会直接下标比较这些数字，以前写错只能等到运行时崩。
+- **待办**：删除待办时一并清掉 `todo-details.json` 的旁表条目（以前只增不减）并取消在途提醒/正在显示的气泡；删除前先把未落库的 `routine_memory` 写进长期记忆。`_reminder_loop` 单轮异常改为记 `error.log` 后继续排下一轮，不再静默失败。
+- **记忆**：删掉旧的 `_extract_memories`（没有 quote 接地校验的宽松路径，已无调用点），避免被误接回绕过 `memory_maintenance` 的 source/quote/stable 校验。
+- **口吻**：起手语气词与「(你)又在/还在」正则只在 `dialogue_style` 定义一处，`pet.clean_reply_style` 复用同一份（以前两套规则对同一句话结果不同）。
+- **缓存 / 网络**：`_MODEL_CAPS` 加上限（64，超出丢最早的）；`_EMB_CACHE` 超限改成丢最早一批而不是整表清空；`weather._NET_MODE` 加 30 分钟 TTL，中途开关梯子不必重启。
+- **电脑助手**：`task_model(..., has_images=True)` 真正生效——DeepSeek 官方接口下带图任务即使选「继承 DSH 默认」也强制视觉模型（否则 `read_image` 会被路由门禁拒绝）；进度窗开始渲染 `model` 事件（以前写进 `events.jsonl` 却从不显示）。
+- **更新**：`launch_swap` 写 bat 时把路径里的 `%` 转义成 `%%`（引号挡不住 cmd 的变量展开）。
+- **清理**：删掉没人读取的 `_history` / `_hist_lock` / `_append_history`（`_history_max` 更名为语义明确的 `_recall_exclude_turns`）、`dialogue_bubble` 的 `_reading_until`、`CLIP_PASSIVE_SOURCES` 里不可达的 `'识图'`；`sync_transport.make_transport` 对退役的旧通道也先校验一次配置。
+- **测试**：新增 `tests/test_character_pack_regions.py`、`tests/test_renderer_recover.py`、`tests/test_todo_delete_cleanup.py`、`tests/test_runtime_bounds.py`，并在 `test_task_model.py` 补「继承 + 带图」用例；单测总数 114 → 137。
+- **天气（第二批）**：`_geo_ip()` 全部换成 HTTPS 源（pconline → `api.vore.top` → ipwho.is），去掉明文 `http://ip-api.com`；`_cma_station()` 只接受精确匹配、地名变体不剥「区/县」；新增 `weather_report()` 返回 `reason`，开机问候取不到天气就退化成普通问候，主动提问按原因直说（新增 3 条 `dialogue_style` 话术）。
+- **微信（第二批）**：去重记录按时间保留（30 天，硬上限 10000 条）；跨天「图N」回退时在提示里写明是哪天的图（`ImageIndex.note_for()`）。
+- **同步（第二批）**：`SyncStore` 增加压实（快照表 + `events_archive` 归档冷表 + `compact()/maybe_compact()`），`bundle()/conflicts()` 走完整历史、`_insert` 同时查归档表保证幂等与冲突语义不变；`SyncBridge` 每 200 次提交检查一次并暴露 `compact_error`；新增 `tests/test_weather_fallback.py`、`tests/test_weixin_retention.py`、`tests/test_sync_compaction.py`，单测总数 137 → 175。
+- **保留项**：`Pose.leg_sway` 整条链（`pet_motion` 的 `leg` + `LocalMesh` 的 `leg_regions` + `character_packs` 校验）是**有意保留**的通道，朋友可能要继续做腿部动作，别当死代码删掉。
 
 ### 2026-09-16 — V0.8.1
 
@@ -253,14 +273,14 @@
 ## 七、未解决 / 待验证
 
 - **研究进展整体禁用**：这个功能朋友那边也确认还没完全做好，所以先关掉了。开关在 `assistant_features.RESEARCH_ENABLED = False`：菜单显示「研究进展（开发中）」，点了只回一句提示；`_research_loop` 不再排期、不自动检查、不主动播报；聊天里被路由到 `research` 也只会得到「还在开发中」。代码（`research_watch.py` + `_research_*`）都还在，改回 `True` 即可恢复。
-- **没有角色选择器**：`character_packs.selected_pack()` 会读 `settings.json` 的 `character_pack`，但最后**固定返回 `shizuka-side-motion`**（注释写明「one fixed identity and no character picker」）。`characters/shizuka-classic` 还留在磁盘上但选不到；如果以后要做切换，得把那个返回值改回 `chosen`。
+- **角色包可切换（但界面里没有选择器）**：`character_packs.selected_pack()` 会读 `settings.json` 的 `character_pack`，**指定的包存在就用它**，不存在才回退到 `shizuka-side-motion`。内置两个包的 `character_id` 都是 `shizuka`，共用同一个数据目录，换包不会换记忆/聊天/待办。要在界面里做切换器，只要写这个设置项并重启即可（`shizuka-classic` 是 `static` 渲染器，`_do_wheel_apply`/`_animate_pet` 都有 `_animator is None` 的分支）。
 - **Responses API 未接**：`api_mode` / `_responses_via_chat` 在 0.7.4 有，0.7.6 重构后没移植。方案已确认：在 `api_runtime.configure_client` 里按 `api_mode` 分流，`_responses_via_chat` 用非流式 `responses.create` 包成「假流」；**DeepSeek 的 `/responses` 实测 400 + 偶发空，必须记住不支持并退回 chat**；带图片的消息要把内容转成 `input_text`/`input_image`。
 - 翻译只对 `foreign` 生效（拉丁字母 ≥12 且远多于汉字），`hello world` 这类短英文不翻译，阈值可放宽。
 - 圆角用色键透明实现，系统关「透明效果」时四角可能显黑。
 - 落窗口上（试验）：自定义边框窗口边缘可能有几像素偏差。
 - 头部是平面旋转，没有立体转头；**未完成 Live2D Cubism 的 cmo3/moc3 绑定**。
 - 唱片的封面提取只支持 ID3v2 的 APIC 帧；背景音乐走 MCI `mpegvideo`，个别声卡对 `setaudio` 音量响应不准。
-- 天气/新闻/更新都依赖网络：GitHub 直连被墙时靠镜像，镜像也可能失效。
+- 天气/新闻/更新都依赖网络：GitHub 直连被墙时靠镜像，镜像也可能失效。天气的城市识别现在是**宁可不说**：气象局站点没有精确匹配就不报天气（主动问会直说没能确认城市，开机问候退化成不带天气的问候），见「四、6」；IP 定位的三个 HTTPS 源也都可能被墙或限流。
 
 ---
 

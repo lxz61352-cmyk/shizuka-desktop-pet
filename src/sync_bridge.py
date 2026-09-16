@@ -40,6 +40,8 @@ class SyncBridge:
                       "chats": self.directory / "对话记录" / "对话记录.json"}
         self.store = SyncStore(self.sync_dir / "journal.sqlite3", character, device)
         self.character = character
+        self._commits_since_compact = 0
+        self.compact_error = None
         try:
             with self.exclusive():
                 self._bootstrap()
@@ -128,7 +130,28 @@ class SyncBridge:
             rows = self.store.commit_snapshot(collection, desired, observed, delete_missing=collection != "chats")
             rows = self._sorted(collection, rows)
             atomic_json(self.paths[collection], list(rows) if collection == "chats" else {"items": list(rows)})
-            return Snapshot(rows if collection == "chats" else rows, rows.clock)
+            snapshot = Snapshot(rows if collection == "chats" else rows, rows.clock)
+        self._maybe_compact()
+        return snapshot
+
+    COMPACT_CHECK_EVERY = 200   # 每 200 次提交检查一次，避免每条消息都去 COUNT(*)
+
+    def _maybe_compact(self):
+        """热事件攒太多就压实一次（只降低本地回放代价，历史进归档冷表、不会丢）。
+
+        压实失败不能影响保存：只记下错误类型，由 status() 暴露给界面/排查。
+        """
+        self._commits_since_compact += 1
+        if self._commits_since_compact < self.COMPACT_CHECK_EVERY:
+            return None
+        self._commits_since_compact = 0
+        try:
+            result = self.store.maybe_compact()
+            self.compact_error = None
+            return result
+        except Exception as exc:
+            self.compact_error = type(exc).__name__
+            return None
 
     def exchange(self, bundle, collections=None):
         with self.exclusive():
@@ -145,7 +168,9 @@ class SyncBridge:
             return {"character": self.character, "device": self.store.device,
                     "counts": {k: len(self.store.rows(k)) for k in FIELDS},
                     "events": len(self.store.bundle()["events"]),
-                    "conflicts": len(self.store.conflicts())}
+                    "conflicts": len(self.store.conflicts()),
+                    "compacted_at": self.store.meta("compacted_at"),
+                    "compact_error": self.compact_error}
 
     def close(self):
         self.store.close()

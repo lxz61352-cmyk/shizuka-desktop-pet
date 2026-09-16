@@ -181,7 +181,9 @@ class MotionController:
         age-=self.PREPARE_SECONDS
         for index,frame in enumerate(self.recover_frames):
             age-=frame['duration']
-            if age<0:return f"frame-{index}"
+            # 恢复帧的键用作者在 character.json 里写的 id，渲染器按同一个 id 取图；
+            # 不再两边各自用下标拼字符串（那样清单里的 id 校验完就被丢掉了）。
+            if age<0:return frame.get('id') or f"frame-{index}"
         return "tidy"
 
     def trigger(self,action,now):
@@ -253,6 +255,9 @@ class MotionController:
             phase=self.recovery_phase(now)
         expression="lifted" if self.dragging else "falling" if self.falling else "neutral"
         sleep_fx=sleep_time=0.0
+        # leg_sway 是**有意保留**的通道：角色包已经标好 rig.leg_regions，LocalMesh 也会按它
+        # 摆动腿部（local_mesh.py 的 leg_regions 分支），只是目前没有驱动量、恒为 0。
+        # 想做「拖动/落地时腿跟着惯性摆」直接给 leg 赋值即可；别因为「看着没用」删掉整条链。
         leg=0.0
         breath=.3*math.sin(now*1.7)
         pet_follow=self.pet_follow.step(self.pet_target,dt,100,20)

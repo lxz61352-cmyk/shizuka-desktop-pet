@@ -154,10 +154,20 @@ class TodoFeaturesMixin(TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNo
             self._todo_complete_or_restore(item,done)
 
     def _todo_delete(self,tid):
+        self._todo_init()
         item=next((it for it in self.todos if it['id']==tid),None)
-        if item:self._todo_queue_routine(item,'删除');self._save_todo_details()
+        if item:self._todo_queue_routine(item,'删除')
+        # 旁表条目马上要一起清掉，所以先把还没落库的周期记录写进长期记忆，
+        # 否则这些「建立/调整/删除」的原文依据会随条目一起消失。
+        options=self._todo_details.get(tid) or {}
+        if any(not row.get('saved') for row in options.get('routine_memory',[])):
+            self._collect_routine_memories()
         self.todos=[it for it in self.todos if it['id']!=tid]
-        self._save_todos();self._refresh_todo_view()
+        self._save_todos()
+        # 删掉之后不能再有这一条的提醒：既有在途的补说队列，也有正在显示的气泡。
+        self._todo_cancel_notices(tid)
+        self._todo_details.pop(tid,None)
+        self._save_todo_details();self._refresh_todo_view()
         self._todo_start_memory_review()
 
     def _todo_notice_signature(self,item):
@@ -232,6 +242,10 @@ class TodoFeaturesMixin(TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNo
 
     def _reminder_loop(self):
         try:self._todo_check_reminders()
+        except Exception:
+            # 不能让一轮异常把循环吃掉：记下来（error.log）并照常排下一轮。
+            import pet as engine
+            engine._err_log('reminder_loop')
         finally:
             if not getattr(self,'_quitting',False):self._reminder_after=self.root.after(20000,self._reminder_loop)
 

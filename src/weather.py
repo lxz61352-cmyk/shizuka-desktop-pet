@@ -1,6 +1,7 @@
 """本机定位与天气查询：外网可达走 Open-Meteo，仅国内走中国气象局，互为兜底。"""
 import gzip as _gzip
 import json
+import time
 import urllib.parse
 import urllib.request
 import zlib
@@ -62,15 +63,24 @@ def _num(v):
         return "?"
 
 
-def _geo_openmeteo(loc):
-    """Open-Meteo 地理编码：城市名 → (lat, lon)；失败返回 None。会自动去掉「市/省/区/县」后缀再试。"""
+def _name_variants(loc):
+    """地名尝试顺序：原样，再试去掉「市/省」后缀（成都市→成都）。
+
+    刻意**不剥「区/县」**：那会把北京的「朝阳区」变成「朝阳」、正好撞上辽宁朝阳市，
+    等于又回到「猜同名城市」。两个天气源共用这一份规则，行为才一致。
+    """
     loc = (loc or "").strip()
     if not loc:
+        return []
+    stripped = loc[:-1] if loc.endswith(("市", "省")) else ""
+    return [loc, stripped] if stripped else [loc]
+
+
+def _geo_openmeteo(loc):
+    """Open-Meteo 地理编码：城市名 → (lat, lon)；失败返回 None。"""
+    names = _name_variants(loc)
+    if not names:
         return None
-    names = [loc]
-    stripped = loc.rstrip("市省区县")
-    if stripped and stripped != loc:
-        names.append(stripped)
     try:
         for name in names:
             url = ("https://geocoding-api.open-meteo.com/v1/search?name=%s&count=1&language=zh&format=json"
@@ -86,6 +96,8 @@ def _geo_openmeteo(loc):
 
 # ---------------- 网络状态 → 天气源选择 ----------------
 _NET_MODE = None   # None=未探测；"proxy"=外网可达；"direct"=仅国内
+_NET_MODE_AT = 0.0
+_NET_MODE_TTL = 1800   # 秒。过期后重新探测：中途开关梯子/换网络不必重启程序
 
 
 def _foreign_net_ok(timeout=6):
@@ -100,10 +112,12 @@ def _foreign_net_ok(timeout=6):
 
 
 def _net_mode():
-    """返回 'proxy'（外网可达）或 'direct'（仅国内）。首次探测后缓存。"""
-    global _NET_MODE
-    if _NET_MODE is None:
+    """返回 'proxy'（外网可达）或 'direct'（仅国内）；结果缓存 _NET_MODE_TTL 秒。"""
+    global _NET_MODE, _NET_MODE_AT
+    now = time.time()
+    if _NET_MODE is None or now - _NET_MODE_AT > _NET_MODE_TTL:
         _NET_MODE = "proxy" if _foreign_net_ok() else "direct"
+        _NET_MODE_AT = now
     return _NET_MODE
 
 
@@ -166,14 +180,16 @@ def _weather_openmeteo_detail(loc):
 
 # 国内天气源：中国气象局 weather.cma.cn（免费、无需 key，直连即可，不依赖代理）
 def _cma_station(loc):
-    """城市名 → 中国气象局站点号；失败返回 None。会自动去掉「市/省/区/县」后缀再试。"""
+    """城市名 → 中国气象局站点号；**只接受精确匹配，否则返回 None**。
+
+    以前找不到精确匹配时会退回「第一个有名字的候选」，那会把同名地名的天气静默安到
+    用户头上（用户从回复里看不出城市不对）。现在宁可返回 None，交给上层说明情况：
+    开机问候退化成不带天气的普通问候，主动提问就直说没能确认城市。
+    """
     loc = (loc or "").strip()
     if not loc:
         return None
-    names = [loc]
-    stripped = loc.rstrip("市省区县")
-    if stripped and stripped != loc:
-        names.append(stripped)
+    names = _name_variants(loc)
     try:
         for name in names:
             url = "https://weather.cma.cn/api/autocomplete?q=" + urllib.parse.quote(name)
@@ -182,17 +198,15 @@ def _cma_station(loc):
             for parts in items:
                 if len(parts) >= 2 and parts[1] == name:
                     return parts[0]
-            for parts in items:
-                if len(parts) >= 2 and parts[1]:
-                    return parts[0]
     except Exception:
         pass
     return None
 
 
-def _weather_cma(loc, detail=False):
-    """中国气象局天气文本；失败返回 ''。detail=False 时只回「天气 + 气温」简述。"""
-    st = _cma_station(loc)
+def _weather_cma(loc, detail=False, station=None):
+    """中国气象局天气文本；失败返回 ''。detail=False 时只回「天气 + 气温」简述。
+    station 可由调用方预先解析好传入，避免同一次查询重复请求 autocomplete。"""
+    st = station or _cma_station(loc)
     if not st:
         return ""
     try:
@@ -241,55 +255,95 @@ def _weather_cma(loc, detail=False):
         return ""
 
 
+# ---------------- IP 定位：全部走 HTTPS 免费源 ----------------
+# 以前的兜底 ip-api 免费端点只提供明文 http（https 会返回 403 "SSL unavailable for
+# this endpoint"），已换成 api.vore.top（HTTPS、中文省市）。顺序：国内源优先——
+# 直连、不受梯子出口影响；最后一个是国外源，地名是英文，只有 Open-Meteo 认，
+# 那也没关系：国内源因此查不到站点时会按「宁可不说」的原则放弃报天气。
+def _geo_pconline():
+    """太平洋电脑网 IP 库（国内、HTTPS、GBK）。"""
+    txt = http_get("https://whois.pconline.com.cn/ipJson.jsp?json=true", 8, "gb18030")
+    s, e = txt.find("{"), txt.rfind("}")
+    if s < 0 or e <= s:
+        return "", ""
+    d = json.loads(txt[s:e + 1])
+    return (d.get("pro") or "").strip(), (d.get("city") or "").strip()
+
+
+def _geo_vore():
+    """VORE-API IP 定位（国内、HTTPS、中文省市）。"""
+    d = json.loads(http_get("https://api.vore.top/api/IPdata", 8))
+    if int(d.get("code") or 0) != 200:
+        return "", ""
+    adcode = d.get("adcode") or {}
+    info = d.get("ipdata") or {}
+    pro = str(adcode.get("p") or info.get("info1") or "").strip()
+    ct = str(adcode.get("c") or info.get("info2") or "").strip()
+    return pro, ct
+
+
+def _geo_ipwhois():
+    """ipwho.is（国外、HTTPS）。地名是英文，只填城市。"""
+    d = json.loads(http_get("https://ipwho.is/", 8))
+    if d.get("success") is False:
+        return "", ""
+    return "", str(d.get("city") or "").strip()
+
+
+_GEO_PROVIDERS = (_geo_pconline, _geo_vore, _geo_ipwhois)
+
+
 def _geo_ip():
-    """返回 (省份, 城市)。优先国内 IP 库（走直连，不受梯子/代理出口影响），失败再回退 ip-api。"""
-    # 1) 国内：太平洋电脑网 IP 库，返回 GBK
-    try:
-        txt = http_get("https://whois.pconline.com.cn/ipJson.jsp?json=true", 8, "gb18030")
-        s, e = txt.find("{"), txt.rfind("}")
-        if s >= 0 and e > s:
-            d = json.loads(txt[s:e + 1])
-            pro = (d.get("pro") or "").strip()
-            ct = (d.get("city") or "").strip()
-            if pro or ct:
-                return pro, ct
-    except Exception:
-        pass
-    # 2) 回退：ip-api（国外站，梯子开着时可能定位到出口）
-    try:
-        txt = http_get("http://ip-api.com/json/?lang=zh-CN", 12)
-        if txt:
-            d = json.loads(txt)
-            if d.get("status") == "success":
-                return (d.get("regionName", "") or "").strip(), (d.get("city", "") or "").strip()
-    except Exception:
-        pass
+    """返回 (省份, 城市)：按顺序取第一个有结果的 HTTPS 源，全都失败返回 ('', '')。"""
+    for provider in _GEO_PROVIDERS:
+        try:
+            pro, ct = provider()
+        except Exception:
+            continue
+        if pro or ct:
+            return pro, ct
     return "", ""
 
 
-def get_location_and_weather():
-    """返回 (城市, 天气简述)；失败返回 ('', '')。外网可达走 Open-Meteo，仅国内走中国气象局，互相兜底。"""
+def weather_report(detail=True):
+    """一次性给出天气查询的完整结果，供调用方按原因回话。
+
+    返回 {"city", "text", "source", "reason"}：
+      - reason == ""           取到了（source 为 'cma' 或 'open-meteo'）
+      - reason == "no-location"  IP 定位没认出城市
+      - reason == "no-match"     气象局没有这个地名的站点（不猜同名城市）
+      - reason == "no-network"   两个源都没返回（网络不通或地名查不到）
+    """
     pro, ct = _geo_ip()
     city = (pro + ct).strip()
     loc = ct or pro
     if not loc:
-        return city, ""
-    if _net_mode() == "proxy":
-        text = _weather_openmeteo_simple(loc) or _weather_cma(loc)
-    else:
-        text = _weather_cma(loc) or _weather_openmeteo_simple(loc)
-    return city, text
+        return {"city": "", "text": "", "source": "", "reason": "no-location"}
+    # 站点只解析一次：None 表示「这个地名在气象局站点里没有精确匹配」。
+    station = _cma_station(loc)
+    open_meteo = _weather_openmeteo_detail if detail else _weather_openmeteo_simple
+    sources = (("open-meteo", lambda: open_meteo(loc)),
+               ("cma", lambda: _weather_cma(loc, detail, station=station)))
+    if _net_mode() != "proxy":
+        sources = tuple(reversed(sources))
+    for source, fetch in sources:
+        try:
+            text = fetch()
+        except Exception:
+            text = ""
+        if text:
+            return {"city": city, "text": text, "source": source, "reason": ""}
+    reason = "no-match" if station is None else "no-network"
+    return {"city": city, "text": "", "source": "", "reason": reason}
+
+
+def get_location_and_weather():
+    """返回 (城市, 天气简述)；失败返回 (城市, '')。外网可达走 Open-Meteo，仅国内走中国气象局，互相兜底。"""
+    report = weather_report(detail=False)
+    return report["city"], report["text"]
 
 
 def get_detailed_weather():
-    """返回 (城市, 详细天气文本)；失败返回 ('', '')。外网可达走 Open-Meteo，仅国内走中国气象局，互相兜底。"""
-    pro, ct = _geo_ip()
-    city = (pro + ct).strip()
-    loc = ct or pro
-    if not loc:
-        return city, ""
-    if _net_mode() == "proxy":
-        text = _weather_openmeteo_detail(loc) or _weather_cma(loc, detail=True)
-    else:
-        text = _weather_cma(loc, detail=True) or _weather_openmeteo_detail(loc)
-    return city, text
+    """返回 (城市, 详细天气文本)；失败返回 (城市, '')。"""
+    report = weather_report(detail=True)
+    return report["city"], report["text"]

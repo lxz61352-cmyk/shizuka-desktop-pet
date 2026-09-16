@@ -107,8 +107,7 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         summary=result.get('spoken_reply') or file_result(result,self._dialogue_style())
         brief = summary
         self.say(brief,source="文件任务")
-        # File contents are task evidence, not candidates for automatic memories.
-        self._append_history(task, brief)
+        # 文件内容只是本轮任务证据：这条路径不调 _post_memory，不会被提炼成长期记忆。
 
     def show_computer_assistant(self):
         self.close_popup()

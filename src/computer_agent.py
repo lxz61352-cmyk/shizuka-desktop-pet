@@ -55,19 +55,22 @@ def task_model(selection,data_root,has_images=False):
     settings=json.loads(settings_path.read_text('utf-8-sig')) if settings_path.exists() else {}
     base=settings.get('api_base') or 'https://api.deepseek.com'
     deepseek=urlsplit(base).hostname=='api.deepseek.com'
-    if selection=='inherit':return 'inherit'
     if not deepseek:
         # 非 DeepSeek 官方接口：DSH 那边接不上这些模型名，交给它自己的默认模型。
         return 'inherit' if selection in MODEL_CHOICES else selection
     # DeepSeek 官方接口统一用带视觉的模型：任务里带图片时必须（否则 read_image 会被路由门禁拒绝，
     # 模型只能自己写脚本逐像素 OCR）；显式写的旧模型名也走同一套归一。
     if selection in ('follow-chat','vision'):return VISION_MODEL
+    if selection=='inherit':
+        # 「继承 DSH 默认模型」无法保证那个默认模型能读图，所以带图任务仍然强制视觉模型；
+        # 纯文字任务保留用户选择的继承语义。
+        return VISION_MODEL if has_images else 'inherit'
     return current_model(base,selection) or VISION_MODEL
 
 
-def resolved_task_model(selection,data_root):
-    """给界面显示：这次任务实际会交给 DSH 的模型。"""
-    value=task_model(selection,data_root)
+def resolved_task_model(selection,data_root,has_images=False):
+    """给界面显示：这次任务实际会交给 DSH 的模型（has_images 与执行时同一判定）。"""
+    value=task_model(selection,data_root,has_images)
     return 'DSH 默认模型' if value=='inherit' else value
 
 

@@ -53,6 +53,13 @@ class TaskModelTests(unittest.TestCase):
         self.assertEqual(task_model("deepseek-v4-pro", self.root), DEEPSEEK_MODEL)
         self.assertEqual(task_model("deepseek-chat", self.root), DEEPSEEK_MODEL)
 
+    def test_inherit_with_images_still_forces_the_vision_model(self):
+        # 「继承 DSH 默认模型」不能保证那个默认模型能读图，带图任务必须用视觉模型。
+        settings_file(self.root, api_base="https://api.deepseek.com")
+        self.assertEqual(task_model("inherit", self.root, has_images=True), DEEPSEEK_MODEL)
+        self.assertEqual(resolved_task_model("inherit", self.root, has_images=True), DEEPSEEK_MODEL)
+        self.assertEqual(resolved_task_model("inherit", self.root), "DSH 默认模型")
+
     def test_custom_provider_falls_back_to_dsh_default(self):
         settings_file(self.root, api_base="https://api.moonshot.cn/v1", api_model="moonshot-v1-8k")
         self.assertEqual(task_model("follow-chat", self.root), "inherit")

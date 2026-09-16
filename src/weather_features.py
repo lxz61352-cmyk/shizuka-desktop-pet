@@ -4,9 +4,13 @@ import threading
 import time
 
 from news import get_news
-from weather import get_detailed_weather, get_location_and_weather
+from weather import get_location_and_weather, weather_report
 
 GREETING_WEATHER_CHANCE = 0.35   # 开机问候里有多大比例会结合真实天气
+# 天气取不到时按原因选一句预制话术（角色包可在 templates 里覆盖这几条）
+WEATHER_FAIL_SCENES = {'no-location': 'weather_no_location',
+                       'no-match': 'weather_no_match',
+                       'no-network': 'weather_no_network'}
 
 
 class WeatherNewsMixin:
@@ -44,14 +48,17 @@ class WeatherNewsMixin:
         return (city + "：" if city else "") + weather
 
     def _weather_worker(self, question, my_conv=None):
-        """取详细天气，交给模型用静香口吻回答用户关于天气的问题。"""
+        """取详细天气，交给模型用静香口吻回答用户关于天气的问题。
+        取不到时按原因直说（不猜城市、不编数据）。"""
         import pet as engine
-        city, detail = get_detailed_weather()
+        report = weather_report(detail=True)
         if my_conv is not None and my_conv != self._conv_id:
             return
-        if not detail:
-            self._ui(lambda: self._say_after_think("抱歉呀，我这边暂时没取到天气数据呢……", my_conv))
+        if not report["text"]:
+            scene = WEATHER_FAIL_SCENES.get(report["reason"], 'weather_no_network')
+            self._ui(lambda: self._say_after_think(self._scene(scene), my_conv))
             return
+        city, detail = report["city"], report["text"]
         now_str = time.strftime("%Y-%m-%d %H:%M:%S")
         prompt = (
             "现在时间 %s，用户所在地约 %s。真实天气数据：%s\n"

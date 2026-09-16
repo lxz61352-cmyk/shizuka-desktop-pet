@@ -130,11 +130,19 @@ class BoundedStream:
 # 第一次踩坑后自动修正并记住，之后直接用对的参数，不再每次失败重试。
 _MODEL_CAPS = {}
 _MODEL_CAPS_LOCK = threading.Lock()
+_MODEL_CAPS_MAX = 64      # 只是参数兼容性备忘，不落盘；超出上限就丢最早的，避免长期运行无界增长
 
 
 def _model_caps(base, model):
+    key = (base, model or '')
     with _MODEL_CAPS_LOCK:
-        return _MODEL_CAPS.setdefault((base, model or ''), {'max_key': 'max_tokens', 'temp': True, 'thinking': True})
+        cached = _MODEL_CAPS.get(key)
+        if cached is not None:
+            return cached
+        if len(_MODEL_CAPS) >= _MODEL_CAPS_MAX:
+            for stale in list(_MODEL_CAPS)[:max(1, _MODEL_CAPS_MAX // 4)]:
+                _MODEL_CAPS.pop(stale, None)
+        return _MODEL_CAPS.setdefault(key, {'max_key': 'max_tokens', 'temp': True, 'thinking': True})
 
 
 def _build_kwargs(kwargs, caps):
