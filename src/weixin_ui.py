@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 import queue
+import re
 import threading
 import time
 import tkinter as tk
@@ -11,6 +12,48 @@ from PIL import Image, ImageTk
 from computer_agent import load_config
 from computer_ui import computer_command
 from weixin_channel import BASE_URL, ILinkClient, ProtectedStore, WeixinChannel, session_from_login, trusted_base, IMAGE_BLOCK_MARK
+
+IMAGE_BLOCK_LINE_RE = re.compile(r"^-\s*图\d+（[^）]*）=\s*(.+)$", re.M)
+
+
+def weixin_image_paths(text):
+    """从「[图片]（… - 图3（20260916）= C:\\…jpg）」提示块里取出真实图片路径。"""
+    return [m.group(1).strip().rstrip("）") for m in IMAGE_BLOCK_LINE_RE.finditer(text or "")]
+
+
+def weixin_visible_text(text):
+    """去掉图片提示块之后，用户真正说的那句话。"""
+    value = text or ""
+    cut = value.find(IMAGE_BLOCK_MARK)
+    return (value[:cut] if cut >= 0 else value).strip()
+
+
+_IMAGE_URL_CACHE = {}   # path -> (data_url, 生成时间)：同一张图短时间内别反复解码/编码
+IMAGE_URL_TTL = 600     # 缓存 10 分钟，够覆盖「讲下图3」→「那第二问呢」这种追问
+
+
+def local_image_data_url(path, limit=(1024, 1024), quality=85):
+    """本地图片 → data URL（让模型直接看图）。先缩略再解码，别把整张大图全解进内存；
+    统一转 JPEG 控制体积。读不出来返回空串。"""
+    now = time.time()
+    hit = _IMAGE_URL_CACHE.get(path)
+    if hit and now - hit[1] < IMAGE_URL_TTL:
+        return hit[0]
+    try:
+        import base64, io
+        im = Image.open(path)
+        im.thumbnail(limit)          # 内部走 draft/增量解码，比 load() 整幅解码省内存
+        if im.mode not in ("RGB", "L"):
+            im = im.convert("RGB")
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=quality)
+        data_url = "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+    except Exception:
+        return ""
+    for old in [key for key, value in _IMAGE_URL_CACHE.items() if now - value[1] >= IMAGE_URL_TTL]:
+        _IMAGE_URL_CACHE.pop(old, None)
+    _IMAGE_URL_CACHE[path] = (data_url, now)
+    return data_url
 
 
 class WeixinMixin:
@@ -83,17 +126,20 @@ class WeixinMixin:
             reply=self._weixin_todo_command(todo_text,cancel)
             self._log_chat('assistant',reply,kind='weixin_todo')
             return reply
+        # 消息里可能附带图片提示块（[图片]（… - 图3（…）= C:\…jpg））
+        image_paths = weixin_image_paths(text)
+        visible = weixin_visible_text(text)
         task = computer_command(text)
         if task is None and engine.has_api_key():
-            if IMAGE_BLOCK_MARK in text:
-                task = text      # 带图片的信息：交给文件执行器，让它直接看图做事
-            else:
-                intent = self._classify_intent(text)
-                if (intent or {}).get("action") == "computer_task":
-                    task = text
+            # 用去掉提示块的原话判意图：带上路径会让路由器把「讲下图3」也当成文件任务。
+            # 只有明确要读写文件才交给 DSH，普通看图/讲题走聊天，并把图直接附给模型。
+            intent = self._classify_intent(visible)
+            if (intent or {}).get("action") == "computer_task":
+                task = text
         if cancel.is_set():
             return "任务已取消。"
-        self._log_chat("user", text, kind="weixin_file" if task is not None else "weixin")
+        self._log_chat("user", visible if image_paths else text,
+                       kind="weixin_file" if task is not None else "weixin")
         if task is not None:
             if not task:
                 return "在 /电脑 后写具体文件任务，例如：/电脑 列出工作文件夹中的文件。"
@@ -137,17 +183,28 @@ class WeixinMixin:
         from conversation_memory import CONTINUATION_HINT
         system+='\n'+CONTINUATION_HINT
         system+='\n'+self._capability_context()
-        notes=self._todo_note_context(text,channel='weixin',cancel=cancel.is_set)
+        notes=self._todo_note_context(visible,channel='weixin',cancel=cancel.is_set)
         if cancel.is_set():return '本轮回复已停止。'
         system+='\n只有应用明确回传保存成功时才能说已增加待办备注。'
         if notes:system+='\n'+notes
         system += "\n当前通过手机微信交流。只回复需要发给用户的文字；没有调用文件执行器时，不要声称已读取或修改电脑文件。文件操作请让用户发 /电脑 加具体任务。"
-        memory = self._get_memory_block(text)
+        memory = self._get_memory_block(visible)
         if memory:
             system += "\n\n" + memory
         messages = [{"role": "system", "content": system}]
-        messages.extend(self._recent_messages(current_text=text,channel='weixin'))
-        messages.append({"role": "user", "content": text})
+        messages.extend(self._recent_messages(current_text=visible,channel='weixin'))
+        parts = [{"type": "text", "text": visible or "（图片）"}]
+        attached = 0
+        for path in image_paths:
+            data_url = local_image_data_url(path)
+            if data_url:
+                parts.append({"type": "image_url", "image_url": {"url": data_url}})
+                attached += 1
+        if attached:
+            # 只有真的把图附上去了才这么说，否则模型会硬说「我看到了」
+            system += "\n本轮用户发来的图片已经直接附在消息里，直接看图回答，不要说看不到图片。"
+            messages[0] = {"role": "system", "content": system}
+        messages.append({"role": "user", "content": parts if attached else visible})
         output = []
         client = engine.get_client()
         with client.chat.completions.create(model=engine.api_model(), messages=messages,
@@ -159,7 +216,7 @@ class WeixinMixin:
                     output.append(chunk.choices[0].delta.content or "")
         reply = engine.clean_reply_style("".join(output)).strip() or "刚才没有收到完整回复，请再试一次。"
         if not cancel.is_set():
-            self._append_history(text, reply)
+            self._append_history(visible, reply)
             self._log_chat("assistant", reply, kind="weixin")
             # Plain conversation shares long-term memory; file results bypass this path.
             def remember():
@@ -240,17 +297,17 @@ class WeixinMixin:
         try:
             self._weixin_init()
         except Exception:
-            messagebox.showerror("微信连接", "微信配置无法解密或读取，请先保留原文件并检查当前 Windows 用户。", parent=self.root)
+            messagebox.showerror("微信连接", "微信配置无法解密或读取，请先保留原文件并检查当前 Windows 用户。", parent=self.pet)
             return
         existing = getattr(self, "_weixin_win", None)
         if existing is not None and existing.winfo_exists():
-            existing.deiconify();existing.lift()
+            self._move_dialog(existing, 660, 800)
             return
         win = tk.Toplevel(self.root)
         self._weixin_win = win
         win.title("微信连接 · 手机聊天与文件任务")
-        win.geometry("660x800")
         win.minsize(580, 660)
+        self._place_dialog(win, 660, 800)
         top = tk.Frame(win, padx=18, pady=12)
         top.pack(fill="x")
         tk.Label(top, text="把桌宠连到手机微信", font=("Microsoft YaHei UI", 16, "bold"), anchor="w").pack(fill="x")

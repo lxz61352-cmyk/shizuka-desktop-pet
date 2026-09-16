@@ -1,8 +1,8 @@
 {
-  "version": "0.8.0",
-  "unit_tests": 83,
+  "version": "0.8.1",
+  "unit_tests": 114,
   "frozen_gui_checks": 9,
   "private_data_audit": "passed",
-  "python_modules_audited": 1916,
-  "original_asset_files_verified": 31
+  "python_modules_audited": 1922,
+  "original_asset_files_verified": 32
 }

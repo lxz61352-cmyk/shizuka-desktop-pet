@@ -264,11 +264,3 @@ def validate_patch(collection, patch):
                 continue
             if type(value) not in (int, float) or not math.isfinite(value) or abs(value) > 1e15:
                 raise ValueError("Invalid number")
-
-
-def decode_bundle(raw, character):
-    if len(raw) > MAX_BYTES:
-        raise ValueError("Sync payload too large")
-    bundle = json.loads(raw)
-    validate_bundle(bundle, character)
-    return bundle

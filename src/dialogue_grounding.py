@@ -48,8 +48,16 @@ def passive_text_ok(text):
 def _clip_norm(text):
     return re.sub(r'\s+',' ',(text or '')).strip()
 
+def _text_overlap(a,b):
+    """两段话的字符二元组重合度（0~1），用来判断主动发言是不是又说了同一句。"""
+    if not a or not b:return 0.0
+    sa={a[i:i+2] for i in range(len(a)-1)}
+    sb={b[i:i+2] for i in range(len(b)-1)}
+    if not sa or not sb:return 0.0
+    return len(sa&sb)/max(1,min(len(sa),len(sb)))
+
 def clip_image_signature(data):
-    return hashlib.sha1(data).hexdigest()
+    return hashlib.sha1(data, usedforsecurity=False).hexdigest()
 
 def clip_image_phash(img):
     """dHash 16x16（256bit，hex 64 位）：画面相近时哈希也相近，用于「同一张图换个程序再复制」的去重。"""
@@ -108,6 +116,22 @@ class GroundingMixin:
             if save:
                 try:save(recent)
                 except Exception:pass
+
+    def _proactive_recent_ok(self,text):
+        """主动发言去重：和最近几条太像就不说（主动搭话/窗口问候最容易复读）。"""
+        norm=_clip_norm(text)
+        if not norm:return False
+        for value,_at in getattr(self,'_proactive_recent',[])[-6:]:
+            if value==norm:return False
+            if min(len(value),len(norm))>=6 and (value in norm or norm in value):return False
+            if _text_overlap(value,norm)>=0.7:return False
+        return True
+
+    def _proactive_remember(self,text):
+        norm=_clip_norm(text)
+        recent=[(v,at) for v,at in getattr(self,'_proactive_recent',[]) if v!=norm]
+        recent.append((norm,time.time()))
+        self._proactive_recent=recent[-20:]
 
     def _todo_state_context(self):
         items=list(getattr(self,'todos',[]))

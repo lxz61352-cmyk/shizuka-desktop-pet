@@ -12,6 +12,10 @@ from updater import (check_latest_release, download_package, launch_swap, read_a
 
 
 class UpdateFeaturesMixin:
+    def _center_on_pet(self, win):
+        """把窗口居中到桌宠所在的显示器（不是主屏），双屏分辨率不同时别跑到另一块屏上。"""
+        self._place_dialog(win)
+
     def _update_init(self):
         if hasattr(self, "_update_info"):
             return
@@ -138,9 +142,7 @@ class UpdateFeaturesMixin:
             tk.Button(bar, text=("确定停止" if disable else "确定开启"), width=10,
                       command=do_it).pack(side="left", padx=6)
             tk.Button(bar, text="取消", width=10, command=win.destroy).pack(side="left", padx=6)
-            win.update_idletasks()
-            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-            win.geometry("+%d+%d" % ((sw - win.winfo_width()) // 2, (sh - win.winfo_height()) // 2))
+            self._center_on_pet(win)
         except Exception:
             pass
 
@@ -163,9 +165,7 @@ class UpdateFeaturesMixin:
             tk.Button(bar, text="立即更新", width=10,
                       command=lambda: (win.destroy(), self._apply_update(info))).pack(side="left", padx=6)
             tk.Button(bar, text="取消", width=10, command=win.destroy).pack(side="left", padx=6)
-            win.update_idletasks()
-            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-            win.geometry("+%d+%d" % ((sw - win.winfo_width()) // 2, (sh - win.winfo_height()) // 2))
+            self._center_on_pet(win)
         except Exception:
             self._apply_update(info)
 
@@ -205,10 +205,7 @@ class UpdateFeaturesMixin:
             self._update_prog_bar = bar
             self._update_prog_lbl = lbl
             self._update_prog_note = note
-            win.update_idletasks()
-            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-            win.geometry("+%d+%d" % ((sw - win.winfo_width()) // 2,
-                                     (sh - win.winfo_height()) // 2))
+            self._center_on_pet(win)
         except Exception:
             pass
 
@@ -298,8 +295,6 @@ class UpdateFeaturesMixin:
             txt.config(state="disabled")
             txt.pack(padx=22, pady=6)
             tk.Button(win, text="知道啦", width=10, command=win.destroy).pack(pady=(0, 16))
-            win.update_idletasks()
-            sw, sh = win.winfo_screenwidth(), win.winfo_screenheight()
-            win.geometry("+%d+%d" % ((sw - win.winfo_width()) // 2, (sh - win.winfo_height()) // 2))
+            self._center_on_pet(win)
         except Exception:
             pass

@@ -41,8 +41,8 @@ class ConversationUIMixin:
 
     def show_chat_log(self,event=None):
         old=getattr(self,'_chatlog_win',None)
-        if old is not None and old.winfo_exists():old.lift();return
-        win=self._chatlog_win=tk.Toplevel(self.root);win.title('静香 · 对话');win.geometry('820x650');win.minsize(620,460)
+        if old is not None and old.winfo_exists():self._move_dialog(old,820,650);return
+        win=self._chatlog_win=tk.Toplevel(self.root);win.title('静香 · 对话');win.minsize(620,460);self._place_dialog(win,820,650)
         win.attributes('-topmost',True)
         head=ttk.Frame(win,padding=(22,18,22,8));head.pack(fill='x')
         ttk.Label(head,text='和静香的对话',style='Pet.Title.TLabel').pack(side='left')

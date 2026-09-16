@@ -44,7 +44,7 @@ class AssistantFeaturesMixin:
             elif state.get("sync_requested"):
                 text="已发送手动同步请求；Mac 客户端在线时会在下一次轻量检查中处理。"
             else:text="本次记忆同步已完成。" if state.get("confirmed") else "已交换资料，等待对端确认。"
-            self._ui(lambda:messagebox.showinfo("立即同步记忆",text,parent=self.root))
+            self._ui(lambda:messagebox.showinfo("立即同步记忆",text,parent=self.pet))
         threading.Thread(target=work,daemon=True).start()
 
     def _add_idle_interval(self, win):
@@ -152,12 +152,12 @@ class AssistantFeaturesMixin:
             self.say(RESEARCH_WIP_REPLY)
             return
         self._research_init()
-        if self._research_win and self._research_win.winfo_exists():self._research_win.lift();return
+        if self._research_win and self._research_win.winfo_exists():self._move_dialog(self._research_win,750,640);return
         win=self._research_win=tk.Toplevel(self.root)
         def closed(event):
             if event.widget is win:self._research_win=None
         win.bind("<Destroy>",closed)
-        win.title("静香 · 研究进展");win.geometry("750x640")
+        win.title("静香 · 研究进展");self._place_dialog(win,750,640)
         tk.Label(win,text="研究进展",font=("Microsoft YaHei UI",16,"bold")).pack(pady=12)
         tk.Label(win,text="每 6 小时检查；新进展随时播报，缺摘要的相关文献也会关注。",wraplength=700).pack()
         controls=tk.Frame(win);controls.pack(fill="x",padx=16,pady=8)

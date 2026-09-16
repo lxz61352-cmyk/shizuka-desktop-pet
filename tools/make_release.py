@@ -35,8 +35,11 @@ FILES = ("AI-DEVELOPMENT.md", "README.md", "Shizuka.exe", "VERIFICATION.json", "
 def package_paths():
     out = []
     for d in DIRS:
-        for folder, _dirs, names in os.walk(os.path.join(ROOT, d)):
+        for folder, dirs, names in os.walk(os.path.join(ROOT, d)):
+            dirs[:] = [x for x in dirs if x != "__pycache__"]
             for n in sorted(names):
+                if n.endswith((".pyc", ".pyo")):
+                    continue
                 out.append(os.path.relpath(os.path.join(folder, n), ROOT).replace(os.sep, "/"))
     out.extend(FILES)
     return sorted(out)

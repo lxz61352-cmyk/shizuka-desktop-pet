@@ -5,19 +5,20 @@ import time
 from urllib.parse import urlsplit
 
 
+DEEPSEEK_MODEL = 'deepseek-v4-flash-vision-exp'   # DeepSeek 官方接口统一用它（唯一带视觉的 flash 实验版）
+DEEPSEEK_LEGACY_MODELS = ('deepseek-chat', 'deepseek-v4-flash', 'deepseek-flash',
+                          'deepseek-v4-pro', 'deepseek-v4-flash-vision-exp')
+
+
 def current_model(base, model):
-    if urlsplit(base).hostname == 'api.deepseek.com' and model in ('deepseek-chat', 'deepseek-v4-flash'):
-        return 'deepseek-flash'
+    if urlsplit(base).hostname == 'api.deepseek.com' and model in DEEPSEEK_LEGACY_MODELS:
+        return DEEPSEEK_MODEL
     return model
 
 
-def model_from_settings(settings, revision=None):
+def model_from_settings(settings):
     base=settings.get('api_base') or 'https://api.deepseek.com'
-    model=settings.get('api_model') or 'deepseek-flash'
-    revision=settings.get('model_selection_revision',0) if revision is None else revision
-    if (urlsplit(base).hostname=='api.deepseek.com' and revision!=1
-            and model in ('deepseek-chat','deepseek-v4-flash','deepseek-flash','deepseek-v4-pro')):
-        return 'deepseek-flash'
+    model=settings.get('api_model') or DEEPSEEK_MODEL
     return current_model(base,model)
 
 
@@ -52,7 +53,7 @@ def probe_status(result):
     if result['kind']=='timeout':return f'{model} 生成超时；设置已保存，当前模型尚未返回正文。'
     if result['kind']=='empty':return f'{model} 未返回正文；设置已保存。'
     code=result.get('status')
-    detail={401:'密钥未通过验证',402:'接口额度不足',403:'接口拒绝访问',429:'接口繁忙，请稍后重试'}.get(code)
+    detail={400:'模型名或参数不被接口接受',401:'密钥未通过验证',402:'接口额度不足',403:'接口拒绝访问',429:'接口繁忙，请稍后重试'}.get(code)
     return f"{model}：{detail or ('接口错误 '+str(code) if code else '连接失败，请检查地址和网络')}。设置已保存。"
 
 
@@ -128,6 +129,12 @@ class BoundedStream:
 # 各模型对参数的兼容情况（按「接口地址+模型名」记）：{"max_key": ..., "temp": bool}
 # 第一次踩坑后自动修正并记住，之后直接用对的参数，不再每次失败重试。
 _MODEL_CAPS = {}
+_MODEL_CAPS_LOCK = threading.Lock()
+
+
+def _model_caps(base, model):
+    with _MODEL_CAPS_LOCK:
+        return _MODEL_CAPS.setdefault((base, model or ''), {'max_key': 'max_tokens', 'temp': True, 'thinking': True})
 
 
 def _build_kwargs(kwargs, caps):
@@ -136,15 +143,20 @@ def _build_kwargs(kwargs, caps):
         k[caps['max_key']] = k.pop('max_tokens')
     if not caps['temp']:
         k.pop('temperature', None)
+    if not caps.get('thinking', True) and isinstance(k.get('extra_body'), dict):
+        extra = {name: value for name, value in k['extra_body'].items() if name != 'thinking'}
+        if extra:
+            k['extra_body'] = extra
+        else:
+            k.pop('extra_body', None)
     return k
 
 
 def _adaptive_call(original, base, args, kwargs):
     """按模型能力自动修正参数：不接受 temperature 就去掉；不支持 max_tokens 就换
-    max_completion_tokens（o 系 / gpt-5 等）。首次自动探测并记住。"""
-    caps = _MODEL_CAPS.setdefault((base, kwargs.get('model') or ''),
-                                  {'max_key': 'max_tokens', 'temp': True})
-    for _ in range(3):   # 最多修正两次（温度、max_tokens 各一次）
+    max_completion_tokens（o 系 / gpt-5 等）；不接受 thinking 就去掉。首次自动探测并记住。"""
+    caps = _model_caps(base, kwargs.get('model'))
+    for _ in range(4):   # 最多修正三次（温度、max_tokens、thinking 各一次）
         try:
             return original(*args, **_build_kwargs(kwargs, caps))
         except Exception as exc:
@@ -153,8 +165,15 @@ def _adaptive_call(original, base, args, kwargs):
             if 'temperature' in msg and caps['temp']:
                 caps['temp'] = False
                 changed = True
-            if ('max_tokens' in msg or 'max_completion_tokens' in msg) and caps['max_key'] != 'max_completion_tokens':
+            # 「max_tokens is too large」这类报错不是「不支持该参数」，别误切成 max_completion_tokens
+            unsupported = ('not support', 'unsupported', 'unknown', 'unexpect', 'unrecogniz',
+                           'not allowed', 'does not support', 'requires')
+            if (('max_tokens' in msg or 'max_completion_tokens' in msg) and caps['max_key'] != 'max_completion_tokens'
+                    and any(word in msg for word in unsupported)):
                 caps['max_key'] = 'max_completion_tokens'
+                changed = True
+            if 'thinking' in msg and caps.get('thinking', True):
+                caps['thinking'] = False
                 changed = True
             if not changed:
                 raise

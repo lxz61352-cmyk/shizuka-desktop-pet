@@ -22,13 +22,15 @@ CHANNEL_VERSION = "2.4.8"
 IMAGE_MAX_BYTES = 16 * 1024 * 1024
 COMMAND_RE = re.compile(r"^/(?:电脑|文件|dsh)(?=$|\s|[:：])", re.I)
 # 文字里出现这些词，说明用户在指代某张图片
-IMAGE_WORD_RE = re.compile(r"图\s*\d|第\s*[0-9一二三四五六七八九十]+\s*张|倒数|最新|刚才|刚刚|上一张|最后一张|这张|那张|该图|图片|照片|截图|图像", re.I)
+IMAGE_WORD_RE = re.compile(r"图\s*(?:\d|[一二三四五六七八九十]+)|第\s*[0-9一二三四五六七八九十]+\s*张|倒数|最新|刚才|刚刚|上一张|最后一张|这张|那张|该图|图片|照片|截图|图像", re.I)
 # 出现这些动词，说明用户是在「拿图片做事」，而不是随口提一句
 ACTION_RE = re.compile(r"做|写|生成|整理|改|转|处理|分析|识别|提取|翻译|制作|搞|弄|用|根据|基于")
 LATEST_IMAGE_HOURS = 1 / 6    # 没指定图片时，多久内收到的最新图片默认带上（10 分钟）
+LATEST_IMAGE_COUNT = 2        # 没指定图片时默认带几张：带两张，方便「那第二问呢」这类追问
+CURRENT_IMAGE_COUNT = 3       # 本条消息自带图片时最多带几张
 IMAGE_BLOCK_MARK = "[图片]"    # 提示块标记：上层据此判断「这条消息带了图片」
 # 像在问/看图的口吻 → 默认把最新图片带上
-IMAGE_ASK_RE = re.compile(r"[?？]|吗|呢|谁|什么|哪|怎么|为什么|为啥|是不是|多少|几|如何|怎样|认得|认得出|看得出|看看|瞧瞧|瞅瞅|解读|讲讲|说说|说一下")
+IMAGE_ASK_RE = re.compile(r"[?？]|吗|呢|谁|什么|哪|怎么|为什么|为啥|是不是|多少|几|如何|怎样|认得|认得出|看得出|看看|瞧瞧|瞅瞅|解读|讲讲|讲下|讲解|说说|说一下|解释")
 PENDING_IMAGE_SECONDS = 900   # 反问「哪一张」后等用户回答的有效时间
 PENDING_TEXT_SECONDS = 180    # 用户先说「附图…」后，等图片发过来的时间
 # 「附图 / 见图 / 如图…」这类说法 = 图片随后就到，先说任务再等图
@@ -366,11 +368,14 @@ class ImageIndex:
             value = cn_number(match.group(1))
             if value and 1 <= value <= len(items):
                 take(items[-value])
-        for match in re.finditer(r"(?:今天)?(?:(?<!倒数)第\s*([0-9]+|[一二三四五六七八九十]+)\s*张|图\s*([0-9]+))", text):
+        for match in re.finditer(r"(?:今天)?(?:(?<!倒数)第\s*([0-9]+|[一二三四五六七八九十]+)\s*张|图\s*([0-9]+|[一二三四五六七八九十]+))", text):
             value = cn_number(match.group(1) or match.group(2))
             if not value:
                 continue
             hit = [i for i in items if i.get("day") == today and i.get("n") == value]
+            if not hit:
+                # 序号按天重置；当天没有这个号时退回「最近一次用过这个序号」的图，别直接判不存在
+                hit = [i for i in items if i.get("n") == value]
             if hit:
                 take(hit[-1])
             elif value not in unknown:
@@ -479,22 +484,28 @@ class WeixinChannel:
 
     def image_context(self, text, images):
         """返回 (要附的提示, 需要反问的候选, 是否该等图片)，三者最多一个生效。
-        没有用「图N」明确指定时，一律只用最新一张图片。"""
+        用「图N」明确指定且存在 → 带上（可一次带多张）；编号对不上 → 给候选让用户确认；
+        本条消息自带图片 → 都带上；完全没提图 → 带最近几张（默认 2 张，方便追问上一张）。"""
         index = self.image_index()
         if index is None:
             return "", [], False
-        found, _unknown = index.resolve(text)
+        found, unknown = index.resolve(text)
         if found:
             return self.image_block(found, "用户指的是这些图片："), [], False
         if images:
-            # 本条消息附带的图片：只取最新一张
-            return self.image_block([images[-1]], "本条消息附带的图片（取最新一张）："), [], False
+            # 本条消息附带的图片：都带上（最近的排最后）
+            return self.image_block(images[-CURRENT_IMAGE_COUNT:], "本条消息附带的图片："), [], False
+        if unknown:
+            candidates = index.recent(5)
+            if candidates:
+                return "", candidates, False
+            return "最近没有收到编号为图%d 的图片。" % unknown[0], [], False
         task_like = bool(COMMAND_RE.match(text) or IMAGE_WORD_RE.search(text)
                          or ATTACH_WORD_RE.search(text) or ACTION_RE.search(text)
                          or IMAGE_ASK_RE.search(text))
-        latest = index.recent(1, hours=LATEST_IMAGE_HOURS)
+        latest = index.recent(LATEST_IMAGE_COUNT, hours=LATEST_IMAGE_HOURS)
         if latest and task_like:
-            return self.image_block(latest, "用户未指定图片，默认用最新一张："), [], False
+            return self.image_block(latest, "用户未指定图片，带上最近收到的这几张（最新的在最后）："), [], False
         if not latest and ATTACH_WORD_RE.search(text) and (COMMAND_RE.match(text) or ACTION_RE.search(text)):
             # 手头一张图都没有，但说了「附图 / 见图」→ 先等他把图发过来
             return "", [], True
@@ -585,7 +596,9 @@ class WeixinChannel:
                                 "发来的图片会按天编号存到电脑工作区，之后用「/电脑 用图2 写一份文档」这样指代就行。\n"
                                 "文件任务：/电脑 加具体要求。\n/图片：看最近收到的图片编号\n/停止：停止任务\n"
                                 "/状态：查看连接与任务状态\n/结果：查看最近结果\n请保持电脑和桌宠运行。", "help")
-        elif pending:
+        elif pending and not COMMAND_RE.match(text):
+            # 正在等「哪一张」的回答；但用户要是直接发了新指令（如 /电脑 …），
+            # 就以新指令为准，别把指令当成选图回答。
             task = pending.get("task") or text
             self.store.update(pending_image=None)
             index = self.image_index()
@@ -604,14 +617,14 @@ class WeixinChannel:
                                    + self.image_block(message["images"], "用户随后发来的图片："))
                     return
                 numbers = "、".join("图%d" % r["n"] for r in message["images"])
-                self.reply(message, "%s 收到了，已存到电脑工作区。\n要用它做事，就发「/电脑 用图%d 写一份说明文档」这样的指令。"
-                           % (numbers, message["images"][-1]["n"]), "image")
+                self.reply(message, "%s 收到了，已存到电脑工作区。\n想让我讲讲或看图，直接说「讲下图%d」就行；\n要拿它写文件，发「/电脑 用图%d 写一份说明文档」这样的指令。"
+                           % (numbers, message["images"][-1]["n"], message["images"][-1]["n"]), "image")
             else:
                 self.reply(message, "图片没能下载成功，请再发一次。", "image_failed")
         elif not text or len(text) > 20000:
             self.reply(message, "先支持文字和图片，文字任务请不超过 20000 字。", "unsupported")
         else:
-            self.store.update(pending_text=None)
+            self.store.update(pending_text=None, pending_image=None)
             if self.answer_pending:
                 answer=self.answer_pending(text)
                 if answer is not None:

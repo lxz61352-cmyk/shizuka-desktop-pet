@@ -71,13 +71,3 @@ class TodoNotesMixin:
         self._ui(apply)
         if not ready.wait(8):return '待办备注尚未确认写入，不得声称已记下。'
         return ('应用已核实的本轮待办备注结果（只按事实回应，简短自然告知）：'+json.dumps(result,ensure_ascii=False)) if result else ''
-
-    def _todo_reminder_text(self,item):
-        text=self._scene('todo_due',task=item['text'])
-        options=self._todo_options(item)
-        if options.get('manual_note'):text+='\n'+self._scene('todo_note',note=options['manual_note'])
-        notes=options.get('notes',[])
-        if notes:
-            # Display the user's recorded detail, without inventing an additional instruction.
-            text+='\n'+self._scene('todo_note',note=notes[-1]['text'])
-        return text

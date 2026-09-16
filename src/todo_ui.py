@@ -14,10 +14,10 @@ class TodoUIMixin(TodoEditorMixin):
     def show_todos(self,event=None):
         self._todo_init()
         win=getattr(self,'_todo_win',None)
-        if win is not None and win.winfo_exists():win.lift();return
+        if win is not None and win.winfo_exists():self._move_dialog(win,900,690);return
         win=self._todo_win=tk.Toplevel(self.root)
         win.attributes('-topmost',True)
-        win.title('静香 · 待办');win.geometry('900x690');win.minsize(680,500)
+        win.title('静香 · 待办');win.minsize(680,500);self._place_dialog(win,900,690)
         heading=ttk.Frame(win,padding=(20,18,20,4));heading.pack(fill='x')
         ttk.Label(heading,text='一起安排好',style='Pet.Title.TLabel').pack(side='left')
         self._todo_count=tk.StringVar()

@@ -96,7 +96,9 @@ def scene_line(scene,style=None,**values):
     if not isinstance(template,str):template=DEFAULT_LINES.get(scene,'')
     # Slots can contain paths, formulas or the user's original words; never clean them.
     try:return template.format(**values)
-    except (KeyError,ValueError):return DEFAULT_LINES.get(scene,'').format(**values)
+    except (KeyError,ValueError):
+        try:return DEFAULT_LINES.get(scene,'').format(**values)
+        except (KeyError,ValueError):return DEFAULT_LINES.get(scene,'')
 
 def file_result(result,style=None,limit=6000):
     status=result.get('status','failed')
@@ -107,3 +109,54 @@ def file_result(result,style=None,limit=6000):
     text=scene_line(key,style)
     if detail:text+='\n\n'+detail[:limit]+ ('\n完整结果已保留在电脑助手的任务记录中。' if len(detail)>limit else '')
     return LiteralReply(text)
+
+# 主动发言的「方向池」：触发窗口问候/空闲搭话时按 weight 随机挑一个，同一方向不连续用两次。
+# 想自己加方向或调权重，把这一段整体挪到 characters/<角色>/dialogue-style.json 的
+# "proactive_directions" 里即可（代码会优先用角色包里的）。
+PROACTIVE_DIRECTIONS = [
+    {'id': 'observe', 'weight': 30, 'label': '具体观察',
+     'prompt': '就当前窗口说一句具体的观察或判断（他在做什么、可能卡在哪一步、这软件大概在干什么），'
+               '用陈述句，不要提问。'},
+    {'id': 'remind', 'weight': 20, 'label': '实用提醒',
+     'prompt': '结合当前程序和时间给一条具体、简短的提醒（先存盘、备份、歇一会儿、喝口水、护眼），'
+               '只说这一次，不啰嗦、不说教。'},
+    {'id': 'tip', 'weight': 15, 'label': '相关小知识',
+     'prompt': '围绕当前这个程序给一条确实有用的小技巧或冷知识（快捷键、省事的做法、常见的坑）。'
+               '必须是这个程序里确实成立的；拿不准就改成一个具体观察，不要编快捷键或菜单路径。'},
+    {'id': 'followup', 'weight': 10, 'label': '承接上文',
+     'prompt': '如果最近聊过和当前窗口相关的事，就接着那句说一句；找不到相关话题就改成一个具体观察，不要硬接。'},
+    {'id': 'humor', 'weight': 10, 'label': '轻幽默',
+     'prompt': '对程序名或窗口标题来一句轻轻的调侃，善意、不阴阳怪气、不冒犯。'},
+    {'id': 'ask', 'weight': 10, 'label': '具体提问',
+     'prompt': '问一个和当前窗口内容相关、好回答的问题，一句话，别连环问；'
+               '必须是凭窗口信息确实不知道答案的事，不要问「你现在开着什么窗口」这种你本来就知道的。'},
+    {'id': 'company', 'weight': 5, 'label': '安静陪伴',
+     'prompt': '只轻轻表达在旁边陪着，一句话，不提问、不提醒。'},
+]
+
+# 结尾的空话尾巴（内容已经在眼前了，再说这些就是噪音）：只在剪贴板反应这类短回复上用。
+FILLER_TAIL_RE = re.compile(
+    r'(?:我陪着你|我陪你(?:一起|一块|一块儿)?(?:重新|再)?(?:弄|做|来|试|看看|等|待)?|'
+    r'陪着你(?:就好)?|需要帮忙(?:尽管说|随时说|就说)|'
+    r'(?:有(?:什么)?(?:事|需要))?(?:尽管|随时)(?:说|喊我|找我)|'
+    r'有事(?:就)?喊我(?:一声)?|喊我一声(?:就)?(?:好|行)?|'
+    r'我就在(?:这儿|旁边|这里)|我在呢)[。！？!?…]?$')
+
+
+def clean_filler_tail(text):
+    """去掉结尾的空话尾巴（「…我陪你一块重新弄」「需要帮忙尽管说」）。
+    整段都是这类话就返回空串，调用方据此直接不说。"""
+    text = (text or '').strip()
+    if not text:
+        return text
+    parts = [part for part in re.split(r'(?<=[。！？!?…])|(?<=——)', text) if part.strip()]
+    while len(parts) > 1:
+        tail = parts[-1].strip().strip('—-、，,。！？!?… ').strip()
+        if tail and len(tail) <= 26 and FILLER_TAIL_RE.search(tail):
+            parts.pop()
+        else:
+            break
+    cleaned = ''.join(parts).strip().rstrip('—-、，, ').strip()
+    if cleaned and len(cleaned) <= 26 and FILLER_TAIL_RE.search(cleaned):
+        return ''
+    return cleaned or text

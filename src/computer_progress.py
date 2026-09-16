@@ -80,7 +80,7 @@ class ComputerProgressMixin:
         if old is not None and old.winfo_exists():old.destroy()
         win=self._computer_progress_win=tk.Toplevel(self.root)
         self._computer_progress_token=token
-        win.title('静香 · DSH 执行过程');win.geometry('830x620');win.minsize(590,400)
+        win.title('静香 · DSH 执行过程');win.minsize(590,400);self._place_dialog(win,830,620)
         win.columnconfigure(0,weight=1);win.rowconfigure(1,weight=1)
         head=ttk.Frame(win,padding=(20,18,20,10));head.grid(row=0,column=0,sticky='ew')
         ttk.Label(head,text='文件任务',style='Pet.Title.TLabel').pack(side='left')
@@ -174,8 +174,10 @@ class ComputerProgressMixin:
             elif kind=='tool_result':self._computer_progress_append('返回结果\n'+row.get('text','')+'\n','error' if row.get('error') else 'detail')
             elif kind=='text':self._computer_progress_append(row.get('text',''))
             elif kind=='bridge_ready':self._computer_progress_append('DSH 已连接\n')
+            elif kind=='bridge_warning':self._computer_progress_append('\n提示：'+row.get('text','')+'\n','error')
             elif kind=='question':self._computer_progress_append('\n静香正在等您的回答。\n','step')
             elif kind=='question_answered':self._computer_progress_append('\n已收到回答，继续处理。\n','step')
+            elif kind=='question_cancelled':self._computer_progress_append('\n这次提问已取消。\n','step')
 
     def _computer_finish_progress(self,result,token):
         win=getattr(self,'_computer_progress_win',None)

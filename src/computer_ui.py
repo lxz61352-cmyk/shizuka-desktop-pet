@@ -6,7 +6,7 @@ import threading
 import tkinter as tk
 from tkinter import filedialog, messagebox,ttk
 from tkinter.scrolledtext import ScrolledText
-from computer_agent import ComputerAgent, DshInstallation, load_config, save_config
+from computer_agent import ComputerAgent, DshInstallation, load_config, save_config, MODEL_CHOICES, resolved_task_model
 from computer_progress import ComputerProgressMixin,PendingQuestions
 
 
@@ -115,19 +115,18 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         self._computer_init()
         existing = getattr(self, "_computer_win", None)
         if existing is not None and existing.winfo_exists():
-            existing.deiconify()
-            existing.lift()
+            self._move_dialog(existing, 720, 670)
             return
         try:
             config = load_config(self._computer_data_dir())
         except Exception as exc:
-            messagebox.showerror("电脑助手配置", str(exc), parent=self.root)
+            messagebox.showerror("电脑助手配置", str(exc), parent=self.pet)
             return
         win = tk.Toplevel(self.root)
         self._computer_win = win
         win.title("电脑助手 · 本机文件任务")
-        win.geometry("720x670")
         win.minsize(540, 500)
+        self._place_dialog(win, 720, 670)
         win.columnconfigure(0, weight=1)
         win.rowconfigure(5, weight=1)
         top = tk.Frame(win, padx=16, pady=14)
@@ -145,6 +144,17 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         scope=tk.StringVar(value=next((label for label,mode in scopes.items() if mode==config.get('permission_mode','workspace-write')),'仅工作文件夹内写入'))
         tk.Label(paths,text='文件操作范围',anchor='w').grid(row=3,column=0,sticky='w',pady=6)
         ttk.Combobox(paths,textvariable=scope,values=tuple(scopes),state='readonly',width=27).grid(row=3,column=1,sticky='ew',padx=8)
+        # 任务模型：选项值 → 显示名；下面实时显示这次任务实际会用的模型
+        model_labels={value:label for value,label in MODEL_CHOICES.items()}
+        model=tk.StringVar(value=model_labels.get(config.get('model','follow-chat'),model_labels['follow-chat']))
+        resolved=tk.StringVar()
+        def show_model(*_):
+            value=next((k for k,v in model_labels.items() if v==model.get()),'follow-chat')
+            resolved.set('实际使用：'+resolved_task_model(value,self._computer_data_dir()))
+        tk.Label(paths,text='任务模型',anchor='w').grid(row=4,column=0,sticky='w',pady=6)
+        box=ttk.Combobox(paths,textvariable=model,values=tuple(model_labels.values()),state='readonly',width=27)
+        box.grid(row=4,column=1,sticky='ew',padx=8);box.bind('<<ComboboxSelected>>',show_model)
+        show_model()
         for row, (key, title) in enumerate((("workspace", "工作文件夹"), ("node", "Node 路径（可留空）"), ("dsh_cli", "dsh bin.js（可留空）"))):
             tk.Label(paths, text=title, anchor="w").grid(row=row, column=0, sticky="w", pady=4)
             value = tk.StringVar(value=config.get(key, ""))
@@ -157,17 +167,21 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         tk.Button(paths, text="选择…", command=browse).grid(row=0, column=2)
         connection = tk.StringVar(value="")
         def save():
-            updated = {**config, **{k: v.get().strip() for k, v in variables.items()}, "enabled": enabled.get(),'permission_mode':scopes[scope.get()]}
+            value=next((k for k,v in model_labels.items() if v==model.get()),'follow-chat')
+            updated = {**config, **{k: v.get().strip() for k, v in variables.items()}, "enabled": enabled.get(),
+                       'permission_mode':scopes[scope.get()], 'model':value}
             try:
                 saved = save_config(self._computer_data_dir(), updated)
                 installation = DshInstallation.discover(saved)
                 connection.set("已保存 · 已找到本机 dsh")
+                show_model()
                 return saved
             except Exception as exc:
                 connection.set(str(exc))
                 return None
-        tk.Button(paths, text="保存设置", command=save).grid(row=4, column=0, sticky="w", pady=8)
-        tk.Label(paths, textvariable=connection, anchor="w", wraplength=480).grid(row=4, column=1, columnspan=2, sticky="w")
+        tk.Button(paths, text="保存设置", command=save).grid(row=5, column=0, sticky="w", pady=8)
+        tk.Label(paths, textvariable=connection, anchor="w", wraplength=480).grid(row=5, column=1, columnspan=2, sticky="w")
+        tk.Label(paths, textvariable=resolved, anchor="w", fg="#7a7a7a").grid(row=6, column=1, columnspan=2, sticky="w")
         try:
             DshInstallation.discover(config)
             connection.set("已找到本机 dsh；使用它现有的登录/API 配置")

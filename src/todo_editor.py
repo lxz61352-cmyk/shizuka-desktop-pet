@@ -13,10 +13,10 @@ REPEATS=('不重复','每天','每周','每月','工作日','每天直到完成'
 class TodoEditorMixin:
     def _todo_open_editor(self,item=None):
         old=getattr(self,'_todo_editor_win',None)
-        if old is not None and old.winfo_exists():old.lift();return
+        if old is not None and old.winfo_exists():self._move_dialog(old,640,740);return
         self._todo_init();parent=self._todo_win or self.root
         win=self._todo_editor_win=tk.Toplevel(parent);win.transient(parent);win.attributes('-topmost',True)
-        win.title('编辑待办' if item else '新建待办');win.geometry('640x740');win.minsize(600,680)
+        win.title('编辑待办' if item else '新建待办');win.minsize(600,680);self._place_dialog(win,640,740)
         options=self._todo_options(item) if item else {'category':'生活','desktop':True,'weixin':True}
         schedule=options.get('schedule',{});rule=schedule.get('rule');body=ttk.Frame(win,padding=18);body.pack(fill='both',expand=True)
         def row():

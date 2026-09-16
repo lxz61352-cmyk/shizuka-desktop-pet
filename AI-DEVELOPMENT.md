@@ -157,8 +157,8 @@
 
 ### 11. 电脑助手 / 微信 / 研究 / 同步
 
-- **电脑助手**：`/电脑 <任务>` 或明确文件指令 → 本机 DSH（headless profile + 本次 overlay，`src/shizuka-dsh-bridge.mjs`）。进度窗只读，需要确认的问题回到聊天里问。配置在 `data/computer-assistant.json`（工作文件夹、Node 路径、dsh bin.js、操作范围）。
-- **微信**：`weixin_channel` 负责协议与收发，`weixin_ui` 负责扫码/设置；支持对话、识图、`/图片`、`/电脑` 等远程指令，待办提醒也可走微信。绑定状态存 `data/weixin-state.json`。
+- **电脑助手**：`/电脑 <任务>` 或明确文件指令 → 本机 DSH（headless profile + 本次 overlay，`src/shizuka-dsh-bridge.mjs`）。进度窗只读，需要确认的问题回到聊天里问。配置在 `data/computer-assistant.json`（工作文件夹、Node 路径、dsh bin.js、操作范围、任务模型）。**任务没跑成时会写 `data/computer-tasks/<id>/failure.log`**（任务内容、使用模型、最近 40 条事件、stderr 末尾），并在 `data/error.log` 留一行索引——用户常不在电脑前，事后看日志即可。
+- **微信**：`weixin_channel` 负责协议与收发，`weixin_ui` 负责扫码/设置；支持对话、识图、`/图片`、`/电脑` 等远程指令，待办提醒也可走微信。绑定状态存 `data/weixin-state.json`。图片按天编号存到工作区 `微信图片/`，指代用「图N」（支持中文数字）；**没指定图片时带最近 2 张（10 分钟内），本条消息自带的图片全带上（最多 3 张）**；聊天分支会把图转 data URL 直接附给模型（按路径缓存 10 分钟），所以「讲下图3」「那第二问呢」都能看图回答。
 - **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `topics`/`queries` 检索，模型按摘要判断相关性；缺摘要时只依据题名评论，不编造结论。
 - **同步**：`sync_runtime/sync_client/sync_store/sync_transport/sync_rustdesk/...` 用签名 journal、独立设备身份、幂等事件；默认每 3 小时（`memory_interval_seconds`，60~604800 秒）轻量检查，另有手动同步。
 
@@ -168,6 +168,13 @@
 - 设置持久化在 `data/settings.json`（`_save_settings` 写的是**显式字段字典**，新增设置项要同时改 `load_settings` 和 `_save_settings`）。
 - API Key 存 **Windows 凭据管理器**（`_cred_write`/`_cred_read`，目标 `ShizukaDeskPet/api_key`；读取时 `ShizukaAssistant/api_key` 也认，兼容 0.7.6 改过的名字），**程序目录不留 Key 文件**；旧 `api_key.txt` 首次启动自动迁移并删除。
 - 数据文件读坏先备份 `.bad-<时间戳>` 再重建，防清空。
+
+### 13. 主动发言（前台程序 / 空闲搭话 / 启动问候）
+
+- 三条触发链：`_foreground_loop`（每 45 秒看前台窗口；进程变了、距上次主动评论 ≥`PROACTIVE_COOLDOWN`=300 秒、同一进程 `FG_REPEAT_GAP`=1800 秒内不重复，再按 `FG_COMMENT_CHANCE`=10% 概率才开口）、`_idle_loop`/`_check_idle`（每 30 秒看系统空闲；到 `idle_minutes*60*(n+1)` 且距上次主动 ≥5 分钟，每段空闲最多 `IDLE_CHAT_MAX`=2 次）、启动问候（`_do_greeting`，距上次问候不足 10 分钟就跳过）。
+- **方向池**：`dialogue_style.PROACTIVE_DIRECTIONS`（角色包 `dialogue-style.json` 里的 `proactive_directions` 可整体覆盖）。触发时 `_pick_proactive_direction()` 按 `weight` 随机挑一个（同一方向不连续用两次），方向 + 事实一起进 `_proactive_prompt()`。默认权重：具体观察 30 / 实用提醒 20 / 相关小知识 15 / 承接上文 10 / 轻幽默 10 / 具体提问 10 / 安静陪伴 5。
+- **硬约束**：必须落到给到的具体信息（程序名 / 窗口标题 / 时间 / 最近聊过的话题），一个都落不上就返回空字符串（不说话）；禁止「哦，这是……」鉴定式起手、复述标题原文、编造与说教。
+- **内容去重**：`_proactive_recent_ok` / `_proactive_remember`（`dialogue_grounding`）记住最近 20 条主动发言，新句子与最近 6 条完全重复、互相包含、或字符二元组重合度 ≥0.7 就丢弃。
 
 ---
 
@@ -192,6 +199,20 @@
 ---
 
 ## 六、版本历史（简）
+
+### 2026-09-16 — V0.8.1
+
+- **多屏窗口定位**：`pet.py` 新增 `_screen_bounds` / `_dialog_geometry` / `_place_dialog` / `_move_dialog`，所有对话框（待办、待办编辑器、对话记录、微信、电脑助手、DSH 进度、研究进展、双端同步、模型与接口、更新四窗、记忆窗、时长窗）与 `messagebox` / `filedialog` 都摆到桌宠所在显示器；`_place_dialog` 对未传尺寸的新 Toplevel 走 withdraw→update→geometry→deiconify（新窗口在 `update_idletasks` 前 `winfo_reqwidth()` 返回 200x200），传了尺寸的直接设 geometry。
+- **模型统一**：模型名只在 `api_runtime.DEEPSEEK_MODEL = 'deepseek-v4-flash-vision-exp'` 定义一处，`pet.py` / `computer_agent.py` 引用，bridge 不再维护白名单；DeepSeek 官方接口下 `deepseek-chat` / `deepseek-v4-flash` / `deepseek-flash` / `deepseek-v4-pro` 归一，自定义 base 保留用户填的；电脑助手窗口新增「任务模型」下拉（跟随聊天/视觉/继承 DSH 默认）+「实际使用：xxx」。
+- **电脑助手（DSH）**：bridge 兼容两版提问 API（旧 `registerProvider` / 新 Cordis waterfall `user-questions/request`），apply 不再抛错（抛错会让插件树 FIBLED 失败、任务直接崩）；提问加 30 分钟上限、失败也发 `question_cancelled`；带图任务强制视觉模型；失败写 `data/computer-tasks/<id>/failure.log` + `data/error.log` 索引。
+- **微信看图/讲题**：聊天分支把图转 data URL（按路径缓存 10 分钟）附给模型（原来只发路径文字，模型「看不到图」）；「图N」支持中文数字、编号对不上时反问候选；未指定时带最近 2 张（10 分钟内）；带图消息不再一律当文件任务，只有 `/电脑` 或意图路由判成 `computer_task` 才走 DSH；截图内容等于桌宠刚说的话则只回 SKIP。
+- **主动发言降噪**：前台程序 `FG_COMMENT_CHANCE=0.1` + 5 分钟冷却（没抽中不记账）；`dialogue_style.PROACTIVE_DIRECTIONS` 方向池（具体观察 30 / 实用提醒 20 / 相关小知识 15 / 承接 10 / 轻幽默 10 / 具体提问 10 / 安静陪伴 5），角色包 `characters/shizuka-side-motion/dialogue-style.json` 可整体覆盖；本地闸门丢弃「我就在这儿」类空话、最近 20 条去重、启动问候 10 分钟内跳过；提示词收紧（禁鉴定式起手、复述标题、推测句式、按时间/窗口名推断状态，天气只准用给定数据）；`clean_filler_tail()` 剪掉剪贴板反应尾巴。
+- **待办与更新修复**：完成待办（含提前完成/结束周期）清 notice 并取消提醒；准点提醒（lead=0）加 600 秒宽限；「晚上12点」→次日 0 点；「停止接收更新」不再被 `_save_settings` 覆盖、bat 重启路径加引号、pending 标记移到安装之后、检查失败与「已是最新」区分显示、probe 用归一后的模型名、补 400 说明。
+- **其它**：`_cancel_reply` 清语音气泡状态；`gsv_py` 兼容根目录 python；`_take_render` 记真实堆栈；`usage` 字典加锁；余额气泡用 `winfo_exists`；`recall` 不召回本轮刚落的当前消息；`load_style` / memory-review 用 `utf-8-sig`；`_MODEL_CAPS` 加锁；清掉若干死代码。
+- 新增 `tests/test_weixin_images.py`、`test_task_model.py`、`test_proactive.py`、`test_dialogue_style.py`；新增离线预演工具 `tools/preview_proactive.py`、`tools/preview_dialogue.py`。
+- 注：`src/file_transfer.py` 的 `status()` 被拆成两条 SQL，与原实现行为完全等价，非本轮改动。
+- 清掉遗留死代码（全仓无引用、0.8.0 起就是死的）：`pet.py` 的 `detect_provider` / `get_mem` / `rounded_rect_points` / `_is_todo_query` / `_record_new_memories` / `_voice_bubble_show` / `_parse_time_desc` / `_fmt_todo_when` 与常量 `SWAY_DIZZY_COOLDOWN` / `PERSONA_DIR`（指向不存在的 `persona/`）/ `STYLE_REMINDER` / `REQUIREMENTS_FILE` / `PIN_KEYWORDS` / `DISPLAY_W` / `GREETING_THEMES` / `GREETING_IDEAS` / `IDLE_CHAT_SEC`，`sync_store.py` 的 `decode_bundle`（连 `encode_bundle` 都不存在）。
+- `tools/make_release.py` 的 `package_paths()` 现在跳过 `__pycache__` 与 `.pyc/.pyo`（此前有 85 个陈旧字节码被打进发布包）。
 
 ### 2026-09-16 — V0.8.0
 

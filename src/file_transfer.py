@@ -279,10 +279,17 @@ class FileQueue:
 
     def status(self, transfer_id=None):
         with self.lock:
-            clause, params = (" WHERE id=?", (transfer_id,)) if transfer_id else (" ORDER BY created DESC LIMIT 50", ())
+            if transfer_id:
+                outgoing_sql = "SELECT * FROM outgoing WHERE id=?"
+                incoming_sql = "SELECT * FROM incoming WHERE id=?"
+                params = (transfer_id,)
+            else:
+                outgoing_sql = "SELECT * FROM outgoing ORDER BY created DESC LIMIT 50"
+                incoming_sql = "SELECT * FROM incoming ORDER BY created DESC LIMIT 50"
+                params = ()
             return {"receive_dir": str(self.receive_dir),
-                    "outgoing": [dict(row) for row in self.db.execute("SELECT * FROM outgoing" + clause, params)],
-                    "incoming": [dict(row) for row in self.db.execute("SELECT * FROM incoming" + clause, params)]}
+                    "outgoing": [dict(row) for row in self.db.execute(outgoing_sql, params)],
+                    "incoming": [dict(row) for row in self.db.execute(incoming_sql, params)]}
 
 
 class FileTransfer:
