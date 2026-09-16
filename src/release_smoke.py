@@ -1,14 +1,16 @@
 """Offline acceptance in a disposable data directory; no real credentials or messages."""
 from pathlib import Path
 from unittest.mock import patch
-import json,sys,time
+import json,sys,time,traceback
 
 def run(pet):
     checks=[];errors=[]
     report=Path(sys.argv[sys.argv.index('--report')+1])
     with patch.object(pet,'read_api_key',return_value=''),patch.object(pet,'_embed_texts',return_value=None),patch.object(pet.DeskPet,'_migrate_api_key'):
         app=pet.DeskPet()
-        app.root.report_callback_exception=lambda *args:errors.append(str(args[1]))
+        # 记完整调用栈：只记 str(exc) 时出问题根本查不出是哪个回调炸的。
+        app.root.report_callback_exception=lambda *args:errors.append(
+            ''.join(traceback.format_exception(*args)))
         try:
             app.root.update();app._motion.reset();app._ground.cancel()
             assert app._character_pack.id=='shizuka-side-motion' and app._character_pack.character_id=='shizuka'
@@ -54,6 +56,21 @@ def run(pet):
             app._research_check(force=True)
             assert not getattr(app,'_research_running',False)
             checks.append('Research code stays inert while the feature is disabled')
+            # 双端共享/同步记忆整体收起来了：开关为假、运行时拿不到传输、两个入口只回一句「开发中」。
+            # 这里刻意不建菜单窗（show_menu 会留下 after 轮询，和下面「检查更新」那项互相干扰，
+            # 之前就是它偶发让离线验收挂在 _add_menu_update 的回调上）；菜单文案由单测覆盖。
+            import sync_runtime, assistant_features
+            assert sync_runtime.SYNC_ENABLED is False
+            assert sync_runtime.get_runtime(pet.DATA_DIR) is None
+            spoken=[]
+            original_say=app.say
+            app.say=lambda text,**kwargs:spoken.append(text)
+            try:
+                app.show_sync();app.sync_now()
+            finally:
+                app.say=original_say
+            assert spoken==[assistant_features.SYNC_WIP_REPLY]*2,spoken
+            checks.append('Sync sharing entries stay parked as in-development')
             import news, updater, weather, weather_features, update_features
             assert weather._wmo_zh(0)=='晴' and updater.version_tuple('0.10.0')>updater.version_tuple('0.9.9')
             assert isinstance(updater.read_announcement(pet.APP_VERSION),str)

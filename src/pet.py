@@ -24,10 +24,10 @@ import queue
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
-from sync_runtime import get_runtime
+from sync_runtime import SYNC_ENABLED, get_runtime
 from computer_ui import ComputerAssistantMixin, computer_command
 from weixin_ui import WeixinMixin
-from assistant_features import AssistantFeaturesMixin
+from assistant_features import AssistantFeaturesMixin, SYNC_WIP_REPLY
 from weather_features import WeatherNewsMixin
 from update_features import UpdateFeaturesMixin
 import traceback
@@ -5356,6 +5356,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
 
     def show_sync(self):
         self.close_popup()
+        if not SYNC_ENABLED:
+            # 双端共享还没做好：和后端一起收起来，点了只说明情况（代码都还在）。
+            self.say(SYNC_WIP_REPLY)
+            return
         runtime = _sync_runtime()
         if runtime:
             import webbrowser
@@ -5420,8 +5424,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         # ④ 记录与记忆
         for text, cmd in [("窗口时长统计", self.show_usage),
                           ("查看记忆", self.show_memory),
-                          ("双端共享记忆", self.show_sync),
-                          ("立即同步记忆", self.sync_now)]:
+                          ("双端共享记忆（开发中）", self.show_sync),
+                          ("立即同步记忆（开发中）", self.sync_now)]:
             self._add_menu_item(win, text, cmd)
         self._menu_separator(win)
         # ⑤ 接口与维护

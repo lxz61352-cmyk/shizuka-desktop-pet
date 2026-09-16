@@ -5,6 +5,11 @@ import threading
 from sync_bridge import SyncBridge
 from sync_transport import make_transport
 
+# 双端共享/同步记忆还没做好，先整体关掉（和研究进展一样）：菜单只显示「开发中」，
+# 后台不启动传输、不排期检查，待办/记忆/聊天记录一律退回本地 JSON 存储。
+# 配对配置、journal、传输层代码都还在，改 True 即可恢复。
+SYNC_ENABLED = False
+
 _lock = threading.RLock()
 _instances = {}
 
@@ -18,6 +23,8 @@ def stop_transports():
 
 
 def get_runtime(data_root, character="shizuka"):
+    if not SYNC_ENABLED:
+        return None
     key = (str(Path(data_root).resolve()), character)
     with _lock:
         if key in _instances:

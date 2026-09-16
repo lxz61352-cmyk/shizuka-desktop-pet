@@ -5,11 +5,15 @@ from tkinter import ttk, messagebox
 from tkinter.scrolledtext import ScrolledText
 from research_watch import ResearchWatch
 from sync_bridge import atomic_json
+from sync_runtime import SYNC_ENABLED
 
 # 研究进展还没完全做好（朋友那边也这么说），先整体关掉：菜单只显示「开发中」，
 # 后台不自动检查、不主动播报、聊天里问到也不进流程。改 True 即可恢复。
 RESEARCH_ENABLED = False
 RESEARCH_WIP_REPLY = "研究进展这块还在开发中，暂时先没开哦～"
+
+# 双端共享记忆/同步记忆同样还没做好，先收起入口（开关在 sync_runtime.SYNC_ENABLED）。
+SYNC_WIP_REPLY = "双端共享记忆这块还在开发中，暂时先没开哦～"
 
 
 class AssistantFeaturesMixin:
@@ -35,6 +39,9 @@ class AssistantFeaturesMixin:
 
     def sync_now(self):
         import pet as engine
+        if not SYNC_ENABLED:
+            self.say(SYNC_WIP_REPLY)
+            return
         runtime=engine._sync_runtime()
         if not runtime:return self.show_sync()
         def work():
