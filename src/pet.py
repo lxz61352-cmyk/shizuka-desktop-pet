@@ -285,6 +285,8 @@ VOICE_API = "http://127.0.0.1:9880/tts"                        # 本地 GPT-SoVI
 VOICE_ENABLED = True           # 应用本身保留语音功能；是否可用取决于本机有没有装 GPT-SoVITS
 VOICE_VOLUME = 850             # 语音朗读 MCI 音量 0-1000
 TTS_SENTENCE_GAP_MS = 220      # 语音分段之间保留的句末停顿（毫秒），避免听起来太赶
+TTS_TITLE_GAP_MS = 130         # 标题前那一段的停顿：比句末停顿短一点，接标题时更自然
+TTS_TITLE_MAX = 200            # 标题单独成段时允许的长度，再长才按词边界切开
 TTS_TEXT_SPEEDUP = 1.12        # 有语音时文字比朗读稍快一点（倍数），避免字比声慢半拍
 
 # 背景音乐「i wanna」：放在 assets 里，用独立的 MCI 别名播放，可与语音/提示音同时存在
@@ -395,32 +397,90 @@ def gsv_py():
 _TTS_LOCK = threading.Lock()   # 语音队列/线程的创建锁
 
 
+# 网址判定要停在中文/全角字符上：中文句子里没有空格，\S+ 会把网址后面的整句话都吞掉
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]+", re.I)
+_URL_TAIL = ".,;:!?)]}>\"'"   # 网址后紧跟的英文句读不算网址的一部分
+
+
+def _strip_urls(text):
+    """网址不进语音：念链接又慢又难懂（气泡/记录里仍然保留，可以点、可以复制）。"""
+    text = text or ""
+    if not text:
+        return ""
+    out = []
+    pos = 0
+    for m in _URL_RE.finditer(text):
+        raw = m.group(0)
+        body = raw.rstrip(_URL_TAIL)
+        out.append(text[pos:m.start()])   # 网址之前的文字
+        out.append(raw[len(body):])       # 网址后面被截下来的句读留着，别跟着网址一起丢
+        pos = m.end()
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def _looks_like_title(piece):
+    """像标题的独立片段：整行就是书名号里的题名，或者整行基本是外文/数字（论文标题多是这样）。
+
+    「发表于《Nature》。」这种把刊名夹在句子里的，不算标题——否则整句话都不会被切开。
+    """
+    body = (piece or "").strip().strip("。.!！?？：: ")
+    if not body:
+        return False
+    if body.startswith("《") and body.endswith("》") and len(body) >= 6:
+        return True
+    cjk = sum(1 for c in body if "\u4e00" <= c <= "\u9fff")
+    return cjk == 0 and len(body) >= 12
+
+
+def _cut_point(seg, limit, min_len):
+    """尽量切在标点或空格处：中文用标点，外文标题用词边界，都不要切在词中间。"""
+    cut = -1
+    for ch in "，,、；;：: ":
+        cut = max(cut, seg.rfind(ch, 0, limit))
+    if cut < min_len:
+        cut = limit - 1
+    return cut
+
+
 def _tts_split(text, min_len=10, max_len=45):
-    """把一段文字切成适合合成/逐句显示的片段：按句末标点切，过短的往后并，
-    过长的再按逗号或字数切开。有语音时靠它让「文字逐句出」和「朗读」对齐。"""
-    text = (text or "").strip()
+    """把一段文字切成适合合成/逐句显示的片段。
+
+    - 网址（http/https/www）不送语音；整段只有网址就直接丢掉。
+    - 换行是硬边界：写在独立一行的标题/结论，不会跟前后句粘在一起。
+    - 像标题的片段（书名号，或整行外文）**单独成段**：长标题宁可自己占一轮气泡，
+      也不按字数从中间劈开——「标题显示成两半」就是这么来的。
+    - 其余按句末标点切；过短的往后并；过长的优先在标点/空格处切开。
+    """
+    text = _strip_urls(text).strip()
     if not text:
         return []
-    parts = [p for p in re.split(r"(?<=[。！？!?…\n])", text) if p.strip()]
+    units = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not line:
+            continue
+        for piece in re.split(r"(?<=[。！？!?…])", line):
+            piece = piece.strip()
+            if piece:
+                units.append((piece, _looks_like_title(piece)))
     merged = []
-    for p in parts:
-        if merged and len(merged[-1].strip()) < min_len:
-            merged[-1] += p
+    for piece, title in units:
+        previous = merged[-1] if merged else None
+        if (not title and previous is not None and not previous[1]
+                and len(previous[0]) < min_len):
+            merged[-1] = (previous[0] + piece, False)
         else:
-            merged.append(p)
+            merged.append((piece, title))
     out = []
-    for seg in merged:
-        seg = seg.strip()
-        while len(seg) > max_len:
-            cut = -1
-            for ch in "，,、；;":
-                cut = max(cut, seg.rfind(ch, 0, max_len))
-            if cut < min_len:
-                cut = max_len - 1
-            out.append(seg[:cut + 1].strip())
-            seg = seg[cut + 1:].strip()
-        if seg:
-            out.append(seg)
+    for piece, title in merged:
+        limit = TTS_TITLE_MAX if title else max_len
+        while len(piece) > limit:
+            cut = _cut_point(piece, limit, min_len)
+            out.append(piece[:cut + 1].strip())
+            piece = piece[cut + 1:].strip()
+        if piece:
+            out.append(piece)
     return [s for s in out if s]
 
 
@@ -4002,37 +4062,42 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
     # ---------- 分段播放：句号停顿 —— 气泡呈现 ----------
     # ================= 语音朗读（GPT-SoVITS 本地 API） =================
     def _speak(self, text):
-        """整段朗读（非流式，如问候 / 提醒 / 待办确认）：按句切开逐句显示，再排结束标记。"""
+        """整段朗读（非流式，如问候 / 提醒 / 待办确认）：按句切开逐句显示，再排结束标记。
+        标题前那一段用更短的停顿，接上标题更自然。"""
         if not self._voice_on:
             return
         text = (text or "").strip()
         if text:
-            for piece in _tts_split(text):
-                self._tts_enqueue(piece)
+            pieces = _tts_split(text)
+            for index, piece in enumerate(pieces):
+                following = pieces[index + 1] if index + 1 < len(pieces) else ""
+                gap = TTS_TITLE_GAP_MS if following and _looks_like_title(following) else None
+                self._tts_enqueue(piece, gap)
             self._tts_enqueue(None)
 
     def _speak_stream(self, acc, spoken, final=False):
-        """流式朗读：回复边生成边按句送合成，第一句更快出声。返回已处理的字符数。"""
+        """流式朗读：回复边生成边按句送合成，第一句更快出声。
+        网址不送语音（念链接又慢又难懂），但网址前后的正文都要留着。"""
         if not self._voice_on:
             return len(acc)
         seg = acc[spoken:]
         if final:
-            piece = seg.strip()
+            piece = _strip_urls(seg).strip()
             if piece:
                 self._tts_enqueue(piece)
             return len(acc)
         start = 0
         for i, c in enumerate(seg):
             if c in "。！？!?\n":
-                piece = seg[start:i + 1].strip()
+                piece = _strip_urls(seg[start:i + 1]).strip()
                 # 太短的句子单独合成会平淡/没语调，攒够长度再送；够长就立刻送，别攒成一大段
                 if len(piece) >= 10:
                     self._tts_enqueue(piece)
                     start = i + 1
         return spoken + start
 
-    def _tts_enqueue(self, text):
-        """把一句/一段文本（或 None 结束标记）排进语音队列。"""
+    def _tts_enqueue(self, text, gap_ms=None):
+        """把一句/一段文本（或 None 结束标记）排进语音队列；gap_ms 指定这段之后的停顿。"""
         with _TTS_LOCK:
             if getattr(self, "_tts_q", None) is None:
                 self._tts_q = queue.Queue()
@@ -4051,7 +4116,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             else:
                 t = (text or "").strip()
                 if t:
-                    self._tts_q.put((t, self._conv_id))
+                    self._tts_q.put((t, self._conv_id, gap_ms))
 
     def _voice_bubble_ensure(self):
         """确保语音气泡存在（没有就建一个）。"""
@@ -4226,7 +4291,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 if item is None:
                     self._synth_q.put(("end",))
                     continue
-                text, conv = item
+                text, conv, gap = (list(item) + [None])[:3]   # 兼容旧的 2 元组
                 if conv != self._conv_id:
                     continue   # 旧对话，丢弃
                 # 只在一段话开头显示"加载中"省略号；后续段已提前合成，不再闪省略号
@@ -4236,7 +4301,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 out = os.path.join(DATA_DIR, "_tts_p%d.wav" % (slot % 8))
                 ok, path, dur = self._tts_synth(text, out_path=out)
                 slot += 1
-                self._synth_q.put(("seg", text, conv, ok, path, dur))
+                self._synth_q.put(("seg", text, conv, ok, path, dur, gap))
             except Exception:
                 # 单条出错不能让生产者退出，否则之后永远没声音
                 _err_log("tts_producer")
@@ -4253,13 +4318,14 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 self._ui(self._voice_bubble_finish)
                 continue
             try:
-                _, text, conv, ok, path, dur = kind
+                parts = list(kind) + [None] * (7 - len(kind))
+                _, text, conv, ok, path, dur, gap = parts[:7]
                 if conv != self._conv_id:
                     continue   # 旧对话，丢弃
                 # 文字按朗读速度逐字打出（有语音时对齐音频时长），同时播放语音
                 self._ui(lambda t=text, d=dur: self._voice_type_start(t, d))
                 if ok and path:
-                    # 用 MCI 播放，和提示音互不打断（winsound 会把提示音掐掉）
+                    # 用 MCI 播放，和提示音互不打断（windsound 会把提示音掐掉）
                     if not _mci_play(path, "deskpet_voice", wait=True, volume=VOICE_VOLUME):
                         try:
                             import winsound
@@ -4267,8 +4333,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                         except Exception:
                             pass
                 self._wait_voice_type_done(len(text))
-                # 段末留一点句末停顿，避免各句听起来黏在一起
-                time.sleep(TTS_SENTENCE_GAP_MS / 1000.0)
+                # 段末留一点停顿：默认句末停顿，标题前那一段用更短的
+                time.sleep((gap if gap is not None else TTS_SENTENCE_GAP_MS) / 1000.0)
             except Exception:
                 _err_log("tts_loop")
 
