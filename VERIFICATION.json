@@ -1,5 +1,5 @@
 {
-  "version": "0.8.2",
+  "version": "0.8.3",
   "unit_tests": 316,
   "frozen_gui_checks": 10,
   "private_data_audit": "passed",

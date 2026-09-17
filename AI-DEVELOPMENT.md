@@ -214,6 +214,10 @@
 
 ## 六、版本历史（简）
 
+### 2026-09-18 — V0.8.3
+
+语音：朗读停顿按标点分级（`_tts_segments`/`_tts_gap`，段落 340 / 句末 220 / 逗号 120 / 半句 160 / 标题前 130 ms），网址不进语音，标题单独占一轮气泡；新增 `voice_en_phonemes`（菜单「英文按英文念」，默认关，整行外文改 `text_lang=en`）；暖机改 15 秒短超时当健康检查，服务卡死会在启动阶段重启。免打扰（`src/quiet_mode.py` + `_quiet_loop`/`_quiet_tick`）：前台全屏或常见游戏进程时不主动发言、不点评剪贴板、不播报文献，进入时提示并自动折叠、退出后自动恢复，用户消息与待办提醒不受影响。研究进展：关注方向标签自动换行（`_flow_layout` 改 place 定位），聊天里问「最新进展」会汇报并补查（`_report_research`），复制论文网页/DOI 会解析并讲解（新增 `src/paper_reader.py`）。待办：聊天里回复完成会自动标完成并停提醒（`todo_reply._todo_done_from_chat`，认「喝过水了」这类宾语插在中间的写法），并修掉模型路由器那条完成路径不走 `_todo_complete_or_restore` 的问题。称呼：`dialogue_style.ADDRESS_STYLE` 压在角色卡之后，不再使用「主人」。
+
 ### 2026-09-16 — 源码修复（未发版，待并入下次发版）
 
 > 只改了源码与测试，**没有动 `APP_VERSION` / `version.json` / `MANIFEST.json`**。发版前请按第二章跑一次 `tools/make_release.py` 重生成清单（现在 `MANIFEST.json` 与 `VERIFICATION.json` 还是 0.8.1 发版时的旧快照）。
