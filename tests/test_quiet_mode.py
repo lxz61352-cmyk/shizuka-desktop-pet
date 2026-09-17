@@ -127,6 +127,7 @@ class MenuTests(unittest.TestCase):
                 self._submenu = None
                 self._quiet_fullscreen = True
                 self._quiet_games = True
+                self._quiet_fold = True
                 self._quiet_apps = []
                 self._quiet_checked_at = 0.0
                 self._quiet_reason_text = ""
@@ -171,6 +172,7 @@ class MenuTests(unittest.TestCase):
         joined = " | ".join(texts)
         self.assertIn("全屏程序时安静", joined)
         self.assertIn("游戏进程时安静", joined)
+        self.assertIn("进入时自动折叠", joined)
         self.assertIn("把当前程序加进名单", joined)
         self.assertTrue(any(text.startswith("✓") for text in texts))   # 默认是勾上的
 
@@ -203,6 +205,104 @@ class MenuTests(unittest.TestCase):
 
         walk(self.root)
         self.assertTrue(any("英文按英文念" in text for text in texts), texts)
+
+
+class MachineTests(unittest.TestCase):
+    """免打扰状态机：连续安静几秒才进入，退出后延迟一会儿才展开。"""
+
+    class _Clock:
+        def __init__(self):
+            self.t = 0.0
+
+        def monotonic(self):
+            return self.t
+
+        def time(self):
+            return self.t
+
+        def sleep(self, seconds):
+            self.t += seconds
+
+    class _Machine:
+        _quiet_tick = pet.DeskPet._quiet_tick
+
+        def __init__(self):
+            self.reason = ""
+            self._quitting = False
+            self._quiet_active = False
+            self._quiet_since = None
+            self._quiet_resume_at = None
+            self.entered = []
+            self.exited = 0
+
+        def _quiet_now(self):
+            return self.reason
+
+        def _enter_quiet(self, reason):
+            self.entered.append(reason)
+            self._quiet_active = True
+
+        def _exit_quiet(self):
+            self.exited += 1
+            self._quiet_active = False
+
+    def setUp(self):
+        self.clock = self._Clock()
+        self.saved = pet.time
+        pet.time = self.clock
+        self.machine = self._Machine()
+
+    def tearDown(self):
+        pet.time = self.saved
+
+    def _tick(self, seconds=0.0, reason=None):
+        if reason is not None:
+            self.machine.reason = reason
+        self.clock.t += seconds
+        self.machine._quiet_tick()
+
+    def test_needs_a_few_quiet_seconds_before_entering(self):
+        self._tick(0, "Overwatch")
+        self.assertEqual(self.machine.entered, [])          # 刚切过去不算
+        self._tick(pet.QUIET_SETTLE_SEC - 1, "Overwatch")
+        self.assertEqual(self.machine.entered, [])
+        self._tick(2, "Overwatch")
+        self.assertEqual(self.machine.entered, ["Overwatch"])   # 连续安静够久才算
+
+    def test_entering_happens_once(self):
+        self._tick(0, "Overwatch")
+        self._tick(10, "Overwatch")
+        self._tick(10, "CS2")
+        self.assertEqual(self.machine.entered, ["Overwatch"])
+        self.assertTrue(self.machine._quiet_active)
+
+    def test_quick_switch_does_not_enter(self):
+        self._tick(0, "Overwatch")
+        self._tick(1, "")            # 一秒后又切走了
+        self._tick(pet.QUIET_SETTLE_SEC + 5, "")
+        self.assertEqual(self.machine.entered, [])
+
+    def test_leaving_waits_before_resuming(self):
+        self._tick(0, "Overwatch")
+        self._tick(10, "Overwatch")
+        self._tick(1, "")            # 刚退出去，先不展开
+        self.assertEqual(self.machine.exited, 0)
+        self._tick(pet.QUIET_RESUME_SEC + 1, "")
+        self.assertEqual(self.machine.exited, 1)
+
+    def test_quiet_again_cancels_the_pending_resume(self):
+        self._tick(0, "Overwatch")
+        self._tick(10, "Overwatch")
+        self._tick(1, "")
+        self._tick(1, "Overwatch")   # 又切回游戏
+        self._tick(pet.QUIET_RESUME_SEC + 5, "Overwatch")
+        self.assertEqual(self.machine.exited, 0)
+
+    def test_quitting_stops_the_machine(self):
+        self.machine._quitting = True
+        self._tick(0, "Overwatch")
+        self._tick(30, "Overwatch")
+        self.assertEqual(self.machine.entered, [])
 
 
 if __name__ == "__main__":

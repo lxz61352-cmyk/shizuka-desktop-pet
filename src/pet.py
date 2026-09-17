@@ -782,14 +782,15 @@ def load_settings():
                 "api_base": DEFAULT_API_BASE, "api_model": DEFAULT_API_MODEL, "provider": "",
                 "idle_minutes": 5, "usage_track": True, "usage_away_min": USAGE_AWAY_MIN,
                 "voice": False, "tts_release": "1", "gsv_dir": "", "update_disabled": False,
-                "quiet_fullscreen": True, "quiet_games": True, "quiet_apps": [], "voice_en_phonemes": False}
+                "quiet_fullscreen": True, "quiet_games": True, "quiet_fold": True,
+                "quiet_apps": [], "voice_en_phonemes": False}
     data={}
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             for k in ("clipboard", "translate", "greeting", "summary", "voice", "animation", "ambient_actions", "land_on_windows", "update_disabled",
-                      "quiet_fullscreen", "quiet_games", "voice_en_phonemes"):
+                      "quiet_fullscreen", "quiet_games", "quiet_fold", "voice_en_phonemes"):
                 if k in data:
                     defaults[k] = bool(data[k])
             if isinstance(data.get("quiet_apps"), list):
@@ -1777,6 +1778,13 @@ PROACTIVE_COOLDOWN = 300      # 主动评论最小间隔（秒）
 FG_REPEAT_GAP = 1800          # 同一个前台程序多久内不再重复评论（秒）：避免反复切回 QQ 就叨叨
 FG_COMMENT_CHANCE = 0.1       # 前台程序变化时真正开口的概率：切窗口太频繁，全说会变复读机
 PROACTIVE_FOREGROUND = True   # 是否开启"感知前台程序并主动评论"
+
+# 免打扰：前台是游戏/全屏时先安静一会儿，并折叠到屏幕边上
+QUIET_POLL_MS = 2000          # 状态机轮询间隔
+QUIET_SETTLE_SEC = 4.0        # 连续安静这么久才算「进入免打扰」（切一下窗口不算）
+QUIET_RESUME_SEC = 10.0       # 退出后再等这么久才展开（alt-tab 来回不用折来折去）
+QUIET_NOTICE_MS = 2500        # 「进入免打扰模式」气泡显示多久
+QUIET_FOLD_DELAY_MS = 1600    # 先让提示露个脸，再把桌宠折叠到屏幕边上
 IDLE_CHAT_ENABLED = True      # 是否开启"长时间无操作主动搭话"
 IDLE_CHAT_MAX = 2             # 一轮空闲最多主动搭话几次（2 次≈30 分钟），之后认为用户离开，不再说话直到回来
 IDLE_CHECK_MS = 30000         # 每 30 秒检查一次系统空闲时间
@@ -2301,6 +2309,14 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._quiet_apps = [str(x) for x in (self._settings.get("quiet_apps") or []) if str(x).strip()]
         self._quiet_reason_text = ""
         self._quiet_checked_at = 0.0
+        self._quiet_active = False        # 现在是不是在免打扰里
+        self._quiet_since = None          # 连续安静的起始时间（确认几秒才真的进）
+        self._quiet_resume_at = None      # 退出免打扰后延迟展开的时间点
+        self._quiet_folded = False        # 这次免打扰是不是把她折起来了
+        self._quiet_fold_id = None        # 延迟折叠的 after id
+        self._quiet_notice_id = None      # 提示气泡的 after id
+        self._quiet_win = None
+        self._quiet_fold = bool(self._settings.get("quiet_fold", True))
         self._tts_en_phonemes = bool(self._settings.get("voice_en_phonemes", False))
         self._greeting_on = self._settings["greeting"]
         self._summary_on = self._settings["summary"]
@@ -6020,6 +6036,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                     lambda: toggle("_quiet_fullscreen"))
                 row("游戏进程时安静", "✓" if self._quiet_games else "",
                     lambda: toggle("_quiet_games"))
+                row("进入时自动折叠", "✓" if self._quiet_fold else "",
+                    lambda: toggle("_quiet_fold"))
                 tk.Frame(sub, bg="#c8c8c8", height=1).pack(fill="x", pady=3)
                 row("把当前程序加进名单", "", self._add_quiet_app)
                 row("清空名单（%d 个）" % len(self._quiet_apps), "", self._clear_quiet_apps)
@@ -6113,6 +6131,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             "update_disabled": bool(getattr(self, "_update_disabled", False)),
             "quiet_fullscreen": bool(getattr(self, "_quiet_fullscreen", True)),
             "quiet_games": bool(getattr(self, "_quiet_games", True)),
+            "quiet_fold": bool(getattr(self, "_quiet_fold", True)),
             "quiet_apps": list(getattr(self, "_quiet_apps", [])),
             "voice_en_phonemes": bool(getattr(self, "_tts_en_phonemes", False)),
         }
@@ -6348,6 +6367,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
     def _peek_press(self, event):
         self._peek_drag = (event.x_root, event.y_root)
         self._peek_proxied = False
+        # 用户自己动手点开了折叠的头像：这次免打扰就不再把她折回去
+        self._quiet_folded = False
 
     def _peek_motion(self, event):
         """折叠状态下拖动：先展开，然后把这次拖动转交给桌宠自己的拖动逻辑
@@ -7553,6 +7574,129 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._quiet_reason_text = reason
         return reason
 
+    def _quiet_loop(self):
+        try:
+            self._quiet_tick()
+        except Exception:
+            _err_log("quiet_loop")
+        try:
+            self.root.after(QUIET_POLL_MS, self._quiet_loop)
+        except Exception:
+            pass
+
+    def _quiet_tick(self):
+        """免打扰状态机：连续安静几秒才算数（免得切一下窗口就折叠），退出后也等几秒再展开。"""
+        if getattr(self, "_quitting", False):
+            return
+        reason = self._quiet_now()
+        now = time.monotonic()
+        if reason:
+            self._quiet_resume_at = None
+            if self._quiet_active:
+                return                      # 已经在免打扰里，换个游戏也不用重来一遍
+            if self._quiet_since is None:
+                self._quiet_since = now
+            elif now - self._quiet_since >= QUIET_SETTLE_SEC:
+                self._enter_quiet(reason)
+            return
+        self._quiet_since = None
+        if not self._quiet_active:
+            return
+        if self._quiet_resume_at is None:
+            self._quiet_resume_at = now + QUIET_RESUME_SEC
+        elif now >= self._quiet_resume_at:
+            self._exit_quiet()
+
+    def _enter_quiet(self, reason):
+        """进入免打扰：先弹一句「进入免打扰模式」，再把桌宠折叠到屏幕边上（用户要的）。"""
+        self._quiet_active = True
+        self._quiet_resume_at = None
+        self._quiet_folded = False
+        try:
+            _sound_log("quiet: 进入免打扰（%s）" % reason)
+        except Exception:
+            pass
+        if not self.visible:
+            return                          # 本来就收着，不用再折一次
+        self._quiet_notice("进入免打扰模式")
+        if not getattr(self, "_quiet_fold", True):
+            return
+        try:
+            self._quiet_fold_id = self.root.after(QUIET_FOLD_DELAY_MS, self._fold_for_quiet)
+        except Exception:
+            self._fold_for_quiet()
+
+    def _fold_for_quiet(self):
+        """提示露过脸之后再折叠：直接折的话气泡会跟着桌宠一起飞出屏幕。"""
+        self._quiet_fold_id = None
+        if not self._quiet_active or not getattr(self, "_quiet_fold", True) or not self.visible:
+            return
+        try:
+            self._close_quiet_notice()   # 气泡是跟着桌宠走的，先收掉再折
+            self.hide(side=self._nearest_edge_side())
+            self._quiet_folded = True
+        except Exception:
+            _err_log("quiet_fold")
+
+    def _exit_quiet(self):
+        """退出免打扰：她自己走出来（用户中途点开过就不再折回去）。"""
+        self._quiet_active = False
+        self._quiet_since = None
+        self._quiet_resume_at = None
+        if self._quiet_fold_id is not None:
+            try:
+                self.root.after_cancel(self._quiet_fold_id)
+            except Exception:
+                pass
+            self._quiet_fold_id = None
+        if not self._quiet_folded:
+            return
+        self._quiet_folded = False
+        try:
+            self.restore()
+            self._quiet_notice("免打扰结束")
+        except Exception:
+            _err_log("quiet_restore")
+
+    def _nearest_edge_side(self):
+        """折叠到离她更近的那一侧屏幕边（和拖到屏幕外时的行为一致）。"""
+        try:
+            cx = self.pet.winfo_rootx() + self.pet.winfo_width() // 2
+            cy = self.pet.winfo_rooty() + self.pet.winfo_height() // 2
+            mon = monitor_rect_of_point(cx, cy)
+            if mon:
+                left, _top, right, _bottom = mon
+                return "left" if (cx - left) <= (right - cx) else "right"
+        except Exception:
+            pass
+        return "left"
+
+    def _quiet_notice(self, text):
+        """免打扰提示气泡：不出声、不进对话记录，几秒后自己收掉。"""
+        try:
+            self._close_quiet_notice()
+            win, set_text = make_round_bubble(self.root, bg="#4a6fa5")
+            self._quiet_win = win
+            set_text(text)
+            self._place_bubble(win)
+            win.deiconify()
+            win.lift()
+            self._start_follow(win)
+            self._quiet_notice_id = self.root.after(QUIET_NOTICE_MS, self._close_quiet_notice)
+        except Exception:
+            _err_log("quiet_notice")
+
+    def _close_quiet_notice(self):
+        self._quiet_notice_id = None
+        win = getattr(self, "_quiet_win", None)
+        self._quiet_win = None
+        if win is not None:
+            try:
+                self._stop_follow(win)
+                win.destroy()
+            except Exception:
+                pass
+
     def _add_quiet_app(self):
         """把当前前台程序加进免打扰名单（打游戏时懒得手改 settings.json）。"""
         _title, exe = get_foreground_app()
@@ -7816,6 +7960,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self.root.after(4000, self._clip_loop)
         # 前台程序感知（主动评论）
         self.root.after(6000, self._foreground_loop)
+        # 免打扰状态机（进入时提示 + 折叠，退出时展开）
+        self.root.after(QUIET_POLL_MS, self._quiet_loop)
         # 使用时长采样（记录窗口使用时长）
         self.root.after(5000, self._usage_loop)
         # 长时间无操作主动搭话

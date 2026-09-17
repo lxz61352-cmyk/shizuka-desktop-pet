@@ -47,6 +47,7 @@ def run(pet):
             import quiet_mode
             assert app._quiet_fullscreen is True and app._quiet_games is True
             assert app._quiet_apps==[] and app._tts_en_phonemes is False
+            assert app._quiet_fold is True and app._quiet_active is False
             assert isinstance(app._quiet_now(),str)
             assert quiet_mode.quiet_reason('Overwatch','Overwatch.exe',False)=='Overwatch'
             assert quiet_mode.quiet_reason('Visual Studio Code','Code.exe',False)==''

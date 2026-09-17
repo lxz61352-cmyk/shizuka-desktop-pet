@@ -185,7 +185,8 @@
 - **内容去重**：`_proactive_recent_ok` / `_proactive_remember`（`dialogue_grounding`）记住最近 20 条主动发言，新句子与最近 6 条完全重复、互相包含、或字符二元组重合度 ≥0.7 就丢弃。
 - **免打扰（`quiet_mode.py`）**：`DeskPet._quiet_now()` 返回理由字符串（'' = 可以说话），结果缓存 `QUIET_CACHE_SEC`=3 秒——它挂在每秒都在跑的粘贴板循环上。判定顺序：`quiet_apps` 用户名单 → 常见游戏进程（`GAME_EXES`）→ 前台窗口铺满整块屏幕（`foreground_is_fullscreen()`，允许 8px 误差、排除桌面 shell 和**自己进程**的窗口）。开关是 `settings.json` 的 `quiet_fullscreen`/`quiet_games`（都默认 true）+ `quiet_apps` 名单，菜单在「更多设置 › 免打扰」，可以把当前程序一键加进名单。
   - 闸门只有三处（都在 `_quiet_now()` 为真时直接返回，**不做模型调用**）：`dialogue_grounding._passive_allowed()`（覆盖 `PASSIVE_SOURCES` 的全部被动发言 + 主动搭话 + 前台评论 + 开机问候）、`_deliver_passive()`、`pet._clip_loop()`（剪贴板文本/图片反应整体跳过，免得弹窗打断全屏游戏）、`assistant_features._deliver_research_alert()`（攒着，30 秒轮询会在退出游戏后补播；用户在聊天里主动问时 `force=True` 不受限）。
-  - **不管的地方**：用户自己发的消息、**待办提醒**（用户设的承诺，宁可吵也别漏），以及 `valid_if` 之类的直投。要改成「游戏时连提醒也攒着」就得给提醒加个延迟队列（现在没有，`say` 返回 False 就丢了）。
+  - **不管的地方**：用户自己发的消息（`_ask_model` 与微信通道都没有免打扰判断）、**待办提醒**（用户设的承诺，宁可吵也别漏），以及 `valid_if` 之类的直投。要改成「游戏时连提醒也攒着」就得给提醒加个延迟队列（现在没有，`say` 返回 False 就丢了）。
+  - **状态机**：`_quiet_loop`（`QUIET_POLL_MS`=2 秒）→ `_quiet_tick`：连续安静 `QUIET_SETTLE_SEC`=4 秒才 `_enter_quiet()`（切个窗口、alt-tab 看一眼不算），退出后要连续不安静 `QUIET_RESUME_SEC`=10 秒才 `_exit_quiet()`，所以来回切游戏不会折来折去。进入时 `_quiet_notice("进入免打扰模式")` 弹一个不出声、不进记录的气泡，`QUIET_FOLD_DELAY_MS`=1.6 秒后再 `hide(side=_nearest_edge_side())` 折叠到更近的那侧屏幕边——**先收掉气泡再折**，气泡是跟着桌宠走的，不然会一起飞出屏幕；折叠用现成的 `hide()`/`restore()`，所以顺带享受「折叠时不弹提醒、拉出来补说」和「按 `tts_release` 释放语音服务省显存」。用户中途自己点开折叠的头像（`_peek_press`）会把 `_quiet_folded` 清掉，这次免打扰就不再折回去。开关：`settings.json` 的 `quiet_fold`（菜单「进入时自动折叠」）。
 
 ---
 
