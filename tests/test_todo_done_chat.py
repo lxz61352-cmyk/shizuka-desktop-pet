@@ -11,13 +11,19 @@ import todo_reply  # noqa: E402
 
 class ClaimTests(unittest.TestCase):
     def test_natural_completion_phrases(self):
-        for text in ("收到，已经检查了喵", "已经喝了水了喵", "已完成", "搞定了", "看完了",
+        for text in ("收到，已经检查了喵", "已经喝了水了喵", "已经喝过水了喵", "水已经喝过了", "喝完水了",
+                     "已完成", "搞定了", "看完了", "我把报告交了", "报告已经提交了",
                      "我把 查看opencode运行状态 弄好了", "已经提前完成了那个待办"):
             self.assertIsNotNone(todo_reply.done_claim(text), text)
 
     def test_negatives_and_questions_are_not_claims(self):
         for text in ("还没做完", "没检查", "我完成了吗", "搞定了吧", "今天天气不错",
                      "一会儿再弄", "打算明天做", "不用提醒了"):
+            self.assertIsNone(todo_reply.done_claim(text), text)
+
+    def test_plans_are_not_completions(self):
+        # 「我要喝水了」「准备去交了」是打算做，别当成做完了
+        for text in ("我要喝水了", "我去喝水了", "我该喝水了", "该检查了", "准备喝水了", "准备把报告交了"):
             self.assertIsNone(todo_reply.done_claim(text), text)
 
     def test_strong_claim_only_for_finish_phrases(self):
@@ -83,6 +89,18 @@ class DoneFromChatTests(unittest.TestCase):
         reply = stub._todo_done_from_chat("已经喝了水了喵")
         self.assertIn("喝水", reply)
         self.assertEqual(stub.completed, [("t1", True)])
+
+    def test_water_case_with_object_inside(self):
+        # 真实踩到的那句：宾语插在动词和「了」中间
+        stub = _Stub([_todo("t1", "喝水")])
+        reply = stub._todo_done_from_chat("已经喝过水了喵")
+        self.assertIn("喝水", reply)
+        self.assertEqual(stub.completed, [("t1", True)])
+
+    def test_plan_to_drink_does_not_complete(self):
+        stub = _Stub([_todo("t1", "喝水")])
+        self.assertIsNone(stub._todo_done_from_chat("我要喝水了"))
+        self.assertEqual(stub.completed, [])
 
     def test_ordinary_chat_is_untouched(self):
         stub = _Stub([_todo("t1", "喝水")])
