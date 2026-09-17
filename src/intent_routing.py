@@ -28,7 +28,7 @@ def local_intent(text):
     # 注意：这里没命中的一律直接当 chat（不走模型路由器），所以「使用时长」这类词必须列进来。
     if research_question(text):
         return {'action': 'research'}
-    if not re.search(RESOURCE + r'|待办|提醒|记忆|记住|记得|论文|研究进展|进展|文献|完成|做完'
+    if not re.search(RESOURCE + r'|待办|提醒|记忆|记住|记得|论文|研究进展|进展|文献|完成|做完|搞定|弄完|弄好|做好了'
                      r'|使用时长|窗口时长|窗口使用|使用统计|时长统计|用了多久|用了多长时间'
                      r'|用了哪些|用了什么|都在忙什么|忙了些什么'
                      r'|天气|气温|温度|下雨|下雪|带伞|冷不冷|热不热|穿什么|穿衣|多少度'
@@ -50,6 +50,8 @@ def router_prompt(text):
             'action只能为chat/query_todo/delete_todo/complete_todo/research/computer_task/add_todo/usage_report/weather/news。'
             '普通聊天、能力咨询、操作方法、假设和引用均chat；明确本地文件读写、查找、整理任务为computer_task；'
             '询问待办query_todo；明确删除或完成待办用delete_todo/complete_todo；'
+            '用户说某件事已经做完、做好、搞定、检查过了（如「收到，已经检查了」「已经喝了水了」），'
+            '而这件事对得上现有待办时用 complete_todo，content 填他说的那件事（没点名就用他的原话）；'
             '请求查最新研究论文用research；'
             '设置新待办用add_todo：content 填去掉「提醒我/记一下/帮我」等前缀后的事项本身（如“晾衣服”“给妈妈打电话”），'
             'content_clear 为 true；只说时间没说做什么（如“提醒我明天9点”）则 content 留空、content_clear 为 false。'

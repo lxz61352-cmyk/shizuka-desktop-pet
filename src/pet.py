@@ -3386,6 +3386,11 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if completed_reply is not None:
             self._log_chat('user',text,kind='todo');self._cancel_reply()
             self.say(completed_reply,source='待办操作');return
+        # 聊天里说「我完成了 / 已经检查了 / 已经喝了水了」：认出对应待办标完成并停提醒（本地判断）
+        done_reply=self._todo_done_from_chat(text)
+        if done_reply is not None:
+            self._log_chat('user',text,kind='todo');self._cancel_reply()
+            self.say(done_reply,source='待办操作');return
         if text.strip() in ('/停止','/stop','停止任务','取消任务') and getattr(self,'_computer_cancel',None):
             self._cancel_computer_task();self.say('好，这项任务先停在这里。',source='文件任务');return
         todo_text=todo_command(text)
@@ -3833,10 +3838,14 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
 
     def _apply_todo_action(self, todo, mode):
         if mode == "complete":
-            for it in self.todos:
-                if it["id"] == todo["id"]:
-                    it["done"] = True
-            self._save_todos()
+            try:
+                # 走和待办窗口勾选同一条路：取消没发出的提醒、周期待办推到下一次、刷新列表
+                self._todo_complete_or_restore(todo, True)
+            except Exception:
+                for it in self.todos:
+                    if it["id"] == todo["id"]:
+                        it["done"] = True
+                self._save_todos()
             self.say("好，完成啦：%s" % todo.get("text", ""))
         else:
             self.todos = [it for it in self.todos if it["id"] != todo["id"]]

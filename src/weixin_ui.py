@@ -119,6 +119,11 @@ class WeixinMixin:
         if completion is not None:
             self._log_chat('user',text,kind='weixin_todo');self._log_chat('assistant',completion,kind='weixin_todo')
             return completion
+        # 微信里说「我完成了 / 已经检查了」：同样要认出来标完成，别只当闲聊
+        done=self._weixin_todo_done(text,cancel)
+        if done is not None:
+            self._log_chat('user',text,kind='weixin_todo');self._log_chat('assistant',done,kind='weixin_todo')
+            return done
         from todo_model import command as todo_command
         todo_text=todo_command(text)
         if todo_text is not None:

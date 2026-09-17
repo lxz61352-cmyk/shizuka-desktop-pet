@@ -23,6 +23,11 @@ def run(pet):
             checks.append('Original character packs, rendering and local expressions')
             app.show_todos();app.root.update();app._todo_new();app.root.update()
             checks.append('Todo list and date/time editor open')
+            # 聊天里说「我完成了」要能标完成（本地判断，不调模型）
+            import todo_reply
+            assert todo_reply.done_claim('收到，已经检查了喵') and not todo_reply.done_claim('还没做完')
+            assert todo_reply.match_score(todo_reply.todo_core('检查dsh状态'),'收到，已经检查了喵')>=2
+            assert todo_reply.match_score(todo_reply.todo_core('喝水'),'已经喝了水了喵')>=2
             app._log_chat('assistant','这篇研究发表于《Fixture Journal》。',kind='proactive')
             app._log_chat('user','继续说说这篇研究。',kind='user')
             messages=app._recent_messages(current_text='继续说说这篇研究。',channel='desktop')
