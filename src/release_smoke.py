@@ -43,6 +43,21 @@ def run(pet):
             menu=tk.Toplevel(app.root);app._menu_marks={};app._submenus=[];app._submenu=None
             app._build_more_settings(menu,1);app.root.update()
             assert app._idle_minutes==5 and app._sound_mode=='todo-files'
+            # 免打扰开关与语音新选项：默认「全屏/游戏时安静」，英文音素默认关闭
+            import quiet_mode
+            assert app._quiet_fullscreen is True and app._quiet_games is True
+            assert app._quiet_apps==[] and app._tts_en_phonemes is False
+            assert isinstance(app._quiet_now(),str)
+            assert quiet_mode.quiet_reason('Overwatch','Overwatch.exe',False)=='Overwatch'
+            assert quiet_mode.quiet_reason('Visual Studio Code','Code.exe',False)==''
+            # 朗读停顿分级：段落 > 句末 > 逗号/半句，标题前最短
+            assert (pet._tts_gap('句子。')==pet.TTS_SENTENCE_GAP_MS
+                    and pet._tts_gap('半句，')==pet.TTS_PAUSE_COMMA_MS
+                    and pet._tts_gap('没有标点')==pet.TTS_HALF_GAP_MS
+                    and pet._tts_gap('这一段的最后一句。',block_end=True)==pet.TTS_PARAGRAPH_GAP_MS
+                    and pet._tts_gap('前一句。','《A Title》')==pet.TTS_TITLE_GAP_MS)
+            segments=pet._tts_segments('第一段够长的一句话。\n第二段也够长的一句话。')
+            assert [block for _piece,block in segments]==[True,False]
             menu.destroy()
             checks.append('Compact settings, five-minute default and notification sound policy')
             app.show_research();app.root.update()

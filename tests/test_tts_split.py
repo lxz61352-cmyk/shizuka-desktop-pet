@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT / "src"))
 import pet  # noqa: E402
 
 
-ALERT = ("主人，我看到一条与您课题相关的新文献。\n"
+ALERT = ("我看到一条与您课题相关的新文献。\n"
          "Deep Learning for Solving Partial Differential Equations\n"
          "发表于《Journal of Computational Physics》。\n"
          "\n"
@@ -98,21 +98,60 @@ class _Speaker:
         self.calls.append((text, gap_ms))
 
 
+class PauseTests(unittest.TestCase):
+    def test_gap_by_punctuation(self):
+        self.assertEqual(pet._tts_gap("这一句结束了。"), pet.TTS_SENTENCE_GAP_MS)
+        self.assertEqual(pet._tts_gap("前面这半句，"), pet.TTS_PAUSE_COMMA_MS)
+        self.assertEqual(pet._tts_gap("半句没有标点"), pet.TTS_HALF_GAP_MS)
+        self.assertEqual(pet._tts_gap("这一段的最后一句。", block_end=True), pet.TTS_PARAGRAPH_GAP_MS)
+
+    def test_gap_before_title_is_shortest(self):
+        self.assertEqual(pet._tts_gap("前面这句。", following="《A Long Title》"), pet.TTS_TITLE_GAP_MS)
+        # 标题规则优先于段落规则
+        self.assertEqual(pet._tts_gap("这一段。", following="Deep Learning for PDEs", block_end=True),
+                         pet.TTS_TITLE_GAP_MS)
+
+    def test_segments_mark_paragraph_ends(self):
+        segments = pet._tts_segments("第一段够长的一句话。\n第二段也够长的一句话。")
+        self.assertEqual([piece for piece, _ in segments],
+                         ["第一段够长的一句话。", "第二段也够长的一句话。"])
+        self.assertEqual([block for _, block in segments], [True, False])
+
+    def test_single_segment_is_not_a_paragraph_break(self):
+        segments = pet._tts_segments("只有一句话，但也就这样了。")
+        self.assertEqual([block for _, block in segments], [False])
+
+
 class SpeakGapTests(unittest.TestCase):
     def test_piece_before_title_gets_shorter_gap(self):
         stub = _Speaker()
         pet.DeskPet._speak(stub, ALERT)
         gaps = {text: gap for text, gap in stub.calls if text}
-        lead = "主人，我看到一条与您课题相关的新文献。"
+        lead = "我看到一条与您课题相关的新文献。"
         self.assertEqual(gaps[lead], pet.TTS_TITLE_GAP_MS)
+        # 标题独占一行，它后面是另起一段 → 段落停顿
+        self.assertEqual(gaps["Deep Learning for Solving Partial Differential Equations"],
+                         pet.TTS_PARAGRAPH_GAP_MS)
         # 其余段用默认句末停顿；结尾是结束标记
-        self.assertIsNone(gaps["这篇把网络当算子来学，和您手上的数值解路线能对照着看。"])
+        self.assertEqual(gaps["这篇把网络当算子来学，和您手上的数值解路线能对照着看。"],
+                         pet.TTS_SENTENCE_GAP_MS)
         self.assertEqual(stub.calls[-1], (None, None))
 
-    def test_no_title_no_short_gap(self):
+    def test_every_segment_gets_an_explicit_gap(self):
         stub = _Speaker()
-        pet.DeskPet._speak(stub, "今天天气不错。要不要出去走走？")
-        self.assertTrue(all(gap is None for _, gap in stub.calls))
+        pet.DeskPet._speak(stub, "今天天气是真的不错。要不要一起出去走走？")
+        spoken = [gap for text, gap in stub.calls if text]
+        self.assertEqual(len(spoken), 2)
+        self.assertTrue(all(gap is not None for gap in spoken))
+
+    def test_stream_gaps_follow_the_terminator(self):
+        stub = _Speaker()
+        text = "第一句话已经够长了。第二句话也已经够长了。\n第三句话同样够长一些。"
+        pet.DeskPet._speak_stream(stub, text, 0)
+        gaps = [gap for _, gap in stub.calls]
+        # 换行紧跟句末标点时，换行自己会变成一个空片段被丢掉 —— 段落停顿要算在它前面那句上
+        self.assertEqual(gaps[:3], [pet.TTS_SENTENCE_GAP_MS, pet.TTS_PARAGRAPH_GAP_MS,
+                                    pet.TTS_SENTENCE_GAP_MS])
 
 
 class StreamTests(unittest.TestCase):

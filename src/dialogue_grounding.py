@@ -147,6 +147,10 @@ class GroundingMixin:
         return hashlib.sha256(json.dumps(rows,ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
     def _passive_allowed(self,gap=None,ignore_user=False):
+        # 免打扰（前台在打游戏/看全屏）：主动搭话、剪贴板点评、开机问候一律先攒着
+        check=getattr(self,'_quiet_now',None)
+        if check is not None and check():
+            return False
         last=getattr(self,'_last_passive_at',-1e9)
         if not ignore_user:
             last=max(last,getattr(self,'_last_user_dialogue_at',-1e9))
@@ -171,5 +175,7 @@ class GroundingMixin:
             self._last_passive_at=time.monotonic();return True
 
     def _deliver_passive(self,text,source,snapshot):
+        check=getattr(self,'_quiet_now',None)
+        if check is not None and check():return   # 免打扰：先不说
         if text and snapshot==self._passive_snapshot() and self.visible and not self._is_speaking():
             self.say(text,source=source)

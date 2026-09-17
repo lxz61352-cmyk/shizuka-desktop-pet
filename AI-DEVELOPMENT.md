@@ -80,6 +80,7 @@
 | `src/weixin_channel.py`、`weixin_ui.py` | 微信绑定、收发、识图、远程指令 |
 | `src/research_watch.py`、`assistant_features.py` | 文献筛选（关注方向输入、检索、阅读、聊天汇报）与「更多设置」二级菜单 |
 | `src/paper_reader.py` | 读复制来的论文链接：DOI→Crossref、arXiv→摘要页、普通网页→citation_* 元数据与正文摘录；读不到只回理由 |
+| `src/quiet_mode.py` | 免打扰判定：前台全屏窗口 / 常见游戏进程 → 静香不主动说话（探测失败一律当作可以说话） |
 | `src/sync_*.py` | 双端记忆/聊天/待办同步（签名 journal、设备身份、冲突记录） |
 | `src/character_packs.py`、`character_persona.py` | 角色包校验与路径限制、人设卡读取 |
 | `src/layered_renderer.py`、`local_mesh.py`、`pet_motion.py`、`pet_triggers.py`、`pet_ground.py`、`pet_surfaces.py` | 局部网格变形、弹簧/单摆、动作触发、重力与窗口承接 |
@@ -137,6 +138,9 @@
 - 应用保留语音能力（`VOICE_ENABLED = True`）。是否可用取决于**本机有没有装 GPT-SoVITS**：`gsv_dir()/gsv_available()/gsv_py()` 先看环境变量 `GSV_DIR`/`GPTSOVITS_DIR`/`GPT_SOVITS_DIR`，再看 `settings.json` 的 `gsv_dir`，再在常见根目录找 `*GPT-SoVITS*`；判定标准是「有 `runtime\python.exe` 且有 `api_v2.py`」。
 - 服务：TTS 走 `http://127.0.0.1:9880/tts`（`api_v2.py` + `tts_infer_pet.yaml`），语义检索服务 9881。`_ensure_tts_server` / `_ensure_emb_server` 后台拉起；**健康检查**：TTS 请求超时自动杀进程重拉，语义服务卡死由主循环重拉（否则会「端口开着但不出声」）。
 - 流水线：`_tts_synth` → `_speak`/`_speak_stream`/`_tts_enqueue`/`_tts_producer`/`_tts_loop`；`_voice_type_*` 让文字按朗读时长逐字出；`_startup_gate` 未就绪先显示「语音服务加载中…」（最多等 4 分钟）。
+- **分段与停顿**：`_tts_segments()` 切段（同时标出「这一段是不是整段末尾」），`_tts_split()` 只是它的取文本版；停顿由 `_tts_gap(piece, following, block_end)` 分级——下一段是标题 `TTS_TITLE_GAP_MS`=130 < 逗号 `TTS_PAUSE_COMMA_MS`=120/半句 `TTS_HALF_GAP_MS`=160 < 句末 `TTS_SENTENCE_GAP_MS`=220 < 另起一段 `TTS_PARAGRAPH_GAP_MS`=340。停顿跟着分段进队列（`_tts_enqueue(text, gap_ms)` → 3 元组 → `_synth_q` 7 元组），`_tts_loop` 按段取。流式那边没有分段元信息，所以靠「句末标点后面紧跟换行」判断段落（换行自己会变成空片段被丢掉，不能只看 `c == "\n"`）。
+- **外语片段**：`settings.json` 的 `voice_en_phonemes`（菜单「英文按英文念」，默认关）打开后，`_text_lang(text) == "foreign"` 的片段改用 `text_lang="en"` 合成——中文音素碰整行拉丁文常常读不出东西；英文音素是否可用取决于对方的 GPT-SoVITS 安装，所以默认关、失败了也只是这一段没声音。
+- **暖机当健康检查**：`_preheat_tts()` 用 `TTS_WARM_TIMEOUT`=15 秒合成一句短的（不是默认 120 秒），超时会被 `_tts_synth` 判成「端口开着但不响应」→ `_restart_stuck_tts_server()` 重启，再等一轮（`_wait_tts_port`）。教训：桌宠被强杀时会把服务留在「占着端口不响应」的状态，之后所有合成都要白等 120 秒。
 - 参考音色 `assets/voice_ref1.wav` 随包；GPT-SoVITS 本体约 14GB，不随包发布。
 
 ### 8. 背景音乐「i wanna」与旋转唱片
@@ -168,7 +172,6 @@
 - **同步**：`sync_runtime/sync_client/sync_store/sync_transport/sync_rustdesk/...` 用签名 journal、独立设备身份、幂等事件；默认每 3 小时（`memory_interval_seconds`，60~604800 秒）轻量检查，另有手动同步。`SyncStore` 现在有**压实**：`compact()` 把当前状态写成快照表、并把已压实的事件搬进 `events_archive` 冷表，本地读只回放「快照 + 基线之后的热事件」；`bundle()`/`conflicts()` 仍读**完整历史**（热表 ∪ 归档表），所以信封格式没变、对端不缺历史、冲突检测也不退化。`SyncBridge` 每 200 次提交检查一次（`maybe_compact()`，阈值 `COMPACT_AFTER_EVENTS=5000`），失败只记在 `status()['compact_error']`、不影响保存。实测 2 万条记录 `rows()` 从 221ms 降到 48ms。
 
 ### 12. 线程 / 锁 / 设置 / 凭据
-
 - 后台线程统一经主线程队列 `_ui`/`_poll_ui` 操作 Tk。锁：`_FILE_LOCK`（文件写）、`_hist_lock`、`_chat_lock`、`_MCI_LOCKS`（每别名一把）、`_render_lock`、`get_client`/`get_memory` 双检锁。
 - 设置持久化在 `data/settings.json`（`_save_settings` 写的是**显式字段字典**，新增设置项要同时改 `load_settings` 和 `_save_settings`）。
 - API Key 存 **Windows 凭据管理器**（`_cred_write`/`_cred_read`，目标 `ShizukaDeskPet/api_key`；读取时 `ShizukaAssistant/api_key` 也认，兼容 0.7.6 改过的名字），**程序目录不留 Key 文件**；旧 `api_key.txt` 首次启动自动迁移并删除。
@@ -180,6 +183,9 @@
 - **方向池**：`dialogue_style.PROACTIVE_DIRECTIONS`（角色包 `dialogue-style.json` 里的 `proactive_directions` 可整体覆盖）。触发时 `_pick_proactive_direction()` 按 `weight` 随机挑一个（同一方向不连续用两次），方向 + 事实一起进 `_proactive_prompt()`。默认权重：具体观察 30 / 实用提醒 20 / 相关小知识 15 / 承接上文 10 / 轻幽默 10 / 具体提问 10 / 安静陪伴 5。
 - **硬约束**：必须落到给到的具体信息（程序名 / 窗口标题 / 时间 / 最近聊过的话题），一个都落不上就返回空字符串（不说话）；禁止「哦，这是……」鉴定式起手、复述标题原文、编造与说教。
 - **内容去重**：`_proactive_recent_ok` / `_proactive_remember`（`dialogue_grounding`）记住最近 20 条主动发言，新句子与最近 6 条完全重复、互相包含、或字符二元组重合度 ≥0.7 就丢弃。
+- **免打扰（`quiet_mode.py`）**：`DeskPet._quiet_now()` 返回理由字符串（'' = 可以说话），结果缓存 `QUIET_CACHE_SEC`=3 秒——它挂在每秒都在跑的粘贴板循环上。判定顺序：`quiet_apps` 用户名单 → 常见游戏进程（`GAME_EXES`）→ 前台窗口铺满整块屏幕（`foreground_is_fullscreen()`，允许 8px 误差、排除桌面 shell 和**自己进程**的窗口）。开关是 `settings.json` 的 `quiet_fullscreen`/`quiet_games`（都默认 true）+ `quiet_apps` 名单，菜单在「更多设置 › 免打扰」，可以把当前程序一键加进名单。
+  - 闸门只有三处（都在 `_quiet_now()` 为真时直接返回，**不做模型调用**）：`dialogue_grounding._passive_allowed()`（覆盖 `PASSIVE_SOURCES` 的全部被动发言 + 主动搭话 + 前台评论 + 开机问候）、`_deliver_passive()`、`pet._clip_loop()`（剪贴板文本/图片反应整体跳过，免得弹窗打断全屏游戏）、`assistant_features._deliver_research_alert()`（攒着，30 秒轮询会在退出游戏后补播；用户在聊天里主动问时 `force=True` 不受限）。
+  - **不管的地方**：用户自己发的消息、**待办提醒**（用户设的承诺，宁可吵也别漏），以及 `valid_if` 之类的直投。要改成「游戏时连提醒也攒着」就得给提醒加个延迟队列（现在没有，`say` 返回 False 就丢了）。
 
 ---
 

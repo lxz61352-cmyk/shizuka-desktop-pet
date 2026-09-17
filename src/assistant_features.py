@@ -41,11 +41,13 @@ class AssistantFeaturesMixin:
         self._add_menu_speed(sub, W, level)
         self._menu_separator(sub)
         self._add_menu_voice(sub, W)
+        self._add_menu_en_phonemes(sub, W)
         self._add_menu_item(sub, "配置语音（GPT-SoVITS）…", self._pick_gsv_dir, W)
         if self._voice_on:
             self._add_menu_tts_release(sub, W, level)
         self._add_idle_interval(sub)
         self._menu_separator(sub)
+        self._add_menu_quiet(sub, W, level)
         for text, attr in [('检测剪贴板', '_clip_on'), ('翻译剪贴板', '_translate_on'), ('开机问候', '_greeting_on'),
                            ('开机待办提醒', '_summary_on'), ('记录窗口使用时长', '_usage_on'),
                            ('角色动态', '_animation_on'), ('自动小动作', '_ambient_actions_on'),
@@ -101,6 +103,9 @@ class AssistantFeaturesMixin:
     def _deliver_research_alert(self,force=False):
         """播报还没通知过的文献；force=True 表示用户在聊天里主动问了，这时不看「主动提醒」开关。"""
         if not RESEARCH_ENABLED or getattr(self,'_quitting',False):return
+        # 免打扰（前台在打游戏/看全屏）：攒着，等退出游戏再播报（30 秒轮询会重试）
+        quiet=getattr(self,'_quiet_now',None)
+        if not force and quiet is not None and quiet():return
         if ((force or self._research.profile.get("enabled",True)) and not self._research_running
                 and self.visible and not self._actions_busy(time.monotonic())):
             alert=next((r for r in self._research.state["alerts"] if not r.get("notified")),None)

@@ -38,6 +38,7 @@ from PIL import Image, ImageTk, ImageChops
 import pystray
 from pystray import Menu, MenuItem
 from character_packs import discover_packs, selected_pack
+import quiet_mode
 from character_persona import character_name, dialogue_option, load_character_persona
 from layered_renderer import LayeredRenderer
 from pet_motion import MotionController
@@ -285,9 +286,13 @@ VOICE_REF_TXT = os.path.join(ASSETS_DIR, "voice_ref1.txt")     # 参考音频的
 VOICE_API = "http://127.0.0.1:9880/tts"                        # 本地 GPT-SoVITS TTS API
 VOICE_ENABLED = True           # 应用本身保留语音功能；是否可用取决于本机有没有装 GPT-SoVITS
 VOICE_VOLUME = 850             # 语音朗读 MCI 音量 0-1000
-TTS_SENTENCE_GAP_MS = 220      # 语音分段之间保留的句末停顿（毫秒），避免听起来太赶
+TTS_SENTENCE_GAP_MS = 220      # 句末停顿（毫秒），避免各句听起来黏在一起
+TTS_PAUSE_COMMA_MS = 120       # 逗号/顿号处的停顿：比句末短，接得快一点
+TTS_PARAGRAPH_GAP_MS = 340     # 换行（另起一段）之间的停顿：最长，听起来才是段落
+TTS_HALF_GAP_MS = 160          # 被长度切开的半句：给一点点气口就行
 TTS_TITLE_GAP_MS = 130         # 标题前那一段的停顿：比句末停顿短一点，接标题时更自然
 TTS_TITLE_MAX = 200            # 标题单独成段时允许的长度，再长才按词边界切开
+TTS_WARM_TIMEOUT = 15          # 暖机/健康检查的合成超时：卡死的服务要早点发现，别等 120 秒
 TTS_TEXT_SPEEDUP = 1.12        # 有语音时文字比朗读稍快一点（倍数），避免字比声慢半拍
 
 # 背景音乐「i wanna」：放在 assets 里，用独立的 MCI 别名播放，可与语音/提示音同时存在
@@ -444,14 +449,11 @@ def _cut_point(seg, limit, min_len):
     return cut
 
 
-def _tts_split(text, min_len=10, max_len=45):
-    """把一段文字切成适合合成/逐句显示的片段。
+def _tts_segments(text, min_len=10, max_len=45):
+    """把一段文字切成适合合成/逐句显示的片段，并标出它是不是一整段（换行）的末尾。
 
-    - 网址（http/https/www）不送语音；整段只有网址就直接丢掉。
-    - 换行是硬边界：写在独立一行的标题/结论，不会跟前后句粘在一起。
-    - 像标题的片段（书名号，或整行外文）**单独成段**：长标题宁可自己占一轮气泡，
-      也不按字数从中间劈开——「标题显示成两半」就是这么来的。
-    - 其余按句末标点切；过短的往后并；过长的优先在标点/空格处切开。
+    返回 [(片段, 段末)]；段末为 True 表示下一片段另起了一段，停顿该长一点。
+    详细规则见 `_tts_split`。
     """
     text = _strip_urls(text).strip()
     if not text:
@@ -461,28 +463,59 @@ def _tts_split(text, min_len=10, max_len=45):
         line = line.strip()
         if not line:
             continue
-        for piece in re.split(r"(?<=[。！？!?…])", line):
-            piece = piece.strip()
-            if piece:
-                units.append((piece, _looks_like_title(piece)))
-    merged = []
-    for piece, title in units:
+        parts = [piece.strip() for piece in re.split(r"(?<=[。！？!?…])", line) if piece.strip()]
+        for index, piece in enumerate(parts):
+            units.append((piece, _looks_like_title(piece), index == len(parts) - 1))
+    merged = []      # [(文本, 是不是标题, 是不是这一行的末尾)]
+    for piece, title, line_end in units:
         previous = merged[-1] if merged else None
         if (not title and previous is not None and not previous[1]
                 and len(previous[0]) < min_len):
-            merged[-1] = (previous[0] + piece, False)
+            merged[-1] = (previous[0] + piece, False, line_end)
         else:
-            merged.append((piece, title))
-    out = []
-    for piece, title in merged:
+            merged.append((piece, title, line_end))
+    lines = []       # [(片段, 是不是这段的最后一片, 是不是这一行的末尾)]
+    for piece, title, line_end in merged:
         limit = TTS_TITLE_MAX if title else max_len
+        parts = []
         while len(piece) > limit:
             cut = _cut_point(piece, limit, min_len)
-            out.append(piece[:cut + 1].strip())
+            parts.append(piece[:cut + 1].strip())
             piece = piece[cut + 1:].strip()
         if piece:
-            out.append(piece)
-    return [s for s in out if s]
+            parts.append(piece)
+        for index, part in enumerate(parts):
+            lines.append((part, index == len(parts) - 1 and line_end))
+    return [(piece, block_end and index + 1 < len(lines))
+            for index, (piece, block_end) in enumerate(lines) if piece]
+
+
+def _tts_split(text, min_len=10, max_len=45):
+    """把一段文字切成适合合成/逐句显示的片段（只返回文本）。
+
+    - 网址（http/https/www）不送语音；整段只有网址就直接丢掉。
+    - 换行是硬边界：写在独立一行的标题/结论，不会跟前后句粘在一起。
+    - 像标题的片段（书名号，或整行外文）**单独成段**：长标题宁可自己占一轮气泡，
+      也不按字数从中间劈开——「标题显示成两半」就是这么来的。
+    - 其余按句末标点切；过短的往后并；过长的优先在标点/空格处切开。
+    """
+    return [piece for piece, _block in _tts_segments(text, min_len, max_len)]
+
+
+def _tts_gap(piece, following="", block_end=False):
+    """这一段念完之后停多久（毫秒）：标题前收短，另起一段最长，句末次之，逗号/半句最短。"""
+    if following and _looks_like_title(following):
+        return TTS_TITLE_GAP_MS
+    body = (piece or "").rstrip()
+    if not body:
+        return TTS_SENTENCE_GAP_MS
+    if block_end:
+        return TTS_PARAGRAPH_GAP_MS
+    if body[-1] in "。！？!?…":
+        return TTS_SENTENCE_GAP_MS
+    if body[-1] in "，,、；;：:":
+        return TTS_PAUSE_COMMA_MS
+    return TTS_HALF_GAP_MS
 
 
 GEAR_SIZE = 30                # 图标按钮基准大小（像素）
@@ -748,15 +781,19 @@ def load_settings():
                  "scale": None, "pos": None, "speed": "medium",
                 "api_base": DEFAULT_API_BASE, "api_model": DEFAULT_API_MODEL, "provider": "",
                 "idle_minutes": 5, "usage_track": True, "usage_away_min": USAGE_AWAY_MIN,
-                "voice": False, "tts_release": "1", "gsv_dir": "", "update_disabled": False}
+                "voice": False, "tts_release": "1", "gsv_dir": "", "update_disabled": False,
+                "quiet_fullscreen": True, "quiet_games": True, "quiet_apps": [], "voice_en_phonemes": False}
     data={}
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
-            for k in ("clipboard", "translate", "greeting", "summary", "voice", "animation", "ambient_actions", "land_on_windows", "update_disabled"):
+            for k in ("clipboard", "translate", "greeting", "summary", "voice", "animation", "ambient_actions", "land_on_windows", "update_disabled",
+                      "quiet_fullscreen", "quiet_games", "voice_en_phonemes"):
                 if k in data:
                     defaults[k] = bool(data[k])
+            if isinstance(data.get("quiet_apps"), list):
+                defaults["quiet_apps"] = [str(x) for x in data["quiet_apps"] if str(x).strip()]
             if data.get("sound_mode") in ("all", "todo", "none", "todo-files"):
                 defaults["sound_mode"] = data["sound_mode"]
             elif "sound" in data:   # 兼容旧版布尔开关
@@ -2258,6 +2295,13 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._sound_mode = self._settings.get("sound_mode", "todo")   # 提示音：all/todo/none
         self._clip_on = self._settings["clipboard"]
         self._translate_on = self._settings["translate"]
+        # 免打扰：前台是游戏/全屏程序时不主动说话（检测在 quiet_mode.py）
+        self._quiet_fullscreen = bool(self._settings.get("quiet_fullscreen", True))
+        self._quiet_games = bool(self._settings.get("quiet_games", True))
+        self._quiet_apps = [str(x) for x in (self._settings.get("quiet_apps") or []) if str(x).strip()]
+        self._quiet_reason_text = ""
+        self._quiet_checked_at = 0.0
+        self._tts_en_phonemes = bool(self._settings.get("voice_en_phonemes", False))
         self._greeting_on = self._settings["greeting"]
         self._summary_on = self._settings["summary"]
         self._speed = self._settings.get("speed", "medium")   # 显示速度：fast/medium/slow
@@ -4086,16 +4130,15 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
     # ================= 语音朗读（GPT-SoVITS 本地 API） =================
     def _speak(self, text):
         """整段朗读（非流式，如问候 / 提醒 / 待办确认）：按句切开逐句显示，再排结束标记。
-        标题前那一段用更短的停顿，接上标题更自然。"""
+        段末停顿按标点分级：另起一段最长，句末次之，逗号/半句更短；接标题前再收短一点。"""
         if not self._voice_on:
             return
         text = (text or "").strip()
         if text:
-            pieces = _tts_split(text)
-            for index, piece in enumerate(pieces):
-                following = pieces[index + 1] if index + 1 < len(pieces) else ""
-                gap = TTS_TITLE_GAP_MS if following and _looks_like_title(following) else None
-                self._tts_enqueue(piece, gap)
+            pieces = _tts_segments(text)
+            for index, (piece, block_end) in enumerate(pieces):
+                following = pieces[index + 1][0] if index + 1 < len(pieces) else ""
+                self._tts_enqueue(piece, _tts_gap(piece, following, block_end))
             self._tts_enqueue(None)
 
     def _speak_stream(self, acc, spoken, final=False):
@@ -4115,7 +4158,9 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 piece = _strip_urls(seg[start:i + 1]).strip()
                 # 太短的句子单独合成会平淡/没语调，攒够长度再送；够长就立刻送，别攒成一大段
                 if len(piece) >= 10:
-                    self._tts_enqueue(piece)
+                    # 句末紧跟着换行 = 这一段说完了（换行自己会成为一个空片段被丢掉），停顿给长一点
+                    next_char = seg[i + 1:i + 2]
+                    self._tts_enqueue(piece, _tts_gap(piece, block_end=(c == "\n" or next_char == "\n")))
                     start = i + 1
         return spoken + start
 
@@ -4563,8 +4608,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._emb_owned = False
         self._emb_spawn_cooldown = 0.0
 
-    def _tts_synth(self, text, out_path=None):
-        """合成一段文字，返回 (ok, wav路径, 时长秒)。"""
+    def _tts_synth(self, text, out_path=None, timeout=120):
+        """合成一段文字，返回 (ok, wav路径, 时长秒)。timeout 可以调短：暖机用它当健康检查。"""
         try:
             import urllib.request
             import urllib.parse
@@ -4576,15 +4621,19 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                         ref_txt = f.read().strip()
             except Exception:
                 ref_txt = ""
+            # 纯外文片段（论文题名之类）可以按英文音素念：中文音素碰到拉丁文常常读不出东西
+            text_lang = "zh"
+            if getattr(self, "_tts_en_phonemes", False) and _text_lang(text) == "foreign":
+                text_lang = "en"
             params = {
-                "text": text, "text_lang": "zh",
+                "text": text, "text_lang": text_lang,
                 "ref_audio_path": VOICE_REF_PATH,
                 "prompt_lang": "zh", "prompt_text": ref_txt,
                 "text_split_method": "cut5", "media_type": "wav", "streaming_mode": "false",
                 "temperature": 0.8, "top_k": 8, "top_p": 0.9,   # 略降随机性，语调更稳
             }
             url = VOICE_API + "?" + urllib.parse.urlencode(params)
-            with urllib.request.urlopen(url, timeout=120) as r:
+            with urllib.request.urlopen(url, timeout=timeout) as r:
                 data = r.read()
             if not data:
                 return False, None, 0.0
@@ -4616,22 +4665,40 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         except Exception:
             pass
 
+    def _wait_tts_port(self, seconds=60):
+        """等语音服务的端口开起来（服务加载中端口还没开）。返回是否就绪。"""
+        deadline = time.monotonic() + max(1, seconds)
+        while time.monotonic() < deadline:
+            if not self._voice_on:
+                return False
+            if self._tts_port_open():
+                return True
+            time.sleep(1)
+        return False
+
     def _preheat_tts(self):
-        """服务就绪后先合成一句短的暖机（首次推理明显更慢）。"""
-        try:
+        """服务就绪后先合成一句短的暖机（首次推理明显更慢）。
+
+        顺便当健康检查：端口开着不等于服务好用——被强杀留下半截请求的服务会一直占着端口不响应。
+        所以这次暖机用短超时（TTS_WARM_TIMEOUT），超时会被 `_tts_synth` 判成卡死并重启服务，
+        这里再等一次（新服务加载要十几秒），最多两轮，免得白等 120 秒。
+        """
+        if not self._voice_on:
+            return
+        for attempt in range(2):
             if not self._voice_on:
                 return
-            for _ in range(60):   # 等端口就绪（服务加载中端口还没开）
-                if not self._voice_on:
-                    return
-                if self._tts_port_open():
-                    break
-                time.sleep(1)
-            else:
+            if not self._wait_tts_port(60 if attempt == 0 else 45):
                 return
-            self._tts_synth("你好呀。", out_path=os.path.join(DATA_DIR, "_tts_warm.wav"))
-        except Exception:
-            pass
+            try:
+                ok, _path, _dur = self._tts_synth(
+                    "你好呀。", out_path=os.path.join(DATA_DIR, "_tts_warm.wav"),
+                    timeout=TTS_WARM_TIMEOUT)
+            except Exception:
+                ok = False
+            if ok:
+                return
+            time.sleep(2)
 
     # ================= 背景音乐（i wanna） =================
     def _music_play(self):
@@ -5932,6 +5999,64 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._sound_mode = key
         self._save_settings()
 
+    def _add_menu_quiet(self, win, width=12, level=0):
+        """「免打扰」子菜单：前台是游戏/全屏程序时静香不主动说话。"""
+        def build(sub, lv):
+            def fill():
+                def row(text, mark, cmd):
+                    item = tk.Label(sub, text=(mark + " " if mark else "    ") + text, bg="#f0f0f0",
+                                    fg="#1a1a1a", padx=14, pady=4, anchor="w")
+                    item.pack(fill="x")
+                    item.bind("<Button-1>", lambda e: (cmd(), refresh()))
+                    item.bind("<Enter>", lambda e: self._cancel_hide_submenu())
+                    return item
+
+                def toggle(attr):
+                    setattr(self, attr, not getattr(self, attr, False))
+                    self._save_settings()
+                    self._quiet_checked_at = 0.0     # 立刻按新设置重新判断一次
+
+                row("全屏程序时安静", "✓" if self._quiet_fullscreen else "",
+                    lambda: toggle("_quiet_fullscreen"))
+                row("游戏进程时安静", "✓" if self._quiet_games else "",
+                    lambda: toggle("_quiet_games"))
+                tk.Frame(sub, bg="#c8c8c8", height=1).pack(fill="x", pady=3)
+                row("把当前程序加进名单", "", self._add_quiet_app)
+                row("清空名单（%d 个）" % len(self._quiet_apps), "", self._clear_quiet_apps)
+                tk.Label(sub, text=quiet_mode.status_text(self._quiet_now()), bg="#f0f0f0", fg="#777",
+                         padx=14, anchor="w", wraplength=210, justify="left").pack(fill="x", pady=(2, 4))
+
+            def refresh():
+                self._quiet_checked_at = 0.0
+                for child in sub.winfo_children():
+                    child.destroy()
+                fill()
+
+            fill()
+
+        self._add_menu_submenu(win, "免打扰", build, level=level, width=width)
+
+    def _add_menu_en_phonemes(self, win, width=16):
+        """英文片段按英文音素念（论文题名之类）。GPT-SoVITS 的中文音素碰到整行拉丁文常常读不出东西，
+        但英文音素是否可用要看它的安装；默认关闭，出问题不影响其他内容。"""
+        if not gsv_available():
+            return
+        row, lbl, mark = self._menu_row(win, "英文按英文念", width)
+        mark.config(text="✓" if self._tts_en_phonemes else "")
+
+        def toggle(e):
+            self._tts_en_phonemes = not self._tts_en_phonemes
+            self._save_settings()
+            try:
+                mark.config(text="✓" if self._tts_en_phonemes else "")
+            except Exception:
+                pass
+            self.say("英文片段以后按英文音素念。" if self._tts_en_phonemes
+                     else "英文片段还是照原来的念法。")
+
+        for w in (row, lbl, mark):
+            w.bind("<Button-1>", toggle)
+
 
 
     def _schedule_hide_submenu(self, level=1):
@@ -5986,6 +6111,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             "api_model": self._settings.get("api_model") or DEFAULT_API_MODEL,
             "provider": self._settings.get("provider") or "",
             "update_disabled": bool(getattr(self, "_update_disabled", False)),
+            "quiet_fullscreen": bool(getattr(self, "_quiet_fullscreen", True)),
+            "quiet_games": bool(getattr(self, "_quiet_games", True)),
+            "quiet_apps": list(getattr(self, "_quiet_apps", [])),
+            "voice_en_phonemes": bool(getattr(self, "_tts_en_phonemes", False)),
         }
         self._settings.update(data)
         with _FILE_LOCK:
@@ -6715,8 +6844,11 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             else:
                 if txt and txt != self._last_clip and len(txt) <= CLIP_MAX_CHARS:
                     self._last_clip = txt
+                    # 免打扰（前台在打游戏/看全屏）：不点评、不弹窗、不朗读，也不去调模型
+                    if self._quiet_now():
+                        pass
                     # 同一段内容（或它的加长/截短版）已经回应过就不再重复，等内容变了才说话
-                    if not self._clip_repeat('text', txt):
+                    elif not self._clip_repeat('text', txt):
                         route = _clip_route(txt)
                         if route == 'image-file':
                             # 复制的是图片文件（如 QQ/资源管理器里复制图片）→ 识图
@@ -6745,7 +6877,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                     if txt != self._last_clip:
                         self._last_clip = txt
                     # 无文本且剪贴板有变化 → 可能是图片（截图）。取图放后台，避免卡 UI
-                    if seq_changed and not txt:
+                    if seq_changed and not txt and not self._quiet_now():
                         threading.Thread(target=self._grab_and_recognize, daemon=True).start()
         except Exception:
             pass
@@ -7398,7 +7530,54 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         except Exception:
             pass
 
+    # ---------- 免打扰（前台是游戏/全屏时不主动说话） ----------
+    QUIET_CACHE_SEC = 3.0
+
+    def _quiet_now(self):
+        """现在该不该安静；返回理由字符串（'' = 可以说话）。
+
+        结果缓存几秒：这个方法挂在粘贴板/主动搭话这些每秒都在跑的循环上，
+        每个循环都去问一次系统没必要。检测失败一律当作「可以说话」。
+        """
+        now = time.monotonic()
+        if now - getattr(self, "_quiet_checked_at", 0.0) < self.QUIET_CACHE_SEC:
+            return getattr(self, "_quiet_reason_text", "")
+        title, exe = get_foreground_app()
+        fullscreen = bool(getattr(self, "_quiet_fullscreen", True)) and quiet_mode.foreground_is_fullscreen()
+        reason = quiet_mode.quiet_reason(
+            title, exe, fullscreen,
+            quiet_apps=getattr(self, "_quiet_apps", []),
+            games=bool(getattr(self, "_quiet_games", True)),
+            use_fullscreen=bool(getattr(self, "_quiet_fullscreen", True)))
+        self._quiet_checked_at = now
+        self._quiet_reason_text = reason
+        return reason
+
+    def _add_quiet_app(self):
+        """把当前前台程序加进免打扰名单（打游戏时懒得手改 settings.json）。"""
+        _title, exe = get_foreground_app()
+        name = (exe or "").strip()
+        if not name or name.lower() in ("python.exe", "pythonw.exe"):
+            return self.say("现在的前台程序看不出来是什么，先切到那个窗口再点一次吧。")
+        if name.lower() not in [x.lower() for x in self._quiet_apps]:
+            self._quiet_apps.append(name)
+            self._save_settings()
+            self._quiet_checked_at = 0.0     # 让下一次判断立刻生效
+        self.say("%s 以后不会被静香打扰了。" % name)
+
+    def _clear_quiet_apps(self):
+        self._quiet_apps = []
+        self._save_settings()
+        self._quiet_checked_at = 0.0
+        self.say("免打扰名单已经清空了。")
+
     def _check_foreground(self):
+        if self._quiet_now():
+            # 免打扰期间连模型都不问：切窗口这件事记下来就行，退出游戏后再说
+            title, exe = get_foreground_app()
+            if exe:
+                self._last_foreground = exe.lower()
+            return
         if not self._passive_allowed():return
         if not PROACTIVE_FOREGROUND:
             return
