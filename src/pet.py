@@ -574,7 +574,7 @@ _client_lock = threading.Lock()
 
 def _disable_thinking(cli):
     from api_runtime import configure_client
-    return configure_client(cli, api_base())
+    return configure_client(cli, api_base(), api_mode())
 
 
 # 模型（deepseek-flash）很爱用「哦，……啊」「呵呵，……」这类语气词起手，光靠提示词压不住，
@@ -779,7 +779,7 @@ def load_settings():
     """读取设置；文件缺失或损坏时用默认值。"""
     defaults = {"sound_mode": "todo-files", "animation":True,"ambient_actions":True,"land_on_windows":True,"feature_defaults_revision":0, "clipboard": True, "translate": True, "greeting": True, "summary": True,
                  "scale": None, "pos": None, "speed": "medium",
-                "api_base": DEFAULT_API_BASE, "api_model": DEFAULT_API_MODEL, "provider": "",
+                "api_base": DEFAULT_API_BASE, "api_model": DEFAULT_API_MODEL, "api_mode": "chat", "provider": "",
                 "idle_minutes": 5, "usage_track": True, "usage_away_min": USAGE_AWAY_MIN,
                 "voice": False, "tts_release": "1", "gsv_dir": "", "update_disabled": False,
                 "quiet_fullscreen": True, "quiet_games": True, "quiet_fold": True,
@@ -799,7 +799,7 @@ def load_settings():
                 defaults["sound_mode"] = data["sound_mode"]
             elif "sound" in data:   # 兼容旧版布尔开关
                 defaults["sound_mode"] = "todo" if bool(data["sound"]) else "none"
-            for k in ("scale", "pos", "position_dpi", "speed", "api_base", "api_model", "provider",
+            for k in ("scale", "pos", "position_dpi", "speed", "api_base", "api_model", "api_mode", "provider",
                       "character_pack", "tts_release", "gsv_dir"):
                 if k in data:
                     defaults[k] = data[k]
@@ -821,7 +821,7 @@ def load_settings():
     return defaults
 
 
-_api_cfg = {"base": DEFAULT_API_BASE, "model": DEFAULT_API_MODEL}
+_api_cfg = {"base": DEFAULT_API_BASE, "model": DEFAULT_API_MODEL, "mode": "chat"}
 
 
 def _valid_base_url(url, fallback):
@@ -835,11 +835,12 @@ def _valid_base_url(url, fallback):
 
 
 def refresh_api_cfg():
-    """从设置刷新接口地址/模型缓存。"""
+    """从设置刷新接口地址/模型/接口类型缓存。"""
     s = load_settings()
     _api_cfg["base"] = _valid_base_url(s.get("api_base"), DEFAULT_API_BASE)
-    from api_runtime import current_model
+    from api_runtime import current_model, normalize_mode
     _api_cfg["model"] = current_model(_api_cfg["base"], (s.get("api_model") or DEFAULT_API_MODEL).strip())
+    _api_cfg["mode"] = normalize_mode(s.get("api_mode"))
 
 
 def api_base():
@@ -848,6 +849,11 @@ def api_base():
 
 def api_model():
     return _api_cfg["model"]
+
+
+def api_mode():
+    """接口类型：chat（/v1/chat/completions）或 responses（/v1/responses）。"""
+    return _api_cfg.get("mode") or "chat"
 
 
 def is_first_run():
@@ -5258,19 +5264,23 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             pass
 
     def _detect_and_apply(self, key, status_cb=None):
-        """后台验证选定接口；过期验证结果不能覆盖新的设置。"""
+        """后台验证选定接口；过期验证结果不能覆盖新的设置。
+        验证完让桌宠自己说一句：用的是哪个模型、哪种接口（chat / response）、成没成。"""
         self._api_generation = getattr(self, "_api_generation", 0) + 1
         generation = self._api_generation
         base = self._settings.get("api_base") or DEFAULT_API_BASE
         model = api_model()   # 与运行时一致（DeepSeek 官方接口会归一成统一模型）
+        mode = api_mode()
         def work():
-            from api_runtime import probe_generation,probe_status
-            res = probe_generation(key,base,model)
+            from api_runtime import probe_generation,probe_status,probe_line
+            res = probe_generation(key,base,model,mode=mode)
+            line = probe_line(res)
 
             def apply():
                 if generation != self._api_generation:
                     return
-                if status_cb:status_cb(probe_status(res))
+                if status_cb:status_cb(line if res.get("ok") else line + "\n" + probe_status(res))
+                self.say(line)   # 说出来，用户才知道连的是哪种模型的哪种接口
             try:
                 self._ui(apply)
             except Exception:
@@ -5306,6 +5316,17 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 if label=='模型名称':
                     ttk.Combobox(win,textvariable=field,width=46,values=(DEEPSEEK_MODEL,)).pack(padx=20)
                 else:tk.Entry(win, textvariable=field, width=48).pack(padx=20)
+            # 接口类型：chat = /v1/chat/completions（默认）；response = /v1/responses（部分服务商不支持）
+            from api_runtime import API_MODES, mode_label, normalize_mode
+            tk.Label(win, text="接口类型", bg="#2b2b3a", fg="#e8e8f0").pack(pady=(10, 2))
+            mode_var = tk.StringVar(value=mode_label(api_mode()))
+            mode_box = ttk.Combobox(win, textvariable=mode_var, state="readonly", width=46,
+                                    values=[mode_label(m) for m in API_MODES])
+            mode_box.pack(padx=20)
+            tk.Label(win, text="chat = /v1/chat/completions（默认，兼容性最好）；"
+                              "response = /v1/responses（部分服务商没有这个接口）",
+                     bg="#2b2b3a", fg="#9a9ab0", font=("Microsoft YaHei", 9),
+                     wraplength=380, justify="left").pack(padx=20, pady=(2, 0))
             tk.Label(win, text="API Key：", bg="#2b2b3a", fg="#e8e8f0",
                      font=("Microsoft YaHei", 11)).pack(padx=20, pady=(18, 6))
             var = tk.StringVar(value=read_api_key())
@@ -5342,7 +5363,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 if key!=read_api_key() and not save_api_key(key):
                     set_status("保存失败（加密不可用），请重试")
                     return
-                self._settings.update(provider=provider.get(), api_base=base, api_model=model)
+                chosen_mode = normalize_mode({mode_label(m): m for m in API_MODES}.get(mode_var.get(), "chat"))
+                self._settings.update(provider=provider.get(), api_base=base, api_model=model, api_mode=chosen_mode)
                 self._save_settings()
                 refresh_api_cfg()
                 reset_client()
@@ -6136,6 +6158,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             "position_dpi": DISPLAY_DPI,
             "api_base": self._settings.get("api_base") or DEFAULT_API_BASE,
             "api_model": self._settings.get("api_model") or DEFAULT_API_MODEL,
+            "api_mode": api_mode(),
             "provider": self._settings.get("provider") or "",
             "update_disabled": bool(getattr(self, "_update_disabled", False)),
             "quiet_fullscreen": bool(getattr(self, "_quiet_fullscreen", True)),

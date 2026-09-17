@@ -214,6 +214,10 @@
 
 ## 六、版本历史（简）
 
+### 2026-09-18 — 未发版（待并入下个版本）
+
+**接口类型可选 chat / responses**：「模型与接口」窗口新增「接口类型」下拉（`settings.json` 的 `api_mode`，默认 `chat`），两种接口都由 `api_runtime` 的形状翻译层兜住，其他 OpenAI 兼容服务商同样适用；连上之后桌宠会自己说一句「现在使用的是 xxx 模型，chat/response api 哦，连接成功啦！／连接失败……」。详见「未解决／待验证」里的同条说明（含真机踩到的三个坑：reasoning 事件、thinking 字段在 responses 下失效、流式不支持时回退）。
+
 ### 2026-09-18 — V0.8.3
 
 语音：朗读停顿按标点分级（`_tts_segments`/`_tts_gap`，段落 340 / 句末 220 / 逗号 120 / 半句 160 / 标题前 130 ms），网址不进语音，标题单独占一轮气泡；新增 `voice_en_phonemes`（菜单「英文按英文念」，默认关，整行外文改 `text_lang=en`）；暖机改 15 秒短超时当健康检查，服务卡死会在启动阶段重启。免打扰（`src/quiet_mode.py` + `_quiet_loop`/`_quiet_tick`）：前台全屏或常见游戏进程时不主动发言、不点评剪贴板、不播报文献，进入时提示并自动折叠、退出后自动恢复，用户消息与待办提醒不受影响。研究进展：关注方向标签自动换行（`_flow_layout` 改 place 定位），聊天里问「最新进展」会汇报并补查（`_report_research`），复制论文网页/DOI 会解析并讲解（新增 `src/paper_reader.py`）。待办：聊天里回复完成会自动标完成并停提醒（`todo_reply._todo_done_from_chat`，认「喝过水了」这类宾语插在中间的写法），并修掉模型路由器那条完成路径不走 `_todo_complete_or_restore` 的问题。称呼：`dialogue_style.ADDRESS_STYLE` 压在角色卡之后，不再使用「主人」。
@@ -295,7 +299,9 @@
 
 - **研究进展已重新打开**：0.8.0 曾整体禁用（`RESEARCH_ENABLED=False`），现已改成 `True`，并补上了缺的那一环——**关注方向的输入界面**（原先窗口里只显示「关注方向：」后面一片空白，用户根本没法配方向）。现在流程是：输入框回车确认 → 写 `topics`（用户原话）+ `queries`（检索词）+ `query_for`（两者映射）→ 立刻检索一次。检索仍是 Crossref 按 45 天窗口筛新论文；**复制的论文网页会抓题名/摘要/正文摘录**（`paper_reader`），但**PDF 正文不解析**（`.pdf` 链接只换成摘要页，纯 PDF 直链直接说读不了）；`check_hours` 默认 6 小时、`enabled` 默认关闭（要用户勾「主动提醒」才自动查，在聊天里主动问不受这个开关限制）。
 - **角色包可切换（但界面里没有选择器）**：`character_packs.selected_pack()` 会读 `settings.json` 的 `character_pack`，**指定的包存在就用它**，不存在才回退到 `shizuka-side-motion`。内置两个包的 `character_id` 都是 `shizuka`，共用同一个数据目录，换包不会换记忆/聊天/待办。要在界面里做切换器，只要写这个设置项并重启即可（`shizuka-classic` 是 `static` 渲染器，`_do_wheel_apply`/`_animate_pet` 都有 `_animator is None` 的分支）。
-- **Responses API 未接**：`api_mode` / `_responses_via_chat` 在 0.7.4 有，0.7.6 重构后没移植。方案已确认：在 `api_runtime.configure_client` 里按 `api_mode` 分流，`_responses_via_chat` 用非流式 `responses.create` 包成「假流」；**DeepSeek 的 `/responses` 实测 400 + 偶发空，必须记住不支持并退回 chat**；带图片的消息要把内容转成 `input_text`/`input_image`。
+- **接口类型 chat / responses（已接，待并入下次发版）**：`settings.json` 的 `api_mode`（`chat` 默认 / `responses`），界面上是「模型与接口」窗口里的「接口类型」下拉。实现方式是**形状翻译**：`api_runtime.configure_client(client, base, mode)` 在 responses 模式下把 `client.chat.completions.create` 整个换成 `_responses_call()`——它调用真正的 `client.responses.create`，参数经 `_responses_kwargs()` 翻译（`messages`→`input`、`max_tokens`→`max_output_tokens`、`response_format`→`text.format`），回包再用 `_Chunk`/`_ChatShapedResponse` 伪装成 chat 形状。**所以 29 处调用点一行都不用改**，带图片的消息按 `input_text`/`input_image` 转。
+  - **踩坑（都在真机上验过）**：① DeepSeek 的 `/v1/responses` **是能用的**（旧文档里「实测 400」已过时）；② `response.reasoning_text.delta` 的结尾也是 `text.delta`，照收会把模型的推理念出来，`_event_text()` 必须排掉 `reasoning`（`_response_text()` 也要跳过 `type=reasoning` 的条目）；③ responses 模式下 `extra_body.thinking=disabled` **不生效**，要关思考得传 `reasoning={"effort":"none"}`（实测思考事件 23 → 0）；④ 服务商不支持流式时 `_ResponsesStream` 会退回一次性请求，不会整轮失败；⑤ 参数能力表 `_MODEL_CAPS` 的键带上了接口类型（同一模型两种接口的参数名不同），`_adaptive_call` 新增「reasoning 被拒就去掉」。
+  - 连接测试 `probe_generation(key, base, model, mode=...)` 把模式写进结果，`probe_line()` 生成对用户说的话：「现在使用的是 xxx 模型，chat/response api 哦，连接成功啦！/ 连接失败……原因」，`_detect_and_apply()` 里 `self.say(...)` 念出来、同时写进窗口状态。真机实测 DeepSeek 两种接口都能连上、JSON 模式（`text.format`）在 responses 下也可用。
 - 翻译只对 `foreign` 生效（拉丁字母 ≥12 且远多于汉字），`hello world` 这类短英文不翻译，阈值可放宽。
 - 圆角用色键透明实现，系统关「透明效果」时四角可能显黑。
 - 落窗口上（试验）：自定义边框窗口边缘可能有几像素偏差。

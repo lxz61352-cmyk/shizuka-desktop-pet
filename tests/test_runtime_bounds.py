@@ -33,7 +33,11 @@ class ModelCapsTests(unittest.TestCase):
         # 新模型仍然拿得到默认能力表
         caps = api_runtime._model_caps("https://example.invalid/v1", "another-model")
         self.assertEqual(caps["max_key"], "max_tokens")
-        self.assertIn(("https://example.invalid/v1", "another-model"), api_runtime._MODEL_CAPS)
+        # 缓存键带上接口类型：同一个模型在 chat / responses 下参数名不一样
+        self.assertIn(("https://example.invalid/v1", "another-model", "chat"), api_runtime._MODEL_CAPS)
+        self.assertEqual(
+            api_runtime._model_caps("https://example.invalid/v1", "another-model", "responses")["max_key"],
+            "max_output_tokens")
 
 
 class EmbedCacheTests(unittest.TestCase):
