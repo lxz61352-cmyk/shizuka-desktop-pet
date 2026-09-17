@@ -6158,7 +6158,9 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             "position_dpi": DISPLAY_DPI,
             "api_base": self._settings.get("api_base") or DEFAULT_API_BASE,
             "api_model": self._settings.get("api_model") or DEFAULT_API_MODEL,
-            "api_mode": api_mode(),
+            # 取 _settings 里的值，不能取 api_mode()（那是 _api_cfg 缓存）：
+            # 保存流程是「先 _save_settings() 再 refresh_api_cfg()」，读缓存会把刚选的接口类型写回成旧的。
+            "api_mode": self._settings.get("api_mode") or api_mode(),
             "provider": self._settings.get("provider") or "",
             "update_disabled": bool(getattr(self, "_update_disabled", False)),
             "quiet_fullscreen": bool(getattr(self, "_quiet_fullscreen", True)),

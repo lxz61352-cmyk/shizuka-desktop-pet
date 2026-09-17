@@ -312,10 +312,23 @@ class ApiWindowTests(unittest.TestCase):
         self.assertEqual(list(values), ["chat", "response"])
 
     def test_real_save_settings_persists_api_mode(self):
-        # 界面上选完还要真的写进 settings.json：确认 _save_settings 里带了这个字段
-        source = (ROOT / "src" / "pet.py").read_text(encoding="utf-8")
-        block = source.split("def _save_settings")[1][:3000]
-        self.assertIn('"api_mode": api_mode()', block)
+        # 用真的 _save_settings 落盘：这里踩过坑——原先写的是 api_mode()（缓存值），
+        # 而保存流程是先 _save_settings() 再 refresh_api_cfg()，于是刚选的类型被旧值覆盖回 chat。
+        shim = self._shim()
+        shim._save_settings = pet.DeskPet._save_settings.__get__(shim)
+        for name, value in (("_animation_on", True), ("_ambient_actions_on", True),
+                            ("_land_on_windows", False), ("_sound_mode", "todo"),
+                            ("_clip_on", True), ("_translate_on", True), ("_greeting_on", True),
+                            ("_summary_on", True), ("_speed", "medium"), ("_idle_minutes", 5),
+                            ("_scale", 1.0), ("_character_pack", None)):
+            setattr(shim, name, value)
+        shim._settings = {"api_mode": "responses", "api_base": "https://api.deepseek.com",
+                          "api_model": "deepseek-chat", "provider": "DeepSeek"}
+        pet._api_cfg["mode"] = "chat"          # 故意留一个过期的缓存值
+        shim._save_settings()
+        stored = json.loads(self.settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["api_mode"], "responses")
+        self.assertEqual(stored["api_model"], "deepseek-chat")
 
 
 if __name__ == "__main__":
