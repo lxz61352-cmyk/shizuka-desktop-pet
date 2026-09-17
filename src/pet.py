@@ -28,6 +28,7 @@ from sync_runtime import SYNC_ENABLED, get_runtime
 from computer_ui import ComputerAssistantMixin, computer_command
 from weixin_ui import WeixinMixin
 from assistant_features import AssistantFeaturesMixin, SYNC_WIP_REPLY
+import paper_reader
 from weather_features import WeatherNewsMixin
 from update_features import UpdateFeaturesMixin
 import traceback
@@ -523,7 +524,11 @@ CHAT_STYLE_HINT = ""
 
 def load_persona():
     from dialogue_grounding import clock_context
-    return load_character_persona(CHARACTER_CARD, ACTIVE_PACK)+'\n\n'+PLAIN_STYLE+'\n'+load_style(Path(CHARACTER_CARD).with_name('dialogue-style.json')).get('instruction','')+'\n'+clock_context()
+    from dialogue_style import ADDRESS_STYLE
+    # 称呼规则放在最后（角色卡之后），角色卡里的女仆/主人设定也不能盖掉它。
+    return (load_character_persona(CHARACTER_CARD, ACTIVE_PACK)+'\n\n'+PLAIN_STYLE+'\n'
+            +load_style(Path(CHARACTER_CARD).with_name('dialogue-style.json')).get('instruction','')
+            +'\n'+ADDRESS_STYLE+'\n'+clock_context())
 
 
 def character_option(key, legacy):
@@ -1887,6 +1892,24 @@ def _clip_image_file(text):
         return p if os.path.isfile(p) else None
     except Exception:
         return None
+
+
+def _clip_route(txt):
+    """剪贴板文本该怎么处理：图片文件 / 图片直链 / 论文 / 普通网页 / 图片路径 / 普通文本。
+    单独放一个函数，方便测试覆盖「论文链接走讲解」这条分支。"""
+    if _clip_image_file(txt):
+        return 'image-file'
+    if _looks_like_url(txt):
+        if _looks_like_image_path(txt):
+            return 'image-url'
+        if paper_reader.looks_like_paper(txt):
+            return 'paper'
+        return 'web'
+    if len((txt or "").strip()) <= 200 and paper_reader.doi_in(txt):
+        return 'paper'   # 复制的是 DOI 号本身（不是链接）
+    if _looks_like_image_path(txt):
+        return 'image-path'
+    return 'text'
 
 
 def fetch_page_text(url, timeout=15, limit=4000):
@@ -3419,9 +3442,9 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._handle_add_todo(result, original)
             return
         if action == "research":
+            # 在聊天里问最新进展：直接汇报（先把手上筛出来的说清楚，再后台补查一轮）
             self._close_think_bubble()
-            self.show_research()
-            self._research_check(force=True)
+            self._report_research(original)
             return
         if action == "weather":
             # 保持"加载中"气泡，后台取详细天气再回答
@@ -6644,7 +6667,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if not pending:return
         snapshot=self._passive_snapshot();turn=self._conv_id
         facts=[todo_fact(row,self._todo_options(row)) for row in pending]
-        fallback='主人，'+ '、'.join(row['text'] for row in pending)+'还在待办里。'
+        fallback='、'.join(row['text'] for row in pending)+'还在待办里。'
         prompt=(clock_context()+'\n依照静香口吻，简短提及以下待办中的重要事项。只谈所给事项，不扩写现实观察、饮水状态或当前几点。'
                 '事件开始时间和提醒时间严格区分，不能把提醒时间说成活动开始。不附字段括号。\n'+json.dumps(facts,ensure_ascii=False))
         text=fallback
@@ -6694,20 +6717,23 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                     self._last_clip = txt
                     # 同一段内容（或它的加长/截短版）已经回应过就不再重复，等内容变了才说话
                     if not self._clip_repeat('text', txt):
-                        img_file = _clip_image_file(txt)
-                        if img_file:
+                        route = _clip_route(txt)
+                        if route == 'image-file':
                             # 复制的是图片文件（如 QQ/资源管理器里复制图片）→ 识图
                             threading.Thread(target=self._recognize_clip_image_file,
-                                             args=(img_file,), daemon=True).start()
-                        elif _looks_like_url(txt):
-                            if _looks_like_image_path(txt):
-                                # 图片直链 → 下载识图
-                                threading.Thread(target=self._recognize_image_url,
-                                                 args=(txt,), daemon=True).start()
-                            else:
-                                # 普通网址 → 抓取网页解析
-                                threading.Thread(target=self._parse_web_clip, args=(txt,), daemon=True).start()
-                        elif _looks_like_image_path(txt):
+                                             args=(_clip_image_file(txt),), daemon=True).start()
+                        elif route == 'image-url':
+                            # 图片直链 → 下载识图
+                            threading.Thread(target=self._recognize_image_url,
+                                             args=(txt,), daemon=True).start()
+                        elif route == 'paper':
+                            # 论文网页 / DOI → 抓正文并讲解
+                            threading.Thread(target=self._read_clip_paper,
+                                             args=(txt.strip(),), daemon=True).start()
+                        elif route == 'web':
+                            # 普通网址 → 抓取网页解析
+                            threading.Thread(target=self._parse_web_clip, args=(txt,), daemon=True).start()
+                        elif route == 'image-path':
                             # 像图片路径但文件不在 → 试试剪贴板里的图，没有就普通反应
                             threading.Thread(target=self._grab_and_recognize,
                                              args=(txt,), daemon=True).start()

@@ -11,7 +11,7 @@ def confirmation_text(items,generated=''):
     if generated and mentions_tasks(generated,items):return clean_text(generated).strip()
     titles='、'.join(row['text'].rstrip('。！？!?. ') for row in items)
     if len(items)==1 and (items[0].get('due') or items[0].get('on_boot')):
-        if re.match(r'^(喝水|吃药|休息|起床)$',titles):return f'到时候叫您{titles}，主人。'
+        if re.match(r'^(喝水|吃药|休息|起床)$',titles):return f'到时候叫您{titles}。'
         return f'{titles}记下了，到时候提醒您。'
     return f'{titles}，我记下了。'
 
@@ -35,11 +35,11 @@ def local_reminder(item,options,now):
     if event and event!=item.get('due'):
         at=datetime.fromtimestamp(event);today=datetime.fromtimestamp(now)
         when=('今天' if at.date()==today.date() else at.strftime('%m月%d日'))+at.strftime('%H:%M')
-        if event>now:text=f'主人，{title}是{when}开始，记得留好时间。'
-        else:text=f'主人，{title}原定{when}开始，记得核对一下安排。'
+        if event>now:text=f'{title}是{when}开始，记得留好时间。'
+        else:text=f'{title}原定{when}开始，记得核对一下安排。'
     elif re.match(r'^(喝|吃|读|阅读|看|写|整理|提交|买|取|休息|起床|联系|检查|复习|完成|准备|浇|洗)',title):
-        text=f'该{title}了，主人。'
-    else:text=f'主人，别忘了{title}。'
+        text=f'该{title}了。'
+    else:text=f'别忘了{title}。'
     for note in reminder_notes(options):
         if note not in text:text+='您之前提到的“'+note.rstrip('。')+'”，也别漏下。'
     return text

@@ -70,6 +70,45 @@ def run(pet):
             row={'title':'Synthetic paper','journal':'Fixture Journal','url':'https://example.invalid/paper',
                  'evidence_basis':'title','comment':'可以进一步阅读。','reason':'相关。'}
             text=app._research_notice(row);assert 'Fixture Journal' in text and '题名信息' in text
+            assert '主人' not in text   # 静香不喊主人
+            # 关注方向标签：长方向名要横向排不下就换行，不能撑出窗口右边
+            for topic in ('基于物理信息神经网络与算子学习的偏微分方程数值解法研究及其在湍流模拟中的应用',
+                          '机器学习势函数与第一性原理计算结合的缺陷能级预测方法研究'):
+                assert not app._add_research_topic(topic),app._add_research_topic(topic)
+            app._refresh_research();app.root.update()
+            board=app._research_keywords
+            limit=app._research_chip_width()
+            assert limit>200,limit
+            chips=[w for w in board.winfo_children() if isinstance(w,tk.Frame)]
+            assert len(chips)>=2,[c.winfo_x() for c in chips]
+            assert all(c.winfo_x()+c.winfo_width()<=limit+2 for c in chips),\
+                [(c.winfo_x(),c.winfo_width(),limit) for c in chips]
+            assert len({c.winfo_y() for c in chips})>=2,[c.winfo_y() for c in chips]   # 确实换了行
+            # 聊天里问「最新进展」：先汇报手上的方向
+            said=[]
+            original_say=app.say
+            app.say=lambda text,**kwargs:said.append(text) or True
+            routed=[]
+            original_report=app._report_research
+            app._report_research=lambda question='':routed.append(question)
+            try:
+                app._route_intent({'action':'research'},'最新进展',app._conv_id)
+                assert routed==['最新进展'],routed
+                del app._report_research          # 还原成类里的实现
+                app._report_research('最新进展')
+            finally:
+                app.say=original_say
+                app._report_research=original_report
+            assert said and '方向' in said[0],said
+            # 论文网页：判定与讲解资料（离线只查路由和提示词，不联网）
+            import paper_reader
+            assert paper_reader.looks_like_paper('https://arxiv.org/abs/2310.06825')
+            assert not paper_reader.looks_like_paper('https://example.com/x')
+            assert pet._clip_route('https://doi.org/10.1038/s41586-021-03819-2')=='paper'
+            prompt=app._paper_explain_prompt({'title':'Synthetic paper','abstract':'Fixture abstract'})
+            assert 'Synthetic paper' in prompt and '不要念网址' in prompt
+            paper_prompt=app._paper_explain_prompt({'title':'T','text':'body excerpt'})
+            assert '正文摘录' in paper_prompt
             app._research_check(force=True)   # 没有 API Key：只提示，不联网
             assert not getattr(app,'_research_running',False)
             checks.append('Research keyword input, persistence and notice formatting')

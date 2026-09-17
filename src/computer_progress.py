@@ -21,7 +21,7 @@ class PendingQuestions:
         item=self.pending
         if not item:return ''
         q=item['questions'][item['index']]
-        text='主人，有一处想和您确认。\n'+q['question']
+        text='有一处想和您确认。\n'+q['question']
         if q.get('detail'):text+='\n'+q['detail']
         for index,option in enumerate(q.get('options',[]),1):
             text+='\n'+str(index)+'. '+option['label']

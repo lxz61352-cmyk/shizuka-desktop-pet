@@ -78,7 +78,8 @@
 | `src/updater.py` / `src/update_features.py` | 检查更新、镜像下载、覆盖安装、更新公告 |
 | `src/computer_agent.py`、`computer_ui.py`、`computer_progress.py` | 本机 DSH 文件助手（配置、任务、只读进度窗） |
 | `src/weixin_channel.py`、`weixin_ui.py` | 微信绑定、收发、识图、远程指令 |
-| `src/research_watch.py`、`assistant_features.py` | 文献筛选（关注方向输入、检索、阅读）与「更多设置」二级菜单 |
+| `src/research_watch.py`、`assistant_features.py` | 文献筛选（关注方向输入、检索、阅读、聊天汇报）与「更多设置」二级菜单 |
+| `src/paper_reader.py` | 读复制来的论文链接：DOI→Crossref、arXiv→摘要页、普通网页→citation_* 元数据与正文摘录；读不到只回理由 |
 | `src/sync_*.py` | 双端记忆/聊天/待办同步（签名 journal、设备身份、冲突记录） |
 | `src/character_packs.py`、`character_persona.py` | 角色包校验与路径限制、人设卡读取 |
 | `src/layered_renderer.py`、`local_mesh.py`、`pet_motion.py`、`pet_triggers.py`、`pet_ground.py`、`pet_surfaces.py` | 局部网格变形、弹簧/单摆、动作触发、重力与窗口承接 |
@@ -103,6 +104,7 @@
 - **口癖兜底**：`clean_reply_style()` 用正则去掉回复开头的语气词起手和紧随的第一句句尾语气词；接在流式显示、`_play_reply`、`say()`、剪贴板点评等所有出口。函数幂等，喂回模型的历史也是清理后的。
 - `[历史消息时间：…]` 这类上下文元信息在 `clean_text` 里被正则剥离，提示词也禁止复述，否则模型会念出来。
 - 人设改动**实时读取**，改完下一条即生效。
+- **称呼**：`load_persona()` 把 `dialogue_style.ADDRESS_STYLE` 拼在**角色卡之后**——静香只说「你/您」，不喊「主人」，也不自称女仆；用户的角色卡是从别处拿来的女仆设定时，这条规则压在卡上面（`tests/test_research_chat.py::AddressTests` 守住）。`dialogue_grounding.GROUNDING_RULES` 里原来那句「自然需要时称主人」已删掉，提醒/待办/文献提醒这些**预制文案**里也不再有「主人」。
 
 ### 3. 记忆
 
@@ -160,7 +162,9 @@
 
 - **电脑助手**：`/电脑 <任务>` 或明确文件指令 → 本机 DSH（headless profile + 本次 overlay，`src/shizuka-dsh-bridge.mjs`）。进度窗只读，需要确认的问题回到聊天里问。配置在 `data/computer-assistant.json`（工作文件夹、Node 路径、dsh bin.js、操作范围、任务模型）。**任务没跑成时会写 `data/computer-tasks/<id>/failure.log`**（任务内容、使用模型、最近 40 条事件、stderr 末尾），并在 `data/error.log` 留一行索引——用户常不在电脑前，事后看日志即可。
 - **微信**：`weixin_channel` 负责协议与收发，`weixin_ui` 负责扫码/设置；支持对话、识图、`/图片`、`/电脑` 等远程指令，待办提醒也可走微信。绑定状态存 `data/weixin-state.json`。图片按天编号存到工作区 `微信图片/`，指代用「图N」（支持中文数字）；**没指定图片时带最近 2 张（10 分钟内），本条消息自带的图片全带上（最多 3 张）**；聊天分支会把图转 data URL 直接附给模型（按路径缓存 10 分钟），所以「讲下图3」「那第二问呢」都能看图回答。序号按天重置、索引只留最近 50 条，`resolve()` 会跨天回退到「最近一次用过这个序号」的图——**这时 `ImageIndex.note_for()` 会在给模型的提示里写明「不是今天收到的，下面是 9月16日 的图」**，免得模型默默照着另一张图回答。去重记录 `seen` 按**时间**保留（`SEEN_TTL_SECONDS=30 天`，另有 `SEEN_MAX=10000` 硬上限），不再只按 2000 条 FIFO 淘汰。
-- **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `queries`（检索词，最多 6 条，`fetch_candidates` 只用前 6）检索 Crossref，`topics`（用户原话）给模型判断相关性；模型按摘要判断相关性，缺摘要时只依据题名评论，不编造结论。窗口里：输入框回车/「添加并检索」→ 立刻 `_research_check(force=True)`；标签点 × 取消关注；「从最近对话猜方向」读最近 40 条消息让模型给候选（只提议，点了才加）；点结果标题看公开摘要与 DOI、点「让静香讲讲这篇」按摘要讲一遍（无摘要时明说只能凭题名推测）。`query_for` 记录「中文方向 → 英文检索词」的映射；去掉「区/县」式的过度翻译没有意义，但**不要**把 `queries` 当成用户可见的方向列表——界面显示的是 `topics`。
+- **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `queries`（检索词，最多 6 条，`fetch_candidates` 只用前 6）检索 Crossref，`topics`（用户原话）给模型判断相关性；模型按摘要判断相关性，缺摘要时只依据题名评论，不编造结论。窗口里：输入框回车/「添加并检索」→ 立刻 `_research_check(force=True)`；标签点 × 取消关注（`_flow_layout` 用 place 按算好的坐标排，一行放不下自动换行——grid 的列宽是整块共用的，第二行更宽的标签会把第一行顶出窗口；`pack(in_=…)` 只算几何不真画，别用）；「从最近对话猜方向」读最近 40 条消息让模型给候选（只提议，点了才加）；点结果标题看公开摘要与 DOI、点「让静香讲讲这篇」按摘要讲一遍（无摘要时明说只能凭题名推测）。`query_for` 记录「中文方向 → 英文检索词」的映射；去掉「区/县」式的过度翻译没有意义，但**不要**把 `queries` 当成用户可见的方向列表——界面显示的是 `topics`。
+  - **聊天里问进展**：`intent_routing.research_question()` 本地先认「最新进展 / 最近有什么新论文 / 有没有新文献」（≤30 字、不带「这篇/刚才」这类指代、不是「怎么查…」的方法问题），命中直接给 `action=research`；没命中的靠 `router_prompt` 的 research 意图，所以闸门正则里要有「进展」。`_route_intent` 的 research 分支现在调 `_report_research()`：先 `say()` 汇报手上的结果（题名用《》包起来，朗读时会各占一轮气泡），再 `_research_check(force=True, notify="chat")` 补查一轮，有新发现的照常播报（`notify="chat"` 时不受「主动提醒」开关限制，因为是用户主动问的）。
+- **复制论文网页 → 讲解**：`paper_reader.read_paper()` 统一返回 `{title,journal,date,authors,abstract,text,source,readable,reason}`。DOI 走 Crossref（无摘要或摘要太短才去抓页面），arXiv 的 abs/pdf 链接统一换成摘要页（**arXiv API 对本机请求返回 406，别指望它**；PDF 链接先换摘要页、真正的 `.pdf` 不下载），普通网页抽 `citation_*` 元数据 + 正文；`clean_body()` 丢掉导航短行（arXiv 摘要页的「正文」几乎全是导航）。读不到时只给理由（`pdf/no-network/not-found/blocked/not-paper/paywall/title-only`），由 `failure_line()` 说人话，**绝不猜内容**。剪贴板路由在 `pet._clip_route()`：图片文件 / 图片直链 / `paper` / 普通网页 / 图片路径 / 普通文本（纯 DOI 号也算 `paper`，限 200 字以内），`_read_clip_paper()` 抓完开「文献窗口」并把讲解同时念出来。
 - **同步**：`sync_runtime/sync_client/sync_store/sync_transport/sync_rustdesk/...` 用签名 journal、独立设备身份、幂等事件；默认每 3 小时（`memory_interval_seconds`，60~604800 秒）轻量检查，另有手动同步。`SyncStore` 现在有**压实**：`compact()` 把当前状态写成快照表、并把已压实的事件搬进 `events_archive` 冷表，本地读只回放「快照 + 基线之后的热事件」；`bundle()`/`conflicts()` 仍读**完整历史**（热表 ∪ 归档表），所以信封格式没变、对端不缺历史、冲突检测也不退化。`SyncBridge` 每 200 次提交检查一次（`maybe_compact()`，阈值 `COMPACT_AFTER_EVENTS=5000`），失败只记在 `status()['compact_error']`、不影响保存。实测 2 万条记录 `rows()` 从 221ms 降到 48ms。
 
 ### 12. 线程 / 锁 / 设置 / 凭据
@@ -276,7 +280,7 @@
 
 ## 七、未解决 / 待验证
 
-- **研究进展已重新打开**：0.8.0 曾整体禁用（`RESEARCH_ENABLED=False`），现已改成 `True`，并补上了缺的那一环——**关注方向的输入界面**（原先窗口里只显示「关注方向：」后面一片空白，用户根本没法配方向）。现在流程是：输入框回车确认 → 写 `topics`（用户原话）+ `queries`（检索词）+ `query_for`（两者映射）→ 立刻检索一次。仍未做的：只在 Crossref 里按 45 天窗口找新论文，**不抓全文、不做 PDF 解析**（「阅读相关资料」目前是让模型基于公开摘要讲，缺摘要时只凭题名）；`check_hours` 默认 6 小时、`enabled` 默认关闭（要用户勾「主动提醒」才自动查）。
+- **研究进展已重新打开**：0.8.0 曾整体禁用（`RESEARCH_ENABLED=False`），现已改成 `True`，并补上了缺的那一环——**关注方向的输入界面**（原先窗口里只显示「关注方向：」后面一片空白，用户根本没法配方向）。现在流程是：输入框回车确认 → 写 `topics`（用户原话）+ `queries`（检索词）+ `query_for`（两者映射）→ 立刻检索一次。检索仍是 Crossref 按 45 天窗口筛新论文；**复制的论文网页会抓题名/摘要/正文摘录**（`paper_reader`），但**PDF 正文不解析**（`.pdf` 链接只换成摘要页，纯 PDF 直链直接说读不了）；`check_hours` 默认 6 小时、`enabled` 默认关闭（要用户勾「主动提醒」才自动查，在聊天里主动问不受这个开关限制）。
 - **角色包可切换（但界面里没有选择器）**：`character_packs.selected_pack()` 会读 `settings.json` 的 `character_pack`，**指定的包存在就用它**，不存在才回退到 `shizuka-side-motion`。内置两个包的 `character_id` 都是 `shizuka`，共用同一个数据目录，换包不会换记忆/聊天/待办。要在界面里做切换器，只要写这个设置项并重启即可（`shizuka-classic` 是 `static` 渲染器，`_do_wheel_apply`/`_animate_pet` 都有 `_animator is None` 的分支）。
 - **Responses API 未接**：`api_mode` / `_responses_via_chat` 在 0.7.4 有，0.7.6 重构后没移植。方案已确认：在 `api_runtime.configure_client` 里按 `api_mode` 分流，`_responses_via_chat` 用非流式 `responses.create` 包成「假流」；**DeepSeek 的 `/responses` 实测 400 + 偶发空，必须记住不支持并退回 chat**；带图片的消息要把内容转成 `input_text`/`input_image`。
 - 翻译只对 `foreign` 生效（拉丁字母 ≥12 且远多于汉字），`hello world` 这类短英文不翻译，阈值可放宽。

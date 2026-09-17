@@ -4,11 +4,31 @@ import re
 RESOURCE = r'文件|文件夹|目录|桌面|硬盘|磁盘|工作区|回收站|截图|[A-Za-z]:[\\/]|\.(?:txt|md|pdf|pptx?|docx?|xlsx?|csv|py|json)\b'
 ACTION = r'读取|打开|查找|搜索|查一下|查看|创建|新建|生成|制作|编辑|修改|整理|复制|移动|重命名|删除|保存|列出'
 
+_TOPIC = r'(?:进展|动态|更新|论文|文献|paper|研究)'
+_REFERENCE = r'这个|那个|这篇|那篇|刚才|之前|上面|你说|你讲|你提|教我|解释|区别'
+# 「怎么查最新论文」是在问方法，不是要我汇报进展
+_HOWTO = r'(?:怎么|如何|怎样|在哪)(?:查|找|搜|看|读|获取|下载|订阅|设|开|关)'
+
+
+def research_question(text):
+    """聊天框里问「最新进展 / 最近有什么新论文」这类：本地直接认，不必等模型路由器。
+    指代某一篇（这篇/那篇/刚才…）的追问不算——那是在聊具体的文献。"""
+    t = (text or "").strip()
+    if not t or len(t) > 30:
+        return False
+    if re.search(_REFERENCE, t) or re.search(_HOWTO, t):
+        return False
+    if not re.search(_TOPIC, t, re.I):
+        return False
+    return bool(re.search(r'最新|最近|近期|新(?:的)?(?:论文|文献)|有没有|有什么', t))
+
 
 def local_intent(text):
     # Return None only when the short model router is useful.
     # 注意：这里没命中的一律直接当 chat（不走模型路由器），所以「使用时长」这类词必须列进来。
-    if not re.search(RESOURCE + r'|待办|提醒|记忆|记住|记得|论文|研究进展|文献|完成|做完'
+    if research_question(text):
+        return {'action': 'research'}
+    if not re.search(RESOURCE + r'|待办|提醒|记忆|记住|记得|论文|研究进展|进展|文献|完成|做完'
                      r'|使用时长|窗口时长|窗口使用|使用统计|时长统计|用了多久|用了多长时间'
                      r'|用了哪些|用了什么|都在忙什么|忙了些什么'
                      r'|天气|气温|温度|下雨|下雪|带伞|冷不冷|热不热|穿什么|穿衣|多少度'

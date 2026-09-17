@@ -29,7 +29,7 @@ class DialogueFeaturesMixin(GroundingMixin):
                     or self._actions_busy(now) or getattr(self,'_pending_todo',None) is not None
                     or getattr(self,'_quitting',False)):
                 return
-            phrases=self._dialogue_style().get('petting_replies') or ['我在，主人。']
+            phrases=self._dialogue_style().get('petting_replies') or ['我在。']
             index=getattr(self,'_pat_reply_index',0)
             phrase=phrases[index%len(phrases)]
             self._pat_reply_index=index+1;self._last_pat_reply=now

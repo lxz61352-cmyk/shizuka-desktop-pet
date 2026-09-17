@@ -24,14 +24,14 @@ class TodoReplyMixin:
                 specs=choices
             else:
                 self._todo_reply_targets.pop(channel,None);return None
-        if target.get('handled'):return '这次已经记为完成了，主人。'
+        if target.get('handled'):return '这次已经记为完成了。'
         if len(specs)!=1:
             target['choosing']=True
-            return '主人，您刚完成的是哪一件？\n'+'\n'.join(f"{i}. {s['title']}" for i,s in enumerate(specs,1))
+            return '您刚完成的是哪一件？\n'+'\n'.join(f"{i}. {s['title']}" for i,s in enumerate(specs,1))
         spec=specs[0];row=next((r for r in self.todos if r['id']==spec['id']),None)
         if row is None:
             target['handled']=True;return '这条待办已经不在列表里了。'
-        if row.get('done'):target['handled']=True;return row['text']+'已经标记完成了，主人。'
+        if row.get('done'):target['handled']=True;return row['text']+'已经标记完成了。'
         if self._todo_notice_signature(row)!=spec['signature']:
             target['handled']=True
             return '这条提醒的时间已经变了，请在待办里核对一下要完成哪一次。'
@@ -39,7 +39,7 @@ class TodoReplyMixin:
         try:self._todo_complete_or_restore(row,True)
         except Exception:return '完成状态这次没有确认保存，您先在待办里核对一下。'
         target['handled']=True
-        return (row['text']+'这次完成了，下次再提醒您。') if rule and not rule.get('until_done') else (row['text']+'完成了，主人。我记好了。')
+        return (row['text']+'这次完成了，下次再提醒您。') if rule and not rule.get('until_done') else (row['text']+'完成了，我记好了。')
 
     def _weixin_complete_reply(self,text,cancel):
         target=getattr(self,'_todo_reply_targets',{}).get('weixin')
