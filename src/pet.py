@@ -5377,7 +5377,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             def cancel(*a):
                 win.destroy()
 
-            self._api_controls={"window":win,"model":model_var,"base":base_var,"save":save,"status":status}
+            self._api_controls={"window":win,"model":model_var,"base":base_var,"mode":mode_var,"mode_box":mode_box,"save":save,"status":status}
             tk.Button(btns, text="保存并测试", width=12, command=save).pack(side="left", padx=8)
             tk.Button(btns, text="关闭", width=10, command=cancel).pack(side="left", padx=8)
             ent.bind("<Return>", save)

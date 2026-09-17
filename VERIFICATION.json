@@ -1,6 +1,6 @@
 {
   "version": "0.8.3",
-  "unit_tests": 332,
+  "unit_tests": 335,
   "frozen_gui_checks": 10,
   "private_data_audit": "passed",
   "python_modules_audited": 1939,

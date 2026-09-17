@@ -230,5 +230,93 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(pet.load_settings()["api_mode"], "responses")
 
 
+class ApiWindowTests(unittest.TestCase):
+    """「模型与接口」窗口要真的建得出来，选好接口类型后能存进设置。
+    这个窗口只在点菜单那一刻才建，所以单独用隐藏的 Tk root 跑一遍。"""
+
+    def setUp(self):
+        try:
+            import tkinter as tk
+        except Exception as exc:      # pragma: no cover
+            self.skipTest("没有 Tk：%s" % exc)
+        self.tk = tk
+        try:
+            self.root = tk.Tk()
+            self.root.withdraw()
+        except Exception as exc:      # pragma: no cover
+            self.skipTest("Tk 起不来：%s" % exc)
+        self.tmp = tempfile.TemporaryDirectory()
+        self.settings_path = Path(self.tmp.name) / "settings.json"
+        self.saved_settings_file = pet.SETTINGS_FILE
+        self.saved_cfg = dict(pet._api_cfg)
+        pet.SETTINGS_FILE = str(self.settings_path)
+        self.saved_key_reader = pet.read_api_key
+        pet.read_api_key = lambda: ""      # 空 Key：只存设置，不碰凭据管理器
+
+    def tearDown(self):
+        pet.read_api_key = self.saved_key_reader
+        pet.SETTINGS_FILE = self.saved_settings_file
+        pet._api_cfg.update(self.saved_cfg)
+        pet.reset_client()
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+        self.tmp.cleanup()
+
+    def _shim(self):
+        class Shim:
+            _prompt_api_key = pet.DeskPet._prompt_api_key
+
+            def __init__(self, root):
+                self.root = root
+                self._settings = {}
+                self.said = []
+
+            def _place_dialog(self, *args, **kwargs):
+                pass
+
+            def _detect_and_apply(self, key, status_cb=None):
+                self.detected = (key, status_cb)
+
+            def _ui(self, fn):
+                fn()
+
+            def say(self, text, **kwargs):
+                self.said.append(text)
+                return True
+
+            def _save_settings(self):
+                # 真正的 _save_settings 会写一堆运行时字段，这里只关心接口类型落盘
+                Path(pet.SETTINGS_FILE).write_text(json.dumps(self._settings, ensure_ascii=False),
+                                                   encoding="utf-8")
+
+        return Shim(self.root)
+
+    def test_window_saves_the_chosen_api_mode(self):
+        shim = self._shim()
+        shim._prompt_api_key()
+        controls = shim._api_controls
+        self.assertIn("mode", controls)
+        self.assertEqual(controls["mode"].get(), "chat")      # 默认 chat
+        controls["mode"].set("response")
+        controls["save"]()
+        stored = json.loads(self.settings_path.read_text(encoding="utf-8"))
+        self.assertEqual(stored["api_mode"], "responses")
+        self.assertEqual(pet.api_mode(), "responses")          # 运行时也跟着切了
+
+    def test_labels_are_chat_and_response(self):
+        shim = self._shim()
+        shim._prompt_api_key()
+        values = shim._api_controls["mode_box"].cget("values")
+        self.assertEqual(list(values), ["chat", "response"])
+
+    def test_real_save_settings_persists_api_mode(self):
+        # 界面上选完还要真的写进 settings.json：确认 _save_settings 里带了这个字段
+        source = (ROOT / "src" / "pet.py").read_text(encoding="utf-8")
+        block = source.split("def _save_settings")[1][:3000]
+        self.assertIn('"api_mode": api_mode()', block)
+
+
 if __name__ == "__main__":
     unittest.main()
