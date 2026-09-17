@@ -5418,7 +5418,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         # ③ 助手能力
         for text, cmd in [("电脑助手", self.show_computer_assistant),
                           ("微信连接", self.show_weixin),
-                          ("研究进展（开发中）", self.show_research)]:
+                          ("研究进展", self.show_research)]:
             self._add_menu_item(win, text, cmd)
         self._menu_separator(win)
         # ④ 记录与记忆

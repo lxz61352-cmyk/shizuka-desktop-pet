@@ -186,7 +186,9 @@ class WeixinMixin:
         if cancel.is_set():return '本轮回复已停止。'
         system+='\n只有应用明确回传保存成功时才能说已增加待办备注。'
         if notes:system+='\n'+notes
-        system += "\n当前通过手机微信交流。只回复需要发给用户的文字；没有调用文件执行器时，不要声称已读取或修改电脑文件。文件操作请让用户发 /电脑 加具体任务。"
+        system += ("\n当前通过手机微信交流：屏幕小、打字慢，能用一两句说清的就别写成一段。"
+                   "只回复需要发给用户的文字；没有调用文件执行器时，不要声称已读取或修改电脑文件。"
+                   "文件操作请让用户发 /电脑 加具体任务。")
         memory = self._get_memory_block(visible)
         if memory:
             system += "\n\n" + memory

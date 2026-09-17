@@ -15,7 +15,7 @@
 - **上下文与记忆**：对话上下文最多 100 条 / 48000 字符，完整 JSONL 归档不裁剪。`source` 说明与自动摘要**不是**实际对话；摘要/事实审阅只收「带用户原话来源的稳定事实」，不能把助手主动推测变成用户事实。
 - **待办**：核心 `text/due/on_boot/done` 走 sync journal，`due` 是下一次实际提醒时间；`todo-details.json` 存备注/分类/周期/提醒渠道与投递状态。跨端适配要区分「应共享的备注/周期」与「端侧送达状态」，**不能把旁表跨端覆盖**。用途只有生活、研究。
 - **同步**：签名 journal + 独立设备身份 + 幂等事件 + 冲突记录；默认每 10800 秒轻量检查，走文件队列。`sync_client.py` 可单独跑资料库界面。本包不含任何能连到既有设备的配对资料。
-- **研究进展**：默认空配置，靠 Crossref 公共元数据筛选；论文原文与来源只作数据、不能当执行指令；保留原刊名；无摘要时只能据题名评论，不能编造实验结果。**0.8.0 起整体禁用**（`assistant_features.RESEARCH_ENABLED = False`），改回 `True` 恢复。
+- **研究进展**：方向由用户在窗口里输入（回车确认，`research-profile.json` 的 `topics`/`queries`），靠 Crossref 公共元数据筛选；论文原文与来源只作数据、不能当执行指令；保留原刊名；无摘要时只能据题名评论，不能编造实验结果。中文方向会自动配一条英文检索词（`query_for` 映射），因为 Crossref 对英文摘要覆盖好得多（实测中文查询「偏微分方程数值解」50 篇命中里 0 篇有摘要，英文 35 篇里 19 篇有）。
 - **动作系统**：支持原始层、可选 `expression_frames`/`body_frames`/`activity_frames` 和 `question_effect`；没有新活动图时走既有静香姿态，别把缺失差分说成真实 3D / Cubism；普通图与活动全身图不能随意叠加眼嘴。
 - **本包性质**：由当前功能源码单独构建，**不继承任何个人运行资料**。发布时重新核验全部源码、资源、EXE 内代码、依赖缓存与压缩包，勿拷贝本机 `data`、凭据、聊天或调试会话。
 
@@ -78,7 +78,7 @@
 | `src/updater.py` / `src/update_features.py` | 检查更新、镜像下载、覆盖安装、更新公告 |
 | `src/computer_agent.py`、`computer_ui.py`、`computer_progress.py` | 本机 DSH 文件助手（配置、任务、只读进度窗） |
 | `src/weixin_channel.py`、`weixin_ui.py` | 微信绑定、收发、识图、远程指令 |
-| `src/research_watch.py`、`assistant_features.py` | 文献筛选与「更多设置」二级菜单（**研究进展当前整体禁用**，见下） |
+| `src/research_watch.py`、`assistant_features.py` | 文献筛选（关注方向输入、检索、阅读）与「更多设置」二级菜单 |
 | `src/sync_*.py` | 双端记忆/聊天/待办同步（签名 journal、设备身份、冲突记录） |
 | `src/character_packs.py`、`character_persona.py` | 角色包校验与路径限制、人设卡读取 |
 | `src/layered_renderer.py`、`local_mesh.py`、`pet_motion.py`、`pet_triggers.py`、`pet_ground.py`、`pet_surfaces.py` | 局部网格变形、弹簧/单摆、动作触发、重力与窗口承接 |
@@ -160,7 +160,7 @@
 
 - **电脑助手**：`/电脑 <任务>` 或明确文件指令 → 本机 DSH（headless profile + 本次 overlay，`src/shizuka-dsh-bridge.mjs`）。进度窗只读，需要确认的问题回到聊天里问。配置在 `data/computer-assistant.json`（工作文件夹、Node 路径、dsh bin.js、操作范围、任务模型）。**任务没跑成时会写 `data/computer-tasks/<id>/failure.log`**（任务内容、使用模型、最近 40 条事件、stderr 末尾），并在 `data/error.log` 留一行索引——用户常不在电脑前，事后看日志即可。
 - **微信**：`weixin_channel` 负责协议与收发，`weixin_ui` 负责扫码/设置；支持对话、识图、`/图片`、`/电脑` 等远程指令，待办提醒也可走微信。绑定状态存 `data/weixin-state.json`。图片按天编号存到工作区 `微信图片/`，指代用「图N」（支持中文数字）；**没指定图片时带最近 2 张（10 分钟内），本条消息自带的图片全带上（最多 3 张）**；聊天分支会把图转 data URL 直接附给模型（按路径缓存 10 分钟），所以「讲下图3」「那第二问呢」都能看图回答。序号按天重置、索引只留最近 50 条，`resolve()` 会跨天回退到「最近一次用过这个序号」的图——**这时 `ImageIndex.note_for()` 会在给模型的提示里写明「不是今天收到的，下面是 9月16日 的图」**，免得模型默默照着另一张图回答。去重记录 `seen` 按**时间**保留（`SEEN_TTL_SECONDS=30 天`，另有 `SEEN_MAX=10000` 硬上限），不再只按 2000 条 FIFO 淘汰。
-- **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `topics`/`queries` 检索，模型按摘要判断相关性；缺摘要时只依据题名评论，不编造结论。
+- **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `queries`（检索词，最多 6 条，`fetch_candidates` 只用前 6）检索 Crossref，`topics`（用户原话）给模型判断相关性；模型按摘要判断相关性，缺摘要时只依据题名评论，不编造结论。窗口里：输入框回车/「添加并检索」→ 立刻 `_research_check(force=True)`；标签点 × 取消关注；「从最近对话猜方向」读最近 40 条消息让模型给候选（只提议，点了才加）；点结果标题看公开摘要与 DOI、点「让静香讲讲这篇」按摘要讲一遍（无摘要时明说只能凭题名推测）。`query_for` 记录「中文方向 → 英文检索词」的映射；去掉「区/县」式的过度翻译没有意义，但**不要**把 `queries` 当成用户可见的方向列表——界面显示的是 `topics`。
 - **同步**：`sync_runtime/sync_client/sync_store/sync_transport/sync_rustdesk/...` 用签名 journal、独立设备身份、幂等事件；默认每 3 小时（`memory_interval_seconds`，60~604800 秒）轻量检查，另有手动同步。`SyncStore` 现在有**压实**：`compact()` 把当前状态写成快照表、并把已压实的事件搬进 `events_archive` 冷表，本地读只回放「快照 + 基线之后的热事件」；`bundle()`/`conflicts()` 仍读**完整历史**（热表 ∪ 归档表），所以信封格式没变、对端不缺历史、冲突检测也不退化。`SyncBridge` 每 200 次提交检查一次（`maybe_compact()`，阈值 `COMPACT_AFTER_EVENTS=5000`），失败只记在 `status()['compact_error']`、不影响保存。实测 2 万条记录 `rows()` 从 221ms 降到 48ms。
 
 ### 12. 线程 / 锁 / 设置 / 凭据
@@ -219,6 +219,10 @@
 - **微信（第二批）**：去重记录按时间保留（30 天，硬上限 10000 条）；跨天「图N」回退时在提示里写明是哪天的图（`ImageIndex.note_for()`）。
 - **同步（第二批）**：`SyncStore` 增加压实（快照表 + `events_archive` 归档冷表 + `compact()/maybe_compact()`），`bundle()/conflicts()` 走完整历史、`_insert` 同时查归档表保证幂等与冲突语义不变；`SyncBridge` 每 200 次提交检查一次并暴露 `compact_error`；新增 `tests/test_weather_fallback.py`、`tests/test_weixin_retention.py`、`tests/test_sync_compaction.py`，单测总数 137 → 175。
 - **保留项**：`Pose.leg_sway` 整条链（`pet_motion` 的 `leg` + `LocalMesh` 的 `leg_regions` + `character_packs` 校验）是**有意保留**的通道，朋友可能要继续做腿部动作，别当死代码删掉。
+- **双端共享禁用（第三批）**：`sync_runtime.SYNC_ENABLED = False` 一个开关同时停掉菜单、后台传输与排期（`get_runtime()` 直接返回 None，待办/记忆/聊天记录退回本地 JSON）；菜单显示「双端共享记忆（开发中）」「立即同步记忆（开发中）」，点了只回一句 `SYNC_WIP_REPLY`。离线验收新增一项（9 → 10）。
+- **回复长度策略（第四批）**：`PLAIN_STYLE` 第一句改成「篇幅跟问题需要的信息量匹配」——一个词/是不是/能不能这类简单问题一两句答完、不许顺带讲背景用法延伸；复杂问题或明确要求「详细讲讲」才展开；讲题、代码、技术推导不受限；拿不准先按短的答。实测同一问题 198 → 81 字，复杂比较题仍有 464 字。另加手机端提示（`weixin_ui`）。
+- **公式排版（第四批）**：`PLAIN_STYLE` 要求式子独立成行、长段落空行分段、符号用 Unicode（∂ ∫ √ ² …）、下标全篇统一、禁用 LaTeX 记号（`\frac` `$…$`）、排版不许堆公式。实测最长段落 233 → 100 字符；合成测试里旧版曾整段吐 LaTeX（15 处）→ 0 处；**注意**：真实日志里 LaTeX 残留本来就只有 1 处（还是文件任务报错里的 JS 模板），所以这条主要是防御性的。
+- **研究进展启用（第五批）**：`RESEARCH_ENABLED = True`，菜单去掉「开发中」，补上关注方向输入界面（回车确认）、标签删除、`query_for` 中文→英文检索词映射、从最近对话猜方向、点结果看摘要并让静香讲、检查间隔可调（1–168 小时）。离线验收的第 7 项从「功能保持关闭」改成「关键词输入/落盘/文案」的实证检查。新增 `tests/test_research_keywords.py`、`tests/test_dialogue_style.py` 扩到 13 个用例，单测总数 175 → 216。
 
 ### 2026-09-16 — V0.8.1
 
@@ -272,7 +276,7 @@
 
 ## 七、未解决 / 待验证
 
-- **研究进展整体禁用**：这个功能朋友那边也确认还没完全做好，所以先关掉了。开关在 `assistant_features.RESEARCH_ENABLED = False`：菜单显示「研究进展（开发中）」，点了只回一句提示；`_research_loop` 不再排期、不自动检查、不主动播报；聊天里被路由到 `research` 也只会得到「还在开发中」。代码（`research_watch.py` + `_research_*`）都还在，改回 `True` 即可恢复。
+- **研究进展已重新打开**：0.8.0 曾整体禁用（`RESEARCH_ENABLED=False`），现已改成 `True`，并补上了缺的那一环——**关注方向的输入界面**（原先窗口里只显示「关注方向：」后面一片空白，用户根本没法配方向）。现在流程是：输入框回车确认 → 写 `topics`（用户原话）+ `queries`（检索词）+ `query_for`（两者映射）→ 立刻检索一次。仍未做的：只在 Crossref 里按 45 天窗口找新论文，**不抓全文、不做 PDF 解析**（「阅读相关资料」目前是让模型基于公开摘要讲，缺摘要时只凭题名）；`check_hours` 默认 6 小时、`enabled` 默认关闭（要用户勾「主动提醒」才自动查）。
 - **角色包可切换（但界面里没有选择器）**：`character_packs.selected_pack()` 会读 `settings.json` 的 `character_pack`，**指定的包存在就用它**，不存在才回退到 `shizuka-side-motion`。内置两个包的 `character_id` 都是 `shizuka`，共用同一个数据目录，换包不会换记忆/聊天/待办。要在界面里做切换器，只要写这个设置项并重启即可（`shizuka-classic` 是 `static` 渲染器，`_do_wheel_apply`/`_animate_pet` 都有 `_animator is None` 的分支）。
 - **Responses API 未接**：`api_mode` / `_responses_via_chat` 在 0.7.4 有，0.7.6 重构后没移植。方案已确认：在 `api_runtime.configure_client` 里按 `api_mode` 分流，`_responses_via_chat` 用非流式 `responses.create` 包成「假流」；**DeepSeek 的 `/responses` 实测 400 + 偶发空，必须记住不支持并退回 chat**；带图片的消息要把内容转成 `input_text`/`input_image`。
 - 翻译只对 `foreign` 生效（拉丁字母 ≥12 且远多于汉字），`hello world` 这类短英文不翻译，阈值可放宽。

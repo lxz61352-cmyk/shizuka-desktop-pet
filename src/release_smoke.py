@@ -47,15 +47,32 @@ def run(pet):
             checks.append('Compact settings, five-minute default and notification sound policy')
             app.show_research();app.root.update()
             app._research_init()
-            assert not app._research.profile['queries']
+            import assistant_features
+            assert assistant_features.RESEARCH_ENABLED is True
+            # 关注方向：输入框回车确认 → 写进 topics/queries → 落盘；重复加不重复，能删掉。
+            assert not app._research.profile['topics']
+            assert app._research_entry.bind('<Return>')   # 回车确实绑上了
+            app._research_entry.insert(0,'Fixture Topic')
+            # Tk 的合成键盘事件只投递到有焦点的窗口（实测：不 focus 就不会触发绑定）。
+            app._research_entry.focus_force()
+            app._research_entry.event_generate('<Return>',when='now')
+            app.root.update()
+            if not app._research.profile['topics']:
+                app._add_research_keyword()   # 个别环境合成按键不投递时，回退调用同一个处理函数
+            assert app._research.profile['topics']==['Fixture Topic'],app._research.profile['topics']
+            assert app._research.profile['queries']==['Fixture Topic'],app._research.profile['queries']
+            saved=json.loads(app._research.profile_path.read_text('utf-8'))
+            assert saved['topics']==['Fixture Topic'],saved
+            assert app._add_research_topic('Fixture Topic')
+            assert app._add_research_topic('x'*200)
+            app._remove_research_topic('Fixture Topic')
+            assert app._research.profile['topics']==[] and app._research.profile['queries']==[]
             row={'title':'Synthetic paper','journal':'Fixture Journal','url':'https://example.invalid/paper',
                  'evidence_basis':'title','comment':'可以进一步阅读。','reason':'相关。'}
             text=app._research_notice(row);assert 'Fixture Journal' in text and '题名信息' in text
-            import assistant_features
-            assert assistant_features.RESEARCH_ENABLED is False
-            app._research_check(force=True)
+            app._research_check(force=True)   # 没有 API Key：只提示，不联网
             assert not getattr(app,'_research_running',False)
-            checks.append('Research code stays inert while the feature is disabled')
+            checks.append('Research keyword input, persistence and notice formatting')
             # 双端共享/同步记忆整体收起来了：开关为假、运行时拿不到传输、两个入口只回一句「开发中」。
             # 这里刻意不建菜单窗（show_menu 会留下 after 轮询，和下面「检查更新」那项互相干扰，
             # 之前就是它偶发让离线验收挂在 _add_menu_update 的回调上）；菜单文案由单测覆盖。
