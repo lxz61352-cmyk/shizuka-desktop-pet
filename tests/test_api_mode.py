@@ -331,5 +331,86 @@ class ApiWindowTests(unittest.TestCase):
         self.assertEqual(stored["api_model"], "deepseek-chat")
 
 
+class ApiQuestionTests(unittest.TestCase):
+    """「现在用的 chat 还是 response 接口」这类问题必须本地认出来（不经过模型）。"""
+
+    def setUp(self):
+        import intent_routing
+        self.ir = intent_routing
+
+    def test_questions_are_recognised(self):
+        for text in ("你现在用的是 chat 还是 response 接口", "测一下接口", "现在走的是哪个接口",
+                     "你用的什么api", "接口类型是什么", "这个接口是 chat 还是 response"):
+            self.assertTrue(self.ir.api_question(text), text)
+            self.assertEqual(self.ir.local_intent(text), {'action': 'api_info'}, text)
+
+    def test_code_questions_are_left_alone(self):
+        for text in ("帮我看看这个接口怎么写", "这段代码的接口设计合理吗", "帮我把 chat 接口封装一下"):
+            self.assertFalse(self.ir.api_question(text), text)
+            self.assertNotEqual(self.ir.local_intent(text), {'action': 'api_info'}, text)
+
+    def test_other_topics_untouched(self):
+        self.assertEqual(self.ir.local_intent("最新进展"), {'action': 'research'})
+        self.assertFalse(self.ir.api_question("今天天气怎么样"))
+
+    def test_test_request_detected(self):
+        self.assertTrue(self.ir.api_wants_test("测一下接口"))
+        self.assertFalse(self.ir.api_wants_test("现在用的是哪个接口"))
+
+
+class ApiReportTests(unittest.TestCase):
+    class _Shim:
+        _report_api_info = pet.DeskPet._report_api_info
+
+        def __init__(self):
+            self.said = []
+            self.probed = False
+
+        def say(self, text, **kwargs):
+            self.said.append(text)
+            return True
+
+        def _probe_api_async(self):
+            self.probed = True
+
+    def setUp(self):
+        self.saved_cfg = dict(pet._api_cfg)
+        self.saved_last = dict(api_runtime.LAST_REQUEST)
+
+    def tearDown(self):
+        pet._api_cfg.clear()
+        pet._api_cfg.update(self.saved_cfg)
+        api_runtime.LAST_REQUEST.clear()
+        api_runtime.LAST_REQUEST.update(self.saved_last)
+
+    def test_reports_mode_endpoint_model_and_evidence(self):
+        pet._api_cfg["mode"] = "responses"
+        pet._api_cfg["model"] = "deepseek-chat"
+        api_runtime.record_request("responses", "deepseek-chat", True, 0.5)
+        shim = self._Shim()
+        shim._report_api_info("现在用的是哪个接口")
+        text = shim.said[0]
+        self.assertIn("response 接口", text)
+        self.assertIn("/v1/responses", text)
+        self.assertIn("deepseek-chat", text)
+        self.assertIn("是通的", text)
+        self.assertFalse(shim.probed)
+
+    def test_reports_failure_of_the_last_request(self):
+        pet._api_cfg["mode"] = "chat"
+        api_runtime.record_request("chat", "m", False, 0.2, "APITimeoutError")
+        shim = self._Shim()
+        shim._report_api_info("现在用的哪个接口")
+        self.assertIn("chat 接口", shim.said[0])
+        self.assertIn("失败", shim.said[0])
+
+    def test_asking_to_test_runs_a_real_probe(self):
+        pet._api_cfg["mode"] = "chat"
+        shim = self._Shim()
+        shim._report_api_info("测一下接口")
+        self.assertIn("验一下", shim.said[0])
+        self.assertTrue(shim.probed)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -775,6 +775,10 @@ def has_api_key():
     return bool(read_api_key())
 
 
+# 联网查证的缓存（同一件事短时间内不重复搜）
+SEARCH_CACHE_FILE = os.path.join(CHARACTER_DATA_DIR, "search-cache.json")
+
+
 def load_settings():
     """读取设置；文件缺失或损坏时用默认值。"""
     defaults = {"sound_mode": "todo-files", "animation":True,"ambient_actions":True,"land_on_windows":True,"feature_defaults_revision":0, "clipboard": True, "translate": True, "greeting": True, "summary": True,
@@ -783,14 +787,14 @@ def load_settings():
                 "idle_minutes": 5, "usage_track": True, "usage_away_min": USAGE_AWAY_MIN,
                 "voice": False, "tts_release": "1", "gsv_dir": "", "update_disabled": False,
                 "quiet_fullscreen": True, "quiet_games": True, "quiet_fold": True,
-                "quiet_apps": [], "voice_en_phonemes": False}
+                "quiet_apps": [], "voice_en_phonemes": False, "web_search": True}
     data={}
     if os.path.exists(SETTINGS_FILE):
         try:
             with open(SETTINGS_FILE, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             for k in ("clipboard", "translate", "greeting", "summary", "voice", "animation", "ambient_actions", "land_on_windows", "update_disabled",
-                      "quiet_fullscreen", "quiet_games", "quiet_fold", "voice_en_phonemes"):
+                      "quiet_fullscreen", "quiet_games", "quiet_fold", "voice_en_phonemes", "web_search"):
                 if k in data:
                     defaults[k] = bool(data[k])
             if isinstance(data.get("quiet_apps"), list):
@@ -2323,6 +2327,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._quiet_notice_id = None      # 提示气泡的 after id
         self._quiet_win = None
         self._quiet_fold = bool(self._settings.get("quiet_fold", True))
+        self._web_search_on = bool(self._settings.get("web_search", True))
         self._tts_en_phonemes = bool(self._settings.get("voice_en_phonemes", False))
         self._greeting_on = self._settings["greeting"]
         self._summary_on = self._settings["summary"]
@@ -3517,6 +3522,11 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._close_think_bubble()
             self._report_research(original)
             return
+        if action == "api_info":
+            # 问「现在用的 chat 还是 response 接口」：本地照实回答，可能要现场验一条
+            self._close_think_bubble()
+            self._report_api_info(original)
+            return
         if action == "weather":
             # 保持"加载中"气泡，后台取详细天气再回答
             threading.Thread(target=self._weather_worker, args=(original, my_conv), daemon=True).start()
@@ -3979,6 +3989,52 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if used:
             mem.mark_used(used)
 
+    def _announce_search(self, reason=""):
+        """要联网查的时候先说一句缓冲话：有语音就念出来（顺便盖住搜索耗时），
+        没语音就在气泡里显示，别让人盯着一个静止的省略号等网络。"""
+        line = "让我查一下资料……"
+        try:
+            if self._voice_on:
+                self._tts_enqueue(line)
+            else:
+                self._ui(lambda: self._show_loading_bubble("让我查一下资料"))
+        except Exception:
+            _err_log("announce_search")
+
+    def _web_evidence(self, text, my_conv=None):
+        """该联网就搜一次，把摘要交回给模型；不搜 / 搜不到分别返回不同说明。"""
+        if not getattr(self, "_web_search_on", True):
+            return ""
+        try:
+            import web_search
+        except Exception:
+            return ""
+        try:
+            want, reason = web_search.needs_search(text)
+        except Exception:
+            return ""
+        if not want:
+            return ""
+        self._announce_search(reason)
+        try:
+            found = web_search.search_cached(web_search.cleanup_query(text), SEARCH_CACHE_FILE)
+        except Exception as exc:
+            _err_log("web_search")
+            found = {"query": "", "results": [], "error": type(exc).__name__}
+        if not self._voice_on:
+            self._ui(self._close_loading_bubble)
+        if my_conv is not None and my_conv != self._conv_id:
+            return ""
+        try:
+            if found.get("results"):
+                _sound_log("search: %s 用 %s 拿到 %d 条（%.2fs%s）"
+                           % (found.get("query"), found.get("source"), len(found["results"]),
+                              found.get("seconds") or 0, "，缓存" if found.get("cached") else ""))
+                return web_search.format_evidence(found, found.get("query") or "")
+            return web_search.format_failure(found)
+        except Exception:
+            return ""
+
     def _ask_model(self, text, my_conv=None):
         # 普通聊天回复也要按提示音设置响一声（say() 那条路径本来就会响，这里单独补上）
         if self._should_sound(False):
@@ -3991,6 +4047,9 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if notes:system+='\n'+notes
         block=self._get_memory_block(text)
         if block:system+="\n\n"+block
+        # 该联网查的（明确要求 / 时事 / 版本 / 数字 / 日期）先搜一次，把摘要当资料给她
+        evidence=self._web_evidence(text,my_conv)
+        if evidence:system+="\n\n"+evidence
         messages=[{"role":"system","content":system}]
         messages[0]["content"]+="\n\n"+self._capability_context()
         messages.extend(self._recent_messages(current_text=text,channel='desktop'))
@@ -5388,6 +5447,65 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         except Exception:
             pass
 
+    # ---------- 接口自报：现在走的是 chat 还是 response ----------
+    def _report_api_info(self, question=""):
+        """用户问「现在用的 chat 还是 response 接口」：照实说，并给最近一次真实请求当证据。
+
+        两条接口是同一个模型、同一套提示词，从回复内容上分不出来，
+        所以只能由这边报自己实际打的端点（`api_runtime.record_request` 记下来的）。
+        """
+        import api_runtime
+        from intent_routing import api_wants_test
+        mode = api_mode()
+        label = api_runtime.mode_label(mode)
+        path = api_runtime.endpoint_path(mode)
+        lines = ["现在用的是 %s 接口（%s），模型 %s。" % (label, path, api_model())]
+        last = api_runtime.last_request()
+        if last.get("mode"):
+            when = max(0, int(time.time() - (last.get("at") or 0)))
+            ago = ("刚刚" if when < 5 else "%d 秒前" % when if when < 90 else "%d 分钟前" % (when // 60))
+            if last.get("ok") is True:
+                lines.append("最近一次请求（%s，%s）是通的，用了 %.1f 秒。" % (last["path"], ago,
+                                                                        last.get("seconds") or 0))
+            elif last.get("ok") is False:
+                lines.append("最近一次请求（%s，%s）失败了：%s。" % (last["path"], ago,
+                                                              last.get("error") or "未知原因"))
+            else:
+                lines.append("最近一次请求走的是 %s（%s）。" % (last["path"], ago))
+        else:
+            lines.append("这一轮还没发过请求，等你说句话就走上去了。")
+        if api_wants_test(question):
+            lines.append("我发一条最小请求验一下……")
+            self.say("\n".join(lines))
+            self._probe_api_async()
+            return
+        lines.append("想现场验一遍就说「测一下接口」。")
+        self.say("\n".join(lines))
+
+    def _probe_api_async(self):
+        """现场验证当前接口：成 / 败都要说清楚，失败了顺带试另一条。"""
+        import api_runtime
+        key = read_api_key()
+        if not key:
+            self.say("还没填 API Key，先配置好再验吧。")
+            return
+        mode = api_mode()
+        other = api_runtime.MODE_CHAT if mode == api_runtime.MODE_RESPONSES else api_runtime.MODE_RESPONSES
+
+        def work():
+            res = api_runtime.probe_generation(key, api_base(), api_model(), seconds=20, mode=mode)
+            note = ""
+            if not res.get("ok"):
+                alt = api_runtime.probe_generation(key, api_base(), api_model(), seconds=20, mode=other)
+                note = ("\n另一条 %s 接口是%s的。" % (api_runtime.mode_label(other),
+                                                "通" if alt.get("ok") else "也不通"))
+                if alt.get("ok"):
+                    note += "想换过去就在「模型与接口」里改接口类型。"
+            text = api_runtime.probe_line(res) + note
+            self._ui(lambda: self.say(text))
+
+        threading.Thread(target=work, daemon=True).start()
+
     # ---------- 查看记忆 ----------
     def show_memory(self, event=None):
         """长期记忆管理：可编辑、置顶和手动删除；不自动遗忘。"""
@@ -6168,6 +6286,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             "quiet_fold": bool(getattr(self, "_quiet_fold", True)),
             "quiet_apps": list(getattr(self, "_quiet_apps", [])),
             "voice_en_phonemes": bool(getattr(self, "_tts_en_phonemes", False)),
+            "web_search": bool(getattr(self, "_web_search_on", True)),
         }
         self._settings.update(data)
         with _FILE_LOCK:

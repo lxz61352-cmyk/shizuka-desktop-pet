@@ -29,6 +29,27 @@ def mode_label(mode):
     return MODE_LABELS.get(normalize_mode(mode), 'chat')
 
 
+def endpoint_path(mode):
+    return '/v1/responses' if normalize_mode(mode) == MODE_RESPONSES else '/v1/chat/completions'
+
+
+# 最近一次真实请求走的哪条路：用户问「现在用的 chat 还是 response」时拿这个当证据（不是靠猜）
+LAST_REQUEST = {'mode': '', 'path': '', 'model': '', 'ok': None, 'seconds': None, 'at': None, 'error': ''}
+_LAST_LOCK = threading.Lock()
+
+
+def record_request(mode, model, ok, seconds, error=''):
+    with _LAST_LOCK:
+        LAST_REQUEST.update(mode=normalize_mode(mode), path=endpoint_path(mode), model=model or '',
+                            ok=ok, seconds=round(seconds, 2) if seconds is not None else None,
+                            at=time.time(), error=str(error or '')[:160])
+
+
+def last_request():
+    with _LAST_LOCK:
+        return dict(LAST_REQUEST)
+
+
 def current_model(base, model):
     if urlsplit(base).hostname == 'api.deepseek.com' and model in DEEPSEEK_LEGACY_MODELS:
         return DEEPSEEK_MODEL
@@ -157,9 +178,17 @@ class BoundedStream:
             try: kind, value = self.queue.get(timeout=min(remaining, .2))
             except queue.Empty: continue
             if kind == 'done': return
-            if kind == 'error': raise value
+            if kind == 'error':
+                record = getattr(self, '_shizuka_record', None)
+                if record is not None:
+                    record(False, time.monotonic() - self.started, type(value).__name__)
+                raise value
             if any(getattr(choice.delta, 'content', None) for choice in value.choices):
                 self.deadline = time.monotonic() + self.idle_seconds
+                record = getattr(self, '_shizuka_record', None)
+                if record is not None:
+                    record(True, time.monotonic() - self.started)
+                    self._shizuka_record = None      # 只记第一次
             yield value
 
     def close(self):
@@ -484,8 +513,23 @@ def configure_client(client, base, mode=MODE_CHAT):
                 extra = dict(kwargs.get('extra_body') or {})
                 extra.setdefault('thinking', {'type': 'disabled'})
                 kwargs['extra_body'] = extra
-        call = lambda: _adaptive_call(original, base, args, kwargs, mode)
-        if kwargs.get('stream'): return BoundedStream(call, first_seconds=budget)
+        model = kwargs.get('model')
+        started = time.monotonic()
+
+        def call():
+            try:
+                out = _adaptive_call(original, base, args, kwargs, mode)
+            except Exception as exc:
+                record_request(mode, model, False, time.monotonic() - started, type(exc).__name__)
+                raise
+            if not kwargs.get('stream'):
+                record_request(mode, model, True, time.monotonic() - started)
+            return out
+
+        if kwargs.get('stream'):
+            stream = BoundedStream(call, first_seconds=budget)
+            stream._shizuka_record = lambda ok, seconds, error='': record_request(mode, model, ok, seconds, error)
+            return stream
         return bounded_call(call, budget)
     completions.create = create
     completions._shizuka_bounded = True

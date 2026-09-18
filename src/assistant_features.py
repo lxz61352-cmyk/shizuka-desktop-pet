@@ -48,8 +48,8 @@ class AssistantFeaturesMixin:
         self._add_idle_interval(sub)
         self._menu_separator(sub)
         self._add_menu_quiet(sub, W, level)
-        for text, attr in [('检测剪贴板', '_clip_on'), ('翻译剪贴板', '_translate_on'), ('开机问候', '_greeting_on'),
-                           ('开机待办提醒', '_summary_on'), ('记录窗口使用时长', '_usage_on'),
+        for text, attr in [('检测剪贴板', '_clip_on'), ('翻译剪贴板', '_translate_on'), ('联网查证', '_web_search_on'),
+                           ('开机问候', '_greeting_on'), ('开机待办提醒', '_summary_on'), ('记录窗口使用时长', '_usage_on'),
                            ('角色动态', '_animation_on'), ('自动小动作', '_ambient_actions_on'),
                            ('落在窗口上', '_land_on_windows')]:
             self._add_menu_toggle(sub, text, attr)

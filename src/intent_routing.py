@@ -23,11 +23,46 @@ def research_question(text):
     return bool(re.search(r'最新|最近|近期|新(?:的)?(?:论文|文献)|有没有|有什么', t))
 
 
+_API_TOPIC = r'(?:接口|api)'
+_API_ASK = r'(?:哪个|哪一个|哪一?种|什么|啥|类型|模式|是不是|用的?是|走的?是|还是)'
+# 说「接口/API」但其实是聊代码的，别抢过来答自己那点事（「类型」不算「类」）
+_API_CODE = r'代码|函数|类(?!型)|封装|重构|实现|设计|单测|怎么写|怎么用|文档|签名|重载'
+
+
+def api_question(text):
+    """问「现在用的是 chat 还是 response 接口」这类：本地直接回答，不经过模型。
+
+    两条接口是同一个模型同一套提示词，回复内容上看不出区别，
+    只能由桌宠照实报自己这次请求走的端点，顺带可以现场验一条。
+    """
+    t = (text or "").strip()
+    if not t or len(t) > 40:
+        return False
+    if not re.search(_API_TOPIC, t, re.I):
+        return False
+    if re.search(_API_CODE, t, re.I):
+        return False
+    if re.search(r'chat|responses?', t, re.I):
+        return True                                    # 直接问两条路里的哪一条
+    if re.search(r'(?:接口|api)[^，。！？\s]{0,4}(?:类型|模式)', t, re.I):
+        return True                                    # 「接口类型是什么」「接口用什么类型」
+    if re.search(r'(?:测|试|验|检查)\s*(?:一下|一遍)?\s*(?:接口|api)', t, re.I):
+        return True                                    # 「测一下接口」
+    return bool(re.search(r'现在|当前|你', t) and re.search(_API_ASK, t))
+
+
+def api_wants_test(text):
+    """不只是问，还想现场验一下（「测一下接口」「验一下 response」）。"""
+    return bool(re.search(r'测|试|验|检查', text or ''))
+
+
 def local_intent(text):
     # Return None only when the short model router is useful.
     # 注意：这里没命中的一律直接当 chat（不走模型路由器），所以「使用时长」这类词必须列进来。
     if research_question(text):
         return {'action': 'research'}
+    if api_question(text):
+        return {'action': 'api_info'}
     if not re.search(RESOURCE + r'|待办|提醒|记忆|记住|记得|论文|研究进展|进展|文献|完成|做完|搞定|弄完|弄好|做好了'
                      r'|使用时长|窗口时长|窗口使用|使用统计|时长统计|用了多久|用了多长时间'
                      r'|用了哪些|用了什么|都在忙什么|忙了些什么'
