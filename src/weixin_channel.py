@@ -25,7 +25,14 @@ COMMAND_RE = re.compile(r"^/(?:电脑|文件|dsh)(?=$|\s|[:：])", re.I)
 IMAGE_WORD_RE = re.compile(r"图\s*(?:\d|[一二三四五六七八九十]+)|第\s*[0-9一二三四五六七八九十]+\s*张|倒数|最新|刚才|刚刚|上一张|最后一张|这张|那张|该图|图片|照片|截图|图像", re.I)
 # 出现这些动词，说明用户是在「拿图片做事」，而不是随口提一句
 ACTION_RE = re.compile(r"做|写|生成|整理|改|转|处理|分析|识别|提取|翻译|制作|搞|弄|用|根据|基于")
-LATEST_IMAGE_HOURS = 1 / 6    # 没指定图片时，多久内收到的最新图片默认带上（10 分钟）
+# 「第N题 / 这题 / 那道题」——用户说的是图里的题，也算在指图（实测漏掉这个就会答「图也没过来」）
+QUESTION_WORD_RE = re.compile(r"第\s*[0-9一二三四五六七八九十]+\s*[题问]|这\s*[道个]?\s*题|那\s*[道个]?\s*题|"
+                              r"该\s*题|本\s*题|这\s*几\s*道?\s*题|几\s*道\s*题|题目|题\s*目|这道题|那道题")
+# 「讲一下 / 解一下 / 教我」这类求解口吻，同样说明在指着某张图
+SOLVE_RE = re.compile(r"讲一下|讲一讲|讲讲|讲下|讲解|讲一遍|说一下|说说|解释|教我|帮我讲|帮我解|"
+                      r"解一下|做一下|算一下|写一下|看一下|读一下|推导|求解|解答")
+LATEST_IMAGE_HOURS = 1 / 6    # 只是随口提问（没说图/题）时，多久内收到的最新图片默认带上（10 分钟）
+LATEST_IMAGE_HOURS_REF = 6.0  # 明确在说图/题/附图时放宽到 6 小时：先发图、过一会儿再问也算数
 LATEST_IMAGE_COUNT = 2        # 没指定图片时默认带几张：带两张，方便「那第二问呢」这类追问
 CURRENT_IMAGE_COUNT = 3       # 本条消息自带图片时最多带几张
 IMAGE_BLOCK_MARK = "[图片]"    # 提示块标记：上层据此判断「这条消息带了图片」
@@ -350,9 +357,10 @@ class ImageIndex:
         with self.lock:
             day = time.strftime("%Y%m%d")
             if self.data.get("day") != day:
+                # 只重置当天序号，**不清空 items**：跨天说「图3」时 resolve() 要靠它回退到
+                # 最近一次用过这个序号的图（note_for 会说明是哪天的），文件本来也都留在盘上。
                 self.data["day"] = day
                 self.data["seq"] = 0
-                self.data["items"] = []
             self.data["seq"] = int(self.data.get("seq", 0)) + 1
             record = {"n": self.data["seq"], "day": day,
                       "path": str(build_path(self.data["seq"], day)), "at": time.time(), "label": label}
@@ -532,16 +540,33 @@ class WeixinChannel:
             if candidates:
                 return "", candidates, False
             return "最近没有收到编号为图%d 的图片。" % unknown[0], [], False
-        task_like = bool(COMMAND_RE.match(text) or IMAGE_WORD_RE.search(text)
-                         or ATTACH_WORD_RE.search(text) or ACTION_RE.search(text)
-                         or IMAGE_ASK_RE.search(text))
-        latest = index.recent(LATEST_IMAGE_COUNT, hours=LATEST_IMAGE_HOURS)
-        if latest and task_like:
-            return self.image_block(latest, "用户未指定图片，带上最近收到的这几张（最新的在最后）："), [], False
-        if not latest and ATTACH_WORD_RE.search(text) and (COMMAND_RE.match(text) or ACTION_RE.search(text)):
+        # 明确在说「图/题/附图/命令」→ 给他更长的追溯时间（先发图、过一会儿再问也算数）；
+        # 只是随口提问 → 仍旧只认 10 分钟内的图，免得把几小时前的无关图片塞进来。
+        refers = bool(IMAGE_WORD_RE.search(text) or ATTACH_WORD_RE.search(text)
+                      or QUESTION_WORD_RE.search(text) or COMMAND_RE.match(text))
+        loose = bool(ACTION_RE.search(text) or IMAGE_ASK_RE.search(text) or SOLVE_RE.search(text))
+        if refers or loose:
+            hours = LATEST_IMAGE_HOURS_REF if refers else LATEST_IMAGE_HOURS
+            latest = index.recent(LATEST_IMAGE_COUNT, hours=hours)
+            if latest:
+                return self.image_block(latest, self._recent_note(latest)), [], False
+        if refers:
+            # 说了「第几题 / 这题」却一张图都对不上：让他把题发过来，别答「没收到」就完事
+            return "", [], True
+        if not index.recent(1, hours=LATEST_IMAGE_HOURS_REF) and ATTACH_WORD_RE.search(text) \
+                and (COMMAND_RE.match(text) or ACTION_RE.search(text)):
             # 手头一张图都没有，但说了「附图 / 见图」→ 先等他把图发过来
             return "", [], True
         return "", [], False
+
+    def _recent_note(self, records):
+        """没指名道姓时给模型的说明：写明是哪天几点收到的，并要求她回答时点一句用了哪张。"""
+        stamps = "、".join("图%d（%s %s）" % (r.get("n"), _day_label(r.get("day")),
+                                          time.strftime("%H:%M", time.localtime(r.get("at") or 0)))
+                          for r in records)
+        return ("用户没指明是哪张，带上最近收到的：%s。这些都**不是本条消息**里的图，"
+                "回答时顺口说一句你在看哪张（比如「按你上午发的那张图」），别让他以为图没发过来。"
+                % stamps)
 
     def image_list_text(self):
         index = self.image_index()

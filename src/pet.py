@@ -299,7 +299,12 @@ TTS_TEXT_SPEEDUP = 1.12        # 有语音时文字比朗读稍快一点（倍�
 MUSIC_FILE = os.path.join(ASSETS_DIR, "i_wanna.mp3")
 MUSIC_COVER_FILE = os.path.join(ASSETS_DIR, "i_wanna_cover.png")   # 歌曲封面（mp3 内嵌封面被去掉后用它）
 MUSIC_ALIAS = "deskpet_bgm"
-MUSIC_VOLUME = 850  # 0-1000，比满音量轻 15%
+MUSIC_VOLUME = 600  # 0-1000，默认比满音量轻四成（放歌当背景，别盖过语音和提示音）
+RESEARCH_ART_MIN_SEC = 1.6    # "低头看手机"差分最短展示时长（秒）：缓存命中/秒回也看得见
+RESEARCH_ART_TAIL_SEC = 0.9   # 资料到手后再留一点，像在翻刚查到的东西
+REMINDER_ART_SEC = 6.0
+REMINDER_PAUSE_SEC = 2.5      # 上一件事说完了，再停这么久才播报提醒（别插进别人句子里）
+REMINDER_DEFER_POLL_MS = 800  # 排队期间多久看一次"她忙完没有"        # "抱闹钟"差分的时间兜底（语音念提醒时靠它起步，气泡收掉就结束）
 
 # 播放时人物旁边旋转的唱片
 VINYL_SIZE_RATIO = 1.0     # 唱片直径 ≈ 按钮尺寸 × 此系数
@@ -500,6 +505,27 @@ def _tts_split(text, min_len=10, max_len=45):
     - 其余按句末标点切；过短的往后并；过长的优先在标点/空格处切开。
     """
     return [piece for piece, _block in _tts_segments(text, min_len, max_len)]
+
+
+# 语音只念中文和英文：日文假名、韩文、西里尔这些一律跳过。
+# 实测混进日文片段时合成会卡住，而且后面的整段语音都会变形。
+CJK_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF))
+CJK_PUNCT = "，。！？、；：""''（）《》【】—…·％“”‘’～·"
+
+
+def tts_keep(ch):
+    if ch.isascii():
+        return True                      # 英文字母、数字、常见标点
+    if any(lo <= ord(ch) <= hi for lo, hi in CJK_RANGES):
+        return True                      # 汉字
+    return ch in CJK_PUNCT or ch in " \t\n"
+
+
+def speakable(text):
+    """能念的部分：不能念的字符整段丢掉，从下一个中文/英文字符接着念。"""
+    cleaned = "".join(ch if tts_keep(ch) else " " for ch in (text or ""))
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip(" \t\n．。，,!?！？、；;：:·…")
 
 
 def _tts_gap(piece, following="", block_end=False):
@@ -2328,6 +2354,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._quiet_win = None
         self._quiet_fold = bool(self._settings.get("quiet_fold", True))
         self._web_search_on = bool(self._settings.get("web_search", True))
+        # 联网查资料的差分：搜到结果前一直挂着（还有最短展示时长，秒级搜索也看得见）
+        self._researching_active = False
+        self._researching_until = 0.0
+        self._researching_since = 0.0
         self._tts_en_phonemes = bool(self._settings.get("voice_en_phonemes", False))
         self._greeting_on = self._settings["greeting"]
         self._summary_on = self._settings["summary"]
@@ -2378,6 +2408,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         # 背景音乐（i wanna）状态：stopped / playing / paused
         self._music_state = "stopped"
         self._music_poll_id = None
+        try:
+            self._music_volume = max(0, min(1000, int(self._settings.get("music_volume", MUSIC_VOLUME))))
+        except Exception:
+            self._music_volume = MUSIC_VOLUME
         self._vinyl_win = None
         self._vinyl_lbl = None
         self._vinyl_base = None
@@ -2453,6 +2487,9 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._last_clip = ""
         self._clip_after = None
         self._reminder_after = None
+        self._deferred_reminders = []    # 她在忙时排队等播报的提醒
+        self._reminder_defer_id = None
+        self._reminder_idle_since = None
         self._greeting_after = None
         self._sound_path = self._prepare_sound()
         # 通用加载提示状态。
@@ -2498,6 +2535,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 self._save_settings()
         if self._animator and self.visible:
             self._update_automatic_actions(now)
+            self._update_reminder_hop(now)   # 提醒期间每 3 秒蹦一组
             x = self.pet.winfo_pointerx() - self.pet.winfo_rootx() - self.pet.winfo_width()/2
             y = self.pet.winfo_pointery() - self.pet.winfo_rooty() - self.pet.winfo_height()/3
             speaking = self._speaking_mouth(now)
@@ -3139,13 +3177,36 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         return (len(pixel)<4 or pixel[3]>=128) and pixel[:3]!=(0,0,1)
 
     def _pointer_on_button_stack(self,x,y):
-        if not self._buttons_visible:return False
-        windows=(self.gear,self.chatbtn,self.todobtn)
-        left=min(w.winfo_rootx() for w in windows)
-        top=min(w.winfo_rooty() for w in windows)
-        right=max(w.winfo_rootx()+w.winfo_width() for w in windows)
-        bottom=max(w.winfo_rooty()+w.winfo_height() for w in windows)
-        return left-4<=x<right+4 and top-4<=y<bottom+4
+        """鼠标是否在按钮条上；正在转的唱片也算——不然悬停/长按唱片时按钮会收起来。"""
+        if self._buttons_visible:
+            windows=(self.gear,self.chatbtn,self.todobtn)
+            left=min(w.winfo_rootx() for w in windows)
+            top=min(w.winfo_rooty() for w in windows)
+            right=max(w.winfo_rootx()+w.winfo_width() for w in windows)
+            bottom=max(w.winfo_rooty()+w.winfo_height() for w in windows)
+            if left-4<=x<right+4 and top-4<=y<bottom+4:
+                return True
+        vw=getattr(self,"_vinyl_win",None)
+        if vw is None:
+            return False
+        try:
+            vx,vy=vw.winfo_rootx(),vw.winfo_rooty()
+            return vx-4<=x<vx+vw.winfo_width()+4 and vy-4<=y<vy+vw.winfo_height()+4
+        except Exception:
+            return False
+
+    def _music_on(self):
+        """i wanna 还在放（含暂停）：这段时间按钮和唱片不收。"""
+        return getattr(self,"_music_state","stopped") in ("playing","paused")
+
+    def _show_button_stack(self):
+        """立刻露出三个按钮（不看鼠标在不在）。"""
+        if self._buttons_visible:
+            return
+        self._place_buttons()
+        for window in (self.gear,self.chatbtn,self.todobtn):
+            window.deiconify();window.lift()
+        self._buttons_visible=True
 
     def _update_button_hover(self,point=None,now=None):
         if not hasattr(self,'gear') or getattr(self,'_quitting',False):return
@@ -3157,12 +3218,11 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if self._pointer_on_pet(x,y) or self._pointer_on_button_stack(x,y):
             self._buttons_last_hover=now
             if not self._buttons_visible:
-                self._place_buttons()
-                for window in (self.gear,self.chatbtn,self.todobtn):
-                    window.deiconify();window.lift()
-                self._buttons_visible=True
+                self._show_button_stack()
         elif self._buttons_visible and now-self._buttons_last_hover>=.4:
-            self._hide_buttons()
+            # 放着歌的时候不收：按钮和唱片一直露着，直到音乐结束、唱片消失
+            if not self._music_on():
+                self._hide_buttons()
 
     def _poll_button_hover(self):
         self._buttons_hover_after=None
@@ -3915,6 +3975,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._speech_stop()
         self._conv_id+=1
         self._activity_saved_until=0
+        self._reporting_now()
+        self._reminder_art_until=0.0
+        self._reminder_art_pending=False
+        self._reminder_hop_last=None
         self._reminder_showing=False
         self._close_loading_bubble()
         self._close_think_bubble()
@@ -3991,8 +4055,13 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
 
     def _announce_search(self, reason=""):
         """要联网查的时候先说一句缓冲话：有语音就念出来（顺便盖住搜索耗时），
-        没语音就在气泡里显示，别让人盯着一个静止的省略号等网络。"""
+        没语音就在气泡里显示，别让人盯着一个静止的省略号等网络。
+        查资料的这一段她切"低头看手机"的差分，一直挂到资料到手（见 _search_done）。"""
         line = "让我查一下资料……"
+        self._announce_segments = 1        # 这句是缓冲话，不该触发"开始汇报"
+        self._researching_active = True
+        self._researching_since = time.monotonic()
+        self._researching_until = self._researching_since + RESEARCH_ART_MIN_SEC
         try:
             if self._voice_on:
                 self._tts_enqueue(line)
@@ -4000,6 +4069,21 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 self._ui(lambda: self._show_loading_bubble("让我查一下资料"))
         except Exception:
             _err_log("announce_search")
+
+    def _search_done(self):
+        """资料到手（或彻底没搜到）：**还不换回来**——她这会儿正在组织回答。
+        差分要一直挂到正文开始出声（见 _reporting_now），这样才看得出"查资料"这个过程。"""
+        self._researching_until = max(self._researching_until,
+                                      time.monotonic() + RESEARCH_ART_TAIL_SEC)
+
+    def _reporting_now(self):
+        """正文开始出来了（语音气泡开始显示文字 / 文字气泡开始显示）：查资料的差分到此为止。"""
+        self._announce_segments = 0
+        if not getattr(self, "_researching_active", False):
+            return
+        self._researching_active = False
+        self._researching_until = max(self._researching_until,
+                                      time.monotonic() + RESEARCH_ART_TAIL_SEC)
 
     def _web_evidence(self, text, my_conv=None):
         """该联网就搜一次，把摘要交回给模型；不搜 / 搜不到分别返回不同说明。"""
@@ -4017,10 +4101,13 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             return ""
         self._announce_search(reason)
         try:
-            found = web_search.search_cached(web_search.cleanup_query(text), SEARCH_CACHE_FILE)
+            query = web_search.search_query(text, reason)
+            found = web_search.search_cached(query, SEARCH_CACHE_FILE,
+                                             ttl=web_search.cache_ttl_for(reason))
         except Exception as exc:
             _err_log("web_search")
             found = {"query": "", "results": [], "error": type(exc).__name__}
+        self._search_done()          # 搜完了：差分再留一小会儿
         if not self._voice_on:
             self._ui(self._close_loading_bubble)
         if my_conv is not None and my_conv != self._conv_id:
@@ -4092,6 +4179,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._stream_full = clean_reply_style(text)
         if self._stream_win is None:
             self._close_think_bubble()
+            self._reporting_now()
             old = self._reply_win
             if old is not None:
                 try:
@@ -4272,14 +4360,19 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             if text is None:
                 self._tts_q.put(None)
             else:
-                t = (text or "").strip()
-                if t:
+                t = speakable(text)          # 日文之类先剔掉，别送进合成
+                if t.strip(" ．。,.!?！？、；;：:"):
                     self._tts_q.put((t, self._conv_id, gap_ms))
 
     def _voice_bubble_ensure(self):
         """确保语音气泡存在（没有就建一个）。"""
         if self._voice_win is not None:
             return
+        # 提醒的语音气泡就是"抱闹钟"差分的生命周期：气泡在，闹钟差分就在
+        def bind_reminder(window):
+            if getattr(self, "_reminder_art_pending", False):
+                self._reminder_art_pending = False
+                self._activity_reminder_win = window
         # 正在显示"思考"气泡 → 直接复用它的窗口，避免"关掉再新建"闪一下
         if self._dot_win is not None:
             self._dot_gen += 1   # 作废旧省略号定时器
@@ -4292,6 +4385,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._voice_set_text = set_text
             self._reply_win = win
             self._speech_start(win)
+            bind_reminder(win)
             return
         self._close_think_bubble()
         old = self._reply_win
@@ -4311,6 +4405,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._voice_set_text = set_text
         self._reply_win = win
         self._speech_start(win)
+        bind_reminder(win)
 
     def _voice_dots_start(self):
         """语音合成期间的"加载中"省略号动画（一直转到文字开始播放）。"""
@@ -4345,6 +4440,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         """语音模式下：把这句话逐字打进气泡。有语音时按【朗读时长】对齐（dur 秒），
         没拿到时长时回退到显示速度设置。"""
         try:
+            if getattr(self, "_announce_segments", 0) > 0:
+                self._announce_segments -= 1      # 这句是"让我查一下资料"：差分才刚开始
+            else:
+                self._reporting_now()             # 正文真的开始显示了：查资料的差分到此为止
             self._voice_bubble_ensure()
             self._voice_dots_stop()   # 停止加载省略号，开始打字
             self._voice_full = text or ""
@@ -4797,10 +4896,11 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             _sound_log("music: 找不到文件 %s" % MUSIC_FILE)
             self.say("找不到那首歌呢，先把它放进 assets 文件夹里吧。")
             return
-        if _mci_music_play(MUSIC_FILE):
+        if _mci_music_play(MUSIC_FILE, getattr(self, "_music_volume", MUSIC_VOLUME)):
             self._music_state = "playing"
             self._music_start_poll()
             try:
+                self._show_button_stack()   # 放歌期间按钮要一直露着
                 self._vinyl_show()
             except Exception:
                 _err_log("vinyl_show")
@@ -4822,12 +4922,32 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if _mci_music_resume():
             self._music_state = "playing"
             self._music_start_poll()
+            self._apply_music_volume()
             try:
                 self._vinyl_resume_spin()
             except Exception:
                 pass
         else:
             self._music_state = "stopped"
+
+    def _apply_music_volume(self):
+        """把当前音量作用到正在放的那首歌上（MCI 别名）。"""
+        try:
+            _mci_send('setaudio %s volume to %d' % (MUSIC_ALIAS, int(self._music_volume)))
+        except Exception:
+            _err_log("music_volume")
+
+    def _set_music_volume(self, value, save=True):
+        """0-1000；改完立刻生效，并（默认）写进设置。"""
+        try:
+            value = max(0, min(1000, int(value)))
+        except Exception:
+            return
+        self._music_volume = value
+        if self._music_on():
+            self._apply_music_volume()
+        if save:
+            self._save_settings()
 
     def _music_stop(self):
         _mci_music_stop()
@@ -5147,6 +5267,12 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
     def _play_reply(self, reply, is_reminder=False, activity=None):
         if getattr(self,'_quitting',False):return
         self._activity_saved_until=0
+        self._researching_active=False
+        self._researching_until=0.0
+        self._announce_segments=0
+        self._reminder_art_until=0.0
+        self._reminder_art_pending=False
+        self._reminder_hop_last=None
         reply=clean_reply_style(reply);self._close_think_bubble()
         old=self._reply_win
         if old is not None:
@@ -5988,8 +6114,14 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
 
     # ---------- 背景音乐菜单 ----------
     def _add_menu_music(self, win):
-        """背景音乐控制：随播放状态显示 播放 / 暂停 / 继续 / 结束。"""
+        """背景音乐控制：随播放状态显示 播放 / 暂停 / 继续 / 结束；在放的时候最上面还有音量。"""
         st = getattr(self, "_music_state", "stopped")
+        if st in ("playing", "paused"):
+            mark = self._add_menu_submenu(win, self._volume_menu_text(), self._build_volume_menu, width=12)
+            try:
+                self._volume_menu_label = mark.master.winfo_children()[0]
+            except Exception:
+                self._volume_menu_label = None
         if st == "playing":
             self._add_menu_item(win, "暂停播放", self._music_pause)
             self._add_menu_item(win, "结束播放", self._music_stop)
@@ -5998,6 +6130,36 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._add_menu_item(win, "结束播放", self._music_stop)
         else:
             self._add_menu_item(win, "播放 i wanna", self._music_play, width=18)
+
+    def _volume_menu_text(self):
+        return "音量 %d%%" % int(round(getattr(self, "_music_volume", MUSIC_VOLUME) / 10.0))
+
+    def _build_volume_menu(self, sub, level):
+        """「音量 ›」展开就是一个滑条：拖着立刻听得见，松手自动记住（没有关闭按钮）。"""
+        row = tk.Frame(sub, bg="#f0f0f0")
+        row.pack(fill="x", padx=12, pady=6)
+        value = tk.IntVar(master=sub, value=max(0, min(100,
+                                                       int(round(self._music_volume / 10.0)))))
+        label = tk.Label(row, text="%d%%" % value.get(), bg="#f0f0f0", fg="#5a5a5a", anchor="w")
+
+        def on_move(raw):
+            percent = int(float(raw))
+            self._set_music_volume(percent * 10, save=False)
+            try:
+                label.config(text="%d%%" % percent)
+                if self._volume_menu_label is not None:
+                    self._volume_menu_label.config(text="音量 %d%%" % percent)
+            except Exception:
+                pass
+
+        scale = tk.Scale(row, from_=0, to=100, orient="horizontal", variable=value, length=170,
+                         bg="#f0f0f0", highlightthickness=0, bd=0, troughcolor="#d8d8d8",
+                         activebackground="#8fb0e0", command=on_move, font=("Microsoft YaHei", 9))
+        scale.pack(side="left")
+        label.pack(side="left", padx=(8, 0))
+        for widget in (row, scale, label):
+            widget.bind("<Enter>", lambda e: self._cancel_hide_submenu())
+        scale.bind("<ButtonRelease-1>", lambda e: self._save_settings())   # 松手即保存
 
 
     def _add_menu_option(self, win, text, options, get_key, set_key, level=0, width=12):
@@ -6287,6 +6449,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             "quiet_apps": list(getattr(self, "_quiet_apps", [])),
             "voice_en_phonemes": bool(getattr(self, "_tts_en_phonemes", False)),
             "web_search": bool(getattr(self, "_web_search_on", True)),
+            "music_volume": int(getattr(self, "_music_volume", MUSIC_VOLUME)),
         }
         self._settings.update(data)
         with _FILE_LOCK:
@@ -6427,6 +6590,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._peek_side = side if side in ("left", "right") else "left"
         # 隐藏到托盘 = 结束当前对话（终止气泡、清空在途回复）
         self._cancel_reply()
+        if getattr(self, '_deferred_reminders', None):
+            self._pending_reminders.extend(self._deferred_reminders)
+            self._deferred_reminders = []
+            self._reminder_idle_since = None
         # 按设置释放语音服务（省显存/内存）：now=立即，1/5=几分钟后，off=不释放
         if self._voice_on and self._tts_stop_id is None:
             if self._tts_release == "now":
@@ -6749,7 +6916,6 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             except Exception:
                 pass
 
-
     def say(self, text, is_reminder=False, source=None, activity=None, valid_if=None):
         """让桌宠用气泡说一句话（走分段打字效果）。
         is_reminder=True 时，气泡显示期间禁止打开对话框。
@@ -6768,6 +6934,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._log_chat("assistant", text, kind="computer_question" if source=='文件询问' else "proactive" if source else "chat")
             if is_reminder:
                 self._reminder_showing = True
+                # 抱闹钟的差分：文字气泡那条路由 _play_reply 挂窗口，语音那条路在这里挂
+                # （语音不经过 _play_reply，之前就是这个原因导致有语音时闹钟差分从不出现）
+                self._reminder_art_until = time.monotonic() + REMINDER_ART_SEC
+                self._reminder_art_pending = True
             if self._should_sound(is_reminder):
                 self._ui(self.play_sound)
             def play():
@@ -6844,9 +7014,80 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
 
 
 
+    def _reminder_busy(self):
+        """她现在手上还有事吗：查资料、正在说话（语音或文字气泡）、文件任务在跑。
+        这些时候提醒必须排队——不然差分被顶掉、语音和文字还会插进别人的句子中间。"""
+        try:
+            if self._research_art_active():
+                return True
+        except Exception:
+            pass
+        try:
+            if self._is_speaking() or self._tts_pending():
+                return True
+        except Exception:
+            pass
+        state=getattr(self,'_computer_state',{}) or {}
+        token=getattr(self,'_computer_cancel',None)
+        return bool(state.get('executing') and token is not None and not token.is_set())
+
+    def _tts_pending(self):
+        """语音还在排队/合成/播放（气泡已经收了但还有话没念完）。"""
+        for name in ('_tts_q','_synth_q'):
+            queue_obj=getattr(self,name,None)
+            try:
+                if queue_obj is not None and not queue_obj.empty():
+                    return True
+            except Exception:
+                pass
+        return getattr(self,'_voice_win',None) is not None
+
+    def _defer_reminder(self, text, due=None, todo_id=None):
+        """她在忙：排进队里，等忙完再播报。"""
+        self._deferred_reminders.append({"text": text, "due": due, "todo_id": todo_id})
+        self._reminder_idle_since = None
+        _sound_log("reminder: 她在忙，延后播报（队列 %d）" % len(self._deferred_reminders))
+        self._start_reminder_defer_poll()
+
+    def _start_reminder_defer_poll(self):
+        if getattr(self, '_reminder_defer_id', None) is not None:
+            return
+        try:
+            self._reminder_defer_id = self.root.after(REMINDER_DEFER_POLL_MS,
+                                                      self._poll_deferred_reminders)
+        except Exception:
+            self._reminder_defer_id = None
+
+    def _poll_deferred_reminders(self):
+        """等"她忙完 + 再静 2.5 秒"，然后才播报排在最前面的那条提醒。"""
+        self._reminder_defer_id = None
+        if getattr(self, '_quitting', False) or not self._deferred_reminders:
+            self._reminder_idle_since = None
+            return
+        if self._reminder_busy() or not self.visible:
+            self._reminder_idle_since = None
+            self._start_reminder_defer_poll()
+            return
+        now = time.monotonic()
+        if self._reminder_idle_since is None:
+            self._reminder_idle_since = now      # 手上这件事刚结束：开始计时
+        if now - self._reminder_idle_since < REMINDER_PAUSE_SEC:
+            self._start_reminder_defer_poll()
+            return
+        self._reminder_idle_since = None
+        item = self._deferred_reminders.pop(0)
+        if self._deferred_reminders:
+            self._start_reminder_defer_poll()
+        self._fire_reminder(item["text"], item.get("due"), item.get("todo_id"))
+
     def _fire_reminder(self, text, due=None, todo_id=None):
         """触发提醒：若可见则弹气泡（是否出声由设置决定）；若折叠则只出声、记录待补说。
         提醒气泡显示期间禁止打开对话框。"""
+        if self.visible and self._reminder_busy():
+            # 她正在查资料 / 正在说话 / 文件任务在跑：这会儿插播会把差分和语音都搅乱，
+            # 先排队，等手上这件事结束后再停两秒半开始播报（见 _poll_deferred_reminders）
+            self._defer_reminder(text, due, todo_id)
+            return
         if self.visible:
             self._active_todo_id=todo_id
             item=next((r for r in self.todos if r['id']==todo_id),None) if todo_id else None

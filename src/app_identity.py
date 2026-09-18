@@ -1,6 +1,6 @@
 """Application identity is separate from character-card versions."""
 APP_NAME = "静香助手"
-APP_VERSION = "0.8.3"
+APP_VERSION = "0.8.4"
 APP_ID = "ShizukaAssistant"
 DEFAULT_CHARACTER = "shizuka"
 DEFAULT_PACK = "shizuka-side-motion"

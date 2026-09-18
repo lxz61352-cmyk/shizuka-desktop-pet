@@ -73,6 +73,11 @@
     720,
     280
   ],
+  "activity_frames": {
+    "researching": "activity/researching.png",
+    "reminder": "activity/reminder.png",
+    "listening": "activity/listening.png"
+  },
   "layers": [
     {
       "id": "hair-right",

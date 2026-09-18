@@ -6,6 +6,8 @@ import re
 import math
 
 IDENTIFIER = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}\Z")
+# 活动差分能用的状态名：整身帧直接贴上去（代码里 select_activity 认得这些状态）
+ACTIVITY_STATES = {"working", "reminder", "exit", "awaiting_answer", "researching", "listening"}
 
 
 @dataclass(frozen=True)
@@ -112,8 +114,9 @@ def load_pack(directory):
             for relative in bodies.values():pack.asset(relative)
         activities=manifest.get('activity_frames')
         if activities is not None:
-            if not isinstance(activities,dict) or not {'working','reminder','exit'}<=set(activities) or not set(activities)<={'working','reminder','exit','awaiting_answer'}:
-                raise ValueError('Activity frames need working, reminder and exit')
+            # 有哪几张就给哪几张：缺的状态自动回落到常态立绘，不强求凑齐一套。
+            if not isinstance(activities,dict) or not activities or not set(activities)<=ACTIVITY_STATES:
+                raise ValueError('Activity frames must be a non-empty map of known states')
             for relative in activities.values():pack.asset(relative)
         question=manifest.get('question_effect')
         if question is not None:

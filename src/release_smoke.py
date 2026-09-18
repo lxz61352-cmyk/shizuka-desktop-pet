@@ -165,6 +165,74 @@ def run(pet):
             time.sleep(0.3)
             assert routed==['weather','news'],routed
             checks.append('Weather/news/update modules load offline and route to their workers')
+            # 活动差分：放 i wanna 换和服、联网查资料换看手机、待办提醒换抱闹钟
+            from pet_motion import Pose
+            states={}
+            app._music_state='playing'
+            states['listening']=app._activity_pose(Pose()).state
+            app._music_state='stopped'
+            app._researching_active=True
+            states['researching']=app._activity_pose(Pose()).state
+            app._researching_active=False
+            app._activity_saved_until=time.monotonic()+5
+            states['reminder']=app._activity_pose(Pose()).state
+            app._activity_saved_until=0
+            assert states=={'listening':'listening','researching':'researching','reminder':'reminder'},states
+            checks.append('Activity frames: kimono while playing, phone while searching, alarm clock on reminders')
+            # 放歌期间三个按钮和唱片不吃"鼠标移开就收起"，音乐停掉才照旧收
+            assert app.visible
+            app._buttons_visible=True
+            app._music_state='playing'
+            app._update_button_hover(point=(0,0),now=time.monotonic()+999)
+            assert app._buttons_visible,'放歌时按钮和唱片不该收起'
+            app._music_state='stopped'
+            app._update_button_hover(point=(0,0),now=time.monotonic()+999)
+            assert not app._buttons_visible,'音乐停了按钮该照旧收起'
+            checks.append('Buttons and vinyl stay up while i wanna plays')
+            # 音量：二级菜单里一个滑条，拖完自动保存
+            app._set_music_volume(1500)
+            assert app._music_volume==1000,app._music_volume          # 越界要夹住
+            app._set_music_volume(520)
+            assert app._volume_menu_text()=='音量 52%',app._volume_menu_text()
+            sub=tk.Toplevel(app.root);app._menu_marks={};app._submenus=[]
+            app._build_volume_menu(sub,1);app.root.update()
+            scales=[w for w in sub.winfo_children()[0].winfo_children() if isinstance(w,tk.Scale)]
+            assert len(scales)==1 and scales[0].get()==52,[w.get() for w in scales]
+            scales[0].set(30);app.root.update()
+            assert app._music_volume==300,app._music_volume
+            app._set_music_volume(600);sub.destroy()
+            checks.append('Music volume slider lives in the menu and remembers itself')
+            # 提醒不插播：她在查资料/说话时排队，等忙完 + 静 2.5 秒才播报
+            app._deferred_reminders=[];app._reminder_idle_since=None;app._reminder_defer_id=None
+            app._researching_active=True;app._researching_until=0.0
+            said=[]
+            original_say=app.say
+            app.say=lambda text,**kwargs:said.append(text) or True
+            try:
+                app._fire_reminder('该喝水了',None,None)      # 她忙着查资料：该排队
+                assert said==[] and len(app._deferred_reminders)==1,app._deferred_reminders
+                app._researching_active=False;app._researching_until=0.0
+                app._poll_deferred_reminders()                # 刚忙完：开始计时，还不播
+                assert said==[],said
+                app._reminder_idle_since=time.monotonic()-3.0
+                app._poll_deferred_reminders()                # 静够 2.5 秒了才播
+                assert said==['该喝水了'] and app._deferred_reminders==[],(said,app._deferred_reminders)
+            finally:
+                app.say=original_say
+                app._reminder_idle_since=None
+            checks.append('Reminders wait for the current task and a short pause')
+            # 联网搜资料：搜索词按意图补词、多源合并排序、标题对不上题的清掉、正文优先于摘要
+            import web_search
+            assert web_search.search_query('iPhone 18 什么时候发布','日期')=='iPhone 18 发布时间'
+            assert web_search.clean_snippet('{"_waf_bd8ce2ce37":"x"}')==''
+            assert web_search.date_of({'title':'2026-09-11 发布'})=='2026-09-11'
+            junk=[{'title':'最新滚动新闻_网易新闻中心','url':'https://news.163.com/','snippet':'城市更新'}]
+            assert web_search.on_topic(junk,*reversed(web_search._terms('最新的 AI 模型')))==[]
+            mixed=[{'title':'Apple 发布 iPhone 18 Pro','url':'https://apple.com.cn/news/1','snippet':''},
+                   {'title':'今日热榜','url':'https://tophub.today/','snippet':'床虱酒店地图'}]
+            words,grams=web_search._terms('iPhone 18 发布时间')
+            assert [r['title'] for r in web_search.on_topic(mixed,grams,words)]==['Apple 发布 iPhone 18 Pro']
+            checks.append('Search strategy: intent query, multi-source rerank, page text over snippets')
             from openai import OpenAI
             OpenAI(api_key='offline-fixture',base_url='http://127.0.0.1:1').close()
             checks.append('Bundled API client loads offline')

@@ -1,5 +1,6 @@
 """Layer compositor and lightweight interactions; no Cubism runtime is claimed."""
 import math
+import time
 from PIL import Image, ImageDraw, ImageFilter, ImageChops, ImageFont
 from pet_motion import Pose
 from dataclasses import replace
@@ -37,6 +38,11 @@ class LayeredRenderer:
         self._split_ok = False
         self._fonts = {}
         self._figure_bbox = None
+        # 进/出整身差分时的渐变（放歌那种一挂几分钟的最明显，硬切很跳）
+        self._last_frame = None
+        self._fade_from = None
+        self._fade_state = None
+        self._fade_started = 0.0
         self.expression_frames={}
         reference_alpha=None
         for name,relative in pack.manifest.get("expression_frames",{}).items():
@@ -227,6 +233,16 @@ class LayeredRenderer:
         return groups
 
     @staticmethod
+    def _shift(img,dy):
+        """纯上下平移：只做整数像素的贴图，省掉一次整图重采样（差分挂着时每帧都走）。"""
+        offset=int(round(dy))
+        if offset==0:
+            return img
+        out=Image.new("RGBA",img.size)
+        out.paste(img,(0,offset))
+        return out
+
+    @staticmethod
     def _move(img,angle=0.0,dx=0.0,dy=0.0,anchor=(0.5,0.4)):
         if abs(angle)+abs(dx)+abs(dy)<1e-8:
             return img
@@ -403,6 +419,18 @@ class LayeredRenderer:
             result=groups['figure'].copy()
             if pose.state=='awaiting_answer' and self.question_effect and pose.activity_progress<1:
                 result=self._question_frame(pose.activity_progress)
+            elif animated:
+                # 整身差分不会自己眨眼，长时间挂着（比如放着歌）容易看着像一张静止的图：
+                # 留一点呼吸起伏；蹦跳（提醒那组）也走这里，只是别把头顶切出画布。
+                dy=pose.dy*h+breath*3
+                box=self._figure_bbox
+                if dy<0 and box:
+                    dy=max(dy,-float(box[1]))
+                if abs(pose.angle)<0.05:
+                    # 呼吸/蹦跳基本只是上下平移：整数像素贴一下就好，别每帧整图重采样
+                    result=self._shift(result,dy)
+                else:
+                    result=self._safe_move(result,pose.angle,dy,pose.anchor,pinned=pinned)
         elif pose.state in self.body_frames:
             # Preserve the authored face/head and body pose. Only actual mouse
             # inertia rotates the whole figure, around the existing cursor pivot.
@@ -444,8 +472,41 @@ class LayeredRenderer:
                                        pose.anchor,pinned=pinned)
         if animated and pose.sleep_fx>0 and pose.state not in self.activity_frames:
             result.alpha_composite(self._sleep_effect(pose,color_key))
+        result=self._activity_crossfade(result,pose.state,animated)
         if color_key:
             rgb=Image.new("RGB",result.size,(0,0,1))
             rgb.paste(result.convert("RGB"),mask=result.getchannel("A").point(lambda a:255 if a>=128 else 0))
             return rgb
         return result
+
+    ACTIVITY_FADE_SEC=0.40
+
+    def _activity_crossfade(self,result,state,animated):
+        """进出整身差分时淡入淡出（放歌一挂几分钟，硬切很跳）。
+
+        只在"和差分管不着"的时候保留过渡：拖动/下落/摸头这些要立刻反应，不做淡入。
+        """
+        if not animated or self.size is None:
+            self._fade_from=None;self._fade_state=state;self._last_frame=result
+            return result
+        now=time.monotonic()
+        was=self._fade_state
+        if was!=state:
+            self._fade_state=state
+            if state in self.activity_frames or was in self.activity_frames:
+                self._fade_from=self._last_frame
+                self._fade_started=now
+            else:
+                self._fade_from=None
+        self._last_frame=result
+        # 渐变只在切换那 0.4 秒里有开销，而且是两次整图混合；状态没变就别掺和
+        source=self._fade_from
+        if source is None or source.size!=result.size:
+            return result
+        p=(now-self._fade_started)/self.ACTIVITY_FADE_SEC
+        if p>=1.0:
+            self._fade_from=None
+            return result
+        p=max(0.0,min(1.0,p))
+        p=p*p*(3-2*p)          # 平滑一点，别线性
+        return Image.blend(source,result,p)

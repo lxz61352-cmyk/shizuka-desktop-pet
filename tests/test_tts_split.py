@@ -93,9 +93,13 @@ class _Speaker:
 
     def __init__(self):
         self.calls = []
+        self._researching_active = True   # 开局当作正在查资料：汇报时该被清掉
 
     def _tts_enqueue(self, text, gap_ms=None):
         self.calls.append((text, gap_ms))
+
+    def _reporting_now(self):
+        self._researching_active = False
 
 
 class PauseTests(unittest.TestCase):

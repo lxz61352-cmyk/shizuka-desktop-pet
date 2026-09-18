@@ -2,6 +2,7 @@
 from pathlib import Path
 import sys
 import tempfile
+import time
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from weixin_channel import ImageIndex, WeixinChannel, cn_number
@@ -17,9 +18,10 @@ def build_index(root, count=3):
 
 
 class ChannelStub:
-    """只借用 image_context 需要的两个成员，避免起 Tk。"""
+    """只借用 image_context 需要的几个成员，避免起 Tk。"""
     image_block = staticmethod(WeixinChannel.image_block)
     image_context = WeixinChannel.image_context
+    _recent_note = WeixinChannel._recent_note
 
     def __init__(self, index):
         self._index = index
@@ -124,6 +126,78 @@ class BlockParsingTests(unittest.TestCase):
 
     def test_visible_text_without_block_is_unchanged(self):
         self.assertEqual(weixin_visible_text("  讲下这道题  "), "讲下这道题")
+
+
+class DayRolloverTests(unittest.TestCase):
+    """跨天的记录不能丢：序号按天重置，但昨天的图还要能按序号回退到。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.index = build_index(self.tmp.name, count=2)     # 今天的图1、图2
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_items_survive_the_day_change(self):
+        self.index.data["day"] = "20000101"                  # 假装昨天
+        record = self.index.add(lambda n, day: Path(self.tmp.name) / ("图%d-%s.jpg" % (n, day)))
+        self.assertEqual(record["n"], 1)                     # 序号重新从 1 开始
+        self.assertEqual(len(self.index.data["items"]), 3)   # 昨天的两条还在
+        found, unknown = self.index.resolve("图2")
+        self.assertEqual([r["n"] for r in found], [2])
+        self.assertEqual(unknown, [])
+
+    def test_items_are_capped(self):
+        for _ in range(60):
+            self.index.add(lambda n, day: Path(self.tmp.name) / ("x%d.jpg" % n))
+        self.assertEqual(len(self.index.data["items"]), 50)
+
+
+class NumberedQuestionTests(unittest.TestCase):
+    """「讲一下第三题」这种说法：图是刚发的，必须能带上（实测就是这里没认出来）。"""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.index = build_index(self.tmp.name, count=1)
+        self.channel = ChannelStub(self.index)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _age(self, minutes):
+        for record in self.index.data["items"]:
+            record["at"] = time.time() - minutes * 60
+        self.index._save()
+
+    def test_just_sent_image_is_attached(self):
+        self._age(0.05)
+        block, ask, wait = self.channel.image_context("讲一下第三题", [])
+        self.assertIn("[图片]", block)
+        self.assertEqual((ask, wait), ([], False))
+
+    def test_same_question_an_hour_later_still_works(self):
+        self._age(90)
+        block, _ask, wait = self.channel.image_context("这题怎么做", [])
+        self.assertIn("[图片]", block)
+        self.assertFalse(wait)
+
+    def test_plain_question_does_not_reach_back(self):
+        self._age(90)
+        block, _ask, wait = self.channel.image_context("今天天气怎么样", [])
+        self.assertEqual(block, "")
+        self.assertFalse(wait)
+
+    def test_nothing_matching_asks_for_the_image(self):
+        self._age(600)
+        block, _ask, wait = self.channel.image_context("讲一下第三题", [])
+        self.assertEqual(block, "")
+        self.assertTrue(wait)      # 让她明确说「把题目发过来」，而不是答「没收到」
+
+    def test_note_says_which_image_and_asks_her_to_mention_it(self):
+        self._age(2)
+        block, _ask, _wait = self.channel.image_context("讲一下第三题", [])
+        self.assertIn("不是本条消息", block)
+        self.assertIn("哪张", block)
 
 
 if __name__ == "__main__":
