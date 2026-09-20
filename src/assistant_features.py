@@ -41,6 +41,7 @@ class AssistantFeaturesMixin:
         self._add_menu_speed(sub, W, level)
         self._menu_separator(sub)
         self._add_menu_voice(sub, W)
+        self._add_menu_tts_lang(sub, W, level)
         self._add_menu_en_phonemes(sub, W)
         self._add_menu_item(sub, "配置语音（GPT-SoVITS）…", self._pick_gsv_dir, W)
         if self._voice_on:

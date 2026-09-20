@@ -36,6 +36,24 @@ def run(pet):
             assert any('Fixture Journal' in m['content'] for m in messages)
             assert not any(m['content']=='继续说说这篇研究。' for m in messages)
             app.show_chat_log();app.root.update();checks.append('Conversation history and proactive continuation context')
+            # 新的输入框：分层外框贴素材原图（真 alpha）+ 内框里的深蓝字 + 按下带阴影的发送键
+            app.open_chat_input();app.root.update()
+            import conversation_ui
+            win=app._chat_win
+            assert getattr(win,'_frame_win',None) is not None
+            assert app._chat_entry.cget('fg')==conversation_ui.CHAT_INK,app._chat_entry.cget('fg')
+            assert app._chat_entry.cget('bg')==conversation_ui.CHAT_TEXT_FILL
+            x1,y1,x2,y2=conversation_ui.chat_text_rect(*win._frame_size)
+            assert x1<win._frame_offset[0]<x2 and y1<win._frame_offset[1]<y2,(win._frame_offset,(x1,y1,x2,y2))
+            assert app._chat_photos[1].width==app._chat_photos[2].width   # 发送键两态同尺寸
+            app.close_chat_win();app.root.update()
+            checks.append('New composer artwork: layered frame, dark blue text, pressed send key')
+            # 回复气泡：外框走分层窗口（真 alpha），内容窗盖在内框上
+            app._show_think_bubble();app.root.update()
+            assert getattr(app._dot_win,'_frame_win',None) is not None
+            assert app._dot_win._frame_offset and app._dot_win._frame_visible
+            app._close_think_bubble();app.root.update()
+            checks.append('Reply bubble: layered frame with true per-pixel alpha')
             app.show_computer_assistant();app.root.update()
             from computer_agent import DshInstallation
             command=DshInstallation('node','bin.js').command('fixture')

@@ -1,61 +1,10 @@
 """Quiet ivory/slate controls shared by the conversation and todo panels."""
-import math
 import tkinter as tk
 from tkinter import ttk
 
 BG='#F3F3F0';CARD='#FFFFFF';INK='#29343B';MUTED='#697780';ACCENT='#486773';LINE='#DFE4E4'
 FONT=('Microsoft YaHei UI',10)
-TRANS_COLOR='#000001'   # 色键透明（与 pet.TRANS_COLOR 一致）
 
-
-def _rounded_points(x1,y1,x2,y2,r,steps=6):
-    """圆角矩形的顶点。必须自己把圆弧采样成很多点——之前用 create_polygon(smooth=True)
-    只给了 4 个角点，Tk 的样条只在角上切掉约 1~2px，等于没有圆角。"""
-    pts=[]
-    corners=[(x2-r,y1+r,-90),(x2-r,y2-r,0),(x1+r,y2-r,90),(x1+r,y1+r,180)]
-    for cx,cy,start in corners:
-        for i in range(steps+1):
-            ang=math.radians(start+90.0*i/steps)
-            pts.append((cx+r*math.cos(ang),cy+r*math.sin(ang)))
-    return pts
-
-
-def round_window(win,radius=8):
-    """给窗口加一点小圆角。Tk 的窗口是方的，做法是：
-    窗口背景设成色键透明 → 用 Canvas 画一个圆角矩形当底 → 调用方把内容用
-    padx/pady=radius 往里缩，四角才会露出来（露出的部分就是透明的）。"""
-    canvas=tk.Canvas(win,bg=TRANS_COLOR,highlightthickness=0,bd=0)
-    canvas.place(x=0,y=0,relwidth=1,relheight=1)
-    try:
-        win.configure(bg=TRANS_COLOR)
-        win.attributes('-transparentcolor',TRANS_COLOR)
-    except Exception:
-        pass
-    # 注意：Canvas.lower 被重载成「canvas 内部图元」的操作，压不动这个控件本身，
-    # 得走 tk.Misc.lower 把它压到同级控件的最下面，否则会盖住后建的内容（聊天框就是这么被挡住的）。
-    try:
-        tk.Misc.lower(canvas)
-    except Exception:
-        pass
-
-    def redraw(event=None):
-        try:
-            w=max(1,win.winfo_width());h=max(1,win.winfo_height())
-            r=max(0,min(radius,w//2,h//2))
-            canvas.delete('bg')
-            pts=_rounded_points(0,0,w,h,r)
-            canvas.create_polygon([v for p in pts for v in p],fill=CARD,outline=LINE,
-                                  width=1,tags='bg')
-            canvas.lower('bg')
-        except Exception:
-            pass
-
-    win.bind('<Configure>',redraw)
-    try:
-        win.after(0,redraw)
-    except Exception:
-        pass
-    return canvas
 
 def configure(root):
     style=ttk.Style(root)

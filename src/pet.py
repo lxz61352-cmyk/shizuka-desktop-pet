@@ -507,23 +507,31 @@ def _tts_split(text, min_len=10, max_len=45):
     return [piece for piece, _block in _tts_segments(text, min_len, max_len)]
 
 
-# 语音只念中文和英文：日文假名、韩文、西里尔这些一律跳过。
+# 语音默认只念中文和英文：日文假名、韩文、西里尔这些一律跳过。
 # 实测混进日文片段时合成会卡住，而且后面的整段语音都会变形。
+# 例外：朗读语言选日文时（speakable(kana=True)）假名要留着，否则日语回复会被剔成空。
 CJK_RANGES = ((0x3400, 0x4DBF), (0x4E00, 0x9FFF), (0xF900, 0xFAFF))
+KANA_RANGES = ((0x3040, 0x30FF), (0x31F0, 0x31FF), (0xFF66, 0xFF9F))
+KANA_PUNCT = "「」『』〜"
 CJK_PUNCT = "，。！？、；：""''（）《》【】—…·％“”‘’～·"
 
 
-def tts_keep(ch):
+def tts_keep(ch, kana=False):
     if ch.isascii():
         return True                      # 英文字母、数字、常见标点
     if any(lo <= ord(ch) <= hi for lo, hi in CJK_RANGES):
         return True                      # 汉字
+    if kana:
+        if any(lo <= ord(ch) <= hi for lo, hi in KANA_RANGES):
+            return True                  # 假名（日语朗读）
+        if ch in KANA_PUNCT:
+            return True
     return ch in CJK_PUNCT or ch in " \t\n"
 
 
-def speakable(text):
+def speakable(text, kana=False):
     """能念的部分：不能念的字符整段丢掉，从下一个中文/英文字符接着念。"""
-    cleaned = "".join(ch if tts_keep(ch) else " " for ch in (text or ""))
+    cleaned = "".join(ch if tts_keep(ch, kana) else " " for ch in (text or ""))
     cleaned = re.sub(r"\s+", " ", cleaned)
     return cleaned.strip(" \t\n．。，,!?！？、；;：:·…")
 
@@ -1002,7 +1010,8 @@ def run_installer():
 
 # ---------------- 记忆系统 ----------------
 MEMORY_FILE = os.path.join(CHARACTER_DATA_DIR, "memory.json")
-MEMORY_INJECT_MAX = 15        # 每次对话注入的非永久记忆上限
+MEMORY_INJECT_MAX = 15        # 每次对话注入的相关记忆条数上限
+PINNED_QUOTA = 5              # 其中给「永久记忆」的保底名额（按最近使用挑）
 CHATLOG_DIR = os.path.join(CHARACTER_DATA_DIR, "对话记录")
 CHATLOG_FILE = os.path.join(CHATLOG_DIR, "对话记录.json")   # 「查看对话」持久化
 STREAM_CPS = 20               # 默认流式显示速度（字/秒），实际按 _speed 取值
@@ -1201,8 +1210,12 @@ class MemoryStore:
             it.setdefault("created", now)
             it.setdefault("last_used", now)
             it.setdefault("content", "")
-        # 永久记忆在前，其余按 last_used 降序
-        self.items.sort(key=lambda x: (not x["pinned"], -x["last_used"]))
+            # 冲突/演化用：被新事实推翻的条目保留在库里，只是不再注入
+            it.setdefault("status", "active")
+            it.setdefault("supersedes", [])
+            it.setdefault("superseded_by", None)
+        # 生效的永久记忆在前，其余按 last_used 降序；被取代的沉到最后
+        self.items.sort(key=lambda x: (x.get("status") == "superseded", not x["pinned"], -x["last_used"]))
 
     def exists_content(self, content):
         c = content.strip()
@@ -1219,7 +1232,7 @@ class MemoryStore:
             if (it.get("content") or "").strip()==content:return it
         return None
 
-    def add(self, content, pinned=False):
+    def add(self, content, pinned=False, replaces=None):
         content = content.strip()
         with self._lock:
             if not content or self.exists_content(content):
@@ -1233,13 +1246,25 @@ class MemoryStore:
                 self.normalize()
                 return False
             now = time.time()
+            new_id = "m" + uuid.uuid4().hex[:12]
+            supersedes = []
+            # 新事实明确推翻旧记忆时：旧的标 superseded（保留在库里，只退出注入），互相留链
+            for ident in (replaces or ()):
+                for it in self.items:
+                    if it.get("id") == ident and it.get("status", "active") != "superseded":
+                        it["status"] = "superseded"
+                        it["superseded_by"] = new_id
+                        supersedes.append(ident)
             self.items.append({
-                "id": "m" + uuid.uuid4().hex[:12],
+                "id": new_id,
                 "content": content,
                 "pinned": pinned,
                 "created": now,
                 "last_used": now,
                 "use_count": 0,
+                "status": "active",
+                "supersedes": supersedes,
+                "superseded_by": None,
             })
             self.normalize()
             return True
@@ -1247,6 +1272,18 @@ class MemoryStore:
     def dedup(self):
         """No model-directed deletion of persistent records."""
         with self._lock:self.normalize()
+
+    def rewrite(self, mapping):
+        """按 id 替换条目文字（用户在「查看记忆」里手动点「整理」时用）。
+        只改措辞、不合并、不删除；内容长度不合理的一律不动。返回改了几条。"""
+        changed = 0
+        with self._lock:
+            for it in self.items:
+                new = ' '.join((mapping.get(it.get('id')) or '').split())
+                if new and 4 <= len(new) <= 160 and new != it.get("content"):
+                    it["content"] = new
+                    changed += 1
+        return changed
 
     def mark_used(self, ids):
         now = time.time()
@@ -1258,37 +1295,42 @@ class MemoryStore:
                     it["use_count"] += 1
 
     def injectable(self, query=""):
-        """返回注入用记忆：优先用本地语义 embedding 排序（服务不可用则回退字面重合），
-        永久记忆略有加权；总量上限 MEMORY_INJECT_MAX。"""
+        """返回注入用记忆：永久记忆先占保底名额，其余按相关度补满（服务不可用则回退字面重合）。
+        被取代（status=superseded）的条目不再注入——冲突在记忆层解决，不丢给主模型临场判断。"""
         with self._lock:
-            items = list(self.items)
+            items = [it for it in self.items if it.get("status", "active") != "superseded"]
+        if not items:
+            return []
+        pinned = sorted([it for it in items if it.get("pinned")],
+                        key=lambda it: -it.get("last_used", 0))[:PINNED_QUOTA]
+        seen = {it["id"] for it in pinned}
+        rest = [it for it in items if it["id"] not in seen]
         if not query:
-            items.sort(key=lambda it: (not it["pinned"], -it.get("last_used", 0)))
-            return items[:MEMORY_INJECT_MAX]
+            rest.sort(key=lambda it: -it.get("last_used", 0))
+            return (pinned + rest)[:MEMORY_INJECT_MAX]
+
+        def fill(ordered):
+            picked = list(pinned)
+            for it in ordered:
+                if len(picked) >= MEMORY_INJECT_MAX:
+                    break
+                if it["id"] not in seen:
+                    picked.append(it)
+            return picked[:MEMORY_INJECT_MAX]
 
         # 1) 语义检索（query 不缓存，避免缓存无限增长）
         qv_list = _embed_texts([query], cache=False)
-        mvecs = _embed_texts([it.get("content", "") for it in items])
+        mvecs = _embed_texts([it.get("content", "") for it in rest])
         if qv_list and mvecs:
             qv = qv_list[0]
 
             def key_sem(i):
-                it = items[i]
-                s = _cos(qv, mvecs[i])
-                if it.get("pinned"):
-                    s += 0.05
-                return (-s, -it.get("last_used", 0))
-            order = sorted(range(len(items)), key=key_sem)
-            return [items[i] for i in order[:MEMORY_INJECT_MAX]]
+                return (-_cos(qv, mvecs[i]), -rest[i].get("last_used", 0))
+            return fill([rest[i] for i in sorted(range(len(rest)), key=key_sem)])
 
         # 2) 回退：字面重合
-        def key(it):
-            s = _mem_score(it.get("content", ""), query)
-            if it.get("pinned"):
-                s += 0.5   # 永久记忆轻微加权
-            return (-s, -it.get("last_used", 0))
-        items.sort(key=key)
-        return items[:MEMORY_INJECT_MAX]
+        rest.sort(key=lambda it: (-_mem_score(it.get("content", ""), query), -it.get("last_used", 0)))
+        return fill(rest)
 
     def clean(self):
         """Compatibility hook: keep every record; no time/probability/cap eviction."""
@@ -1943,6 +1985,39 @@ def _text_lang(text):
     return "mixed"
 
 
+def _has_kana(text):
+    """有平假名/片假名就当成日语文本：交给 GPT-SoVITS 的 ja 音素，别用中文音素硬读。"""
+    for c in (text or ""):
+        if "\u3040" <= c <= "\u30ff" or "\uff66" <= c <= "\uff9f":
+            return True
+    return False
+
+
+VOICE_JA_MARK = "[[JA]]"   # 日语朗读时，模型用它分隔「屏幕显示的中文」和「只用来念的日语」
+_JA_MARK_RE = re.compile(r"[\[【]\s*\[?\s*JA\s*\]?\s*[\]】]", re.I)   # 容忍 [[JA]] / [JA] / 【JA】 / 中间空格
+
+
+def _looks_like_mark_tail(tail):
+    """尾巴是不是"标记打了一半"（[、【、[[J…）：是就先别显示，免得半个标记闪出来。"""
+    return bool(tail) and tail[0] in "[【" and all(c in "[]【】JAja " for c in tail)
+
+
+def _split_voice_lang(text, ja):
+    """日语语音时把「中文正文 + 标记 + 日语」拆成 (屏幕显示, 要念的日语)。
+    没有标记就原样返回两份（固定台词这类本来就没有日语版，照中文念）。
+    流式时标记可能才到一半，先把尾巴截住。"""
+    if not ja:
+        return text, text
+    t = text or ""
+    m = _JA_MARK_RE.search(t)
+    if m:
+        return t[:m.start()].strip(), t[m.end():].strip()
+    for k in range(min(6, len(t)), 0, -1):
+        if _looks_like_mark_tail(t[-k:]):
+            return t[:-k].strip(), ""
+    return t.strip(), ""
+
+
 def _looks_like_url(text):
     t = (text or "").strip().lower()
     return t.startswith("http://") or t.startswith("https://") or t.startswith("www.") or "://" in t
@@ -2359,6 +2434,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._researching_until = 0.0
         self._researching_since = 0.0
         self._tts_en_phonemes = bool(self._settings.get("voice_en_phonemes", False))
+        self._tts_lang = self._settings.get("voice_lang") if self._settings.get("voice_lang") in ("zh", "ja") else "zh"
         self._greeting_on = self._settings["greeting"]
         self._summary_on = self._settings["summary"]
         self._speed = self._settings.get("speed", "medium")   # 显示速度：fast/medium/slow
@@ -3327,31 +3403,60 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._chat_win = None
             self._chat_entry = None
 
+    def _frame_anchor(self, win, gap=8):
+        """算「分层外框 + 内容窗」该放哪儿：外框按素材可见矩形对住立绘可见范围。
+        返回 (外框左上角x, 外框左上角y, 外框宽, 外框高, 内容窗偏移x, 内容窗偏移y)。"""
+        fw, fh = getattr(win, "_frame_size", (win.winfo_reqwidth(), win.winfo_reqheight()))
+        ox, oy = getattr(win, "_frame_offset", (0, 0))
+        vx1, vy1, vx2, vy2 = getattr(win, "_frame_visible", (0, 0, fw, fh))
+        pet_x = self.pet.winfo_rootx()
+        pet_y = self.pet.winfo_rooty()
+        scale = self._cur_h / self.pet_img_full.height
+        bx1, by1, bx2, by2 = self._char_bbox
+        pet_top = pet_y + round(by1 * scale)
+        pet_cx = pet_x + round((bx1 + bx2) / 2 * scale)
+        return (pet_cx - (vx1 + vx2) // 2, pet_top - gap - vy2, fw, fh, ox, oy)
+
+    def _apply_frame_pos(self, win, px, py, fw, fh, ox, oy):
+        """位置没变就不重复 set geometry（减少闪烁）；外框和内容窗一起挪。
+        除了比对缓存，还要看两个窗口的**实际位置**——刚 deiconify 或改过尺寸时设的位置可能不生效，
+        只检查内容窗的话，外框掉队了也发现不了（看起来就是内容挤到边框外面）。"""
+        tx, ty = px + ox, py + oy
+        frame = getattr(win, "_frame_win", None)
+        if (getattr(win, "_last_geo", None) == f"+{tx}+{ty}"
+                and win.winfo_x() == tx and win.winfo_y() == ty
+                and (frame is None or (frame.winfo_x() == px and frame.winfo_y() == py))):
+            return
+        win._last_geo = f"+{tx}+{ty}"
+        if frame is not None:
+            try:
+                frame.geometry(f"+{px}+{py}")   # 先挪后面的外框：中间态被内容窗盖住，基本看不出来
+            except Exception:
+                pass
+        win.geometry(f"+{tx}+{ty}")
+        win._hit_rect = (px, py, fw, fh)   # 点外面判定用整张外框，别只看内容窗
+
     def update_chat_pos(self):
         if self._chat_win is None:
             return
         win = self._chat_win
         try:
-            w = win.winfo_width()
-            if w < 2:
-                w = max(win.winfo_reqwidth(), 320)
-            h = win.winfo_reqheight()
-            pet_x = self.pet.winfo_rootx()
-            pet_y = self.pet.winfo_rooty()
-            pet_w = self.pet.winfo_width()
-            pet_h = self.pet.winfo_height()
+            px, py, fw, fh, ox, oy = self._frame_anchor(win)
             left, top, right, bottom = self._screen_bounds()
-            px = pet_x + (pet_w - w) // 2
-            py = pet_y - h - 8
             if py < top:
-                py = pet_y + pet_h + 8
-                if py + h > bottom:
-                    py = bottom - h - 8
+                # 上面放不下就翻到立绘下面
+                scale = self._cur_h / self.pet_img_full.height
+                pet_y = self.pet.winfo_rooty()
+                pet_bottom = pet_y + round(self._char_bbox[3] * scale)
+                vy1 = getattr(win, "_frame_visible", (0, 0, fw, fh))[1]
+                py = pet_bottom + 8 - vy1
+                if py + fh > bottom:
+                    py = bottom - fh - 8
             if px < left:
                 px = left
-            if px + w > right:
-                px = right - w - 8
-            win.geometry(f"{w}x{h}+{px}+{py}")
+            if px + fw > right:
+                px = right - fw - 8
+            self._apply_frame_pos(win, px, py, fw, fh, ox, oy)
         except Exception:
             pass
 
@@ -3425,14 +3530,23 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
     def _poll_chat_outside(self, win):
         if self._chat_win is not win:
             return
+        if getattr(self,"_chat_attach_busy",False):
+            # 正在框选截图/选文件：那几下点击都在输入框外面，别把输入框关掉
+            try:win.after(120,lambda:self._poll_chat_outside(win))
+            except Exception:pass
+            return
         try:
             import ctypes
             user32 = ctypes.windll.user32
             if user32.GetAsyncKeyState(0x01) & 0x8000:
-                wx = win.winfo_rootx()
-                wy = win.winfo_rooty()
-                ww = win.winfo_width()
-                wh = win.winfo_height()
+                rect = getattr(win, "_hit_rect", None)
+                if rect:
+                    wx, wy, ww, wh = rect
+                else:
+                    wx = win.winfo_rootx()
+                    wy = win.winfo_rooty()
+                    ww = win.winfo_width()
+                    wh = win.winfo_height()
 
                 class POINT(ctypes.Structure):
                     _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
@@ -3450,8 +3564,9 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         except Exception:
             pass
 
-    def on_chat_submit(self, text):
+    def on_chat_submit(self, text, attachments=None):
         self._last_user_dialogue_at=time.monotonic()
+        self._pending_attachments=list(attachments or [])
         if self._answer_computer_question(text):return
         completed_reply=self._todo_complete_reply(text)
         if completed_reply is not None:
@@ -3470,6 +3585,17 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._start_todo_command(todo_text)
             return
         self._log_chat("user", text, kind="user")
+        if getattr(self,"_pending_attachments",None):
+            # 带图片/文件的消息不做意图分流：直接当资料交给模型（暂不接 DSH）
+            self._cancel_reply()
+            if not has_api_key():
+                self._pending_attachments=[]
+                self.say(NO_KEY_REPLY);return
+            self._dot_win=None;self._dot_set_text=None;self._dot_state=0
+            self._show_think_bubble()
+            my_conv=self._conv_id
+            threading.Thread(target=self._ask_model,args=(text,my_conv),daemon=True).start()
+            return
         file_task = computer_command(text)
         if file_task is not None:
             self._cancel_reply()
@@ -4122,12 +4248,44 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         except Exception:
             return ""
 
+    def _voice_lang_hint(self):
+        """日语语音：屏幕显示中文、语音念日语。要求模型在正文之后用 VOICE_JA_MARK
+        附一段日语口语版（只给语音用）。固定台词（菜单提示、待办提醒）没有日语版，仍按中文念。"""
+        if not self._voice_on or getattr(self, "_tts_lang", "zh") != "ja":
+            return ""
+        return ("【朗读语言：日语】屏幕上的正文照旧用**简体中文**写；正文写完后另起一行，"
+                "单独输出标记 " + VOICE_JA_MARK + "，紧接着给出**同一段内容的日语口语版**"
+                "（这一段只用来朗读，不会显示在屏幕上）。日语要自然口语化，可以夹汉字，"
+                "不要罗马字注音、不要输出中文译文；标记只出现一次、必须单独占一行。")
+
+    def _translate_for_voice(self, text):
+        """日语语音兜底：模型没按标记给日语时，单独翻一段出来念（失败返回 ''）。"""
+        text = (text or "").strip()
+        if not text:
+            return ""
+        try:
+            client = _disable_thinking(get_client().with_options(timeout=20, max_retries=0))
+            response = client.chat.completions.create(
+                model=api_model(), temperature=0, max_tokens=600,
+                messages=[{"role": "user", "content":
+                           "把下面这段话翻成自然的日语口语（按日本人平时的说法，不要直译腔）。"
+                           "只输出日语本身：不要解释、不要引号、不要罗马字、不要保留中文。\n" + text[:800]}])
+            out = (response.choices[0].message.content or "").strip()
+            return out if _has_kana(out) else ""
+        except Exception:
+            _err_log("voice_translate")
+            return ""
+
     def _ask_model(self, text, my_conv=None):
         # 普通聊天回复也要按提示音设置响一声（say() 那条路径本来就会响，这里单独补上）
         if self._should_sound(False):
             self._ui(self.play_sound)
+        atts=getattr(self,"_pending_attachments",None) or []
+        self._pending_attachments=[]
         system=load_persona()+character_option("chat_style",CHAT_STYLE_HINT)
         system+='\n'+conversation_memory.CONTINUATION_HINT
+        lang_hint=self._voice_lang_hint()
+        if lang_hint:system+='\n'+lang_hint
         notes=self._todo_note_context(text,cancel=lambda:my_conv is not None and my_conv!=self._conv_id)
         if my_conv is not None and my_conv!=self._conv_id:return
         system+='\n本轮只有应用明确回传保存成功时，才能说已增加待办备注；否则不声称已经写入。'
@@ -4139,10 +4297,25 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if evidence:system+="\n\n"+evidence
         messages=[{"role":"system","content":system}]
         messages[0]["content"]+="\n\n"+self._capability_context()
+        if lang_hint:
+            # 格式要求放最后再提醒一次：模型经常漏掉前面的格式约定，漏了就没日语语音
+            messages[0]["content"]+=("\n【输出格式】正文写完后，另起一行输出 "+VOICE_JA_MARK+
+                                     "，紧接着写同一段内容的日语口语版（只用于朗读，不显示）。")
         messages.extend(self._recent_messages(current_text=text,channel='desktop'))
-        messages.append({"role":"user","content":text})
+        if atts:
+            # 图片走视觉模型的 image_url（data URL），文本附件直接贴进正文
+            content=[{"type":"text","text":text or "看看这个。"}]
+            for att in atts:
+                if att.get("kind")=="image" and att.get("data_url"):
+                    content.append({"type":"image_url","image_url":{"url":att["data_url"]}})
+                elif att.get("kind")=="text" and att.get("text"):
+                    content.append({"type":"text","text":"【附件 %s】\n%s" % (att.get("name","文件"),att["text"])})
+            messages.append({"role":"user","content":content})
+        else:
+            messages.append({"role":"user","content":text})
         reply="";acc=""
         voice=self._voice_on
+        ja=voice and getattr(self,"_tts_lang","zh")=="ja"   # 日语语音：屏幕中文、语音日语
         spoken=0
         try:
             last=0.0
@@ -4151,25 +4324,35 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 for chunk in stream:
                     if my_conv is not None and my_conv!=self._conv_id:return
                     if chunk.choices:acc+=chunk.choices[0].delta.content or ""
-                    if voice:
+                    if voice and not ja:
                         # 有语音：边生成边按句送合成，文字跟着朗读逐句出（语音文字对齐）
                         spoken=self._speak_stream(clean_reply_style(acc),spoken)
                     elif acc and time.time()-last>.05:
                         last=time.time()
-                        self._ui(lambda t=clean_reply_style(acc):self._stream_update(t,my_conv))
-            reply=clean_reply_style(acc).strip()
-            if voice:
-                self._speak_stream(clean_reply_style(acc),spoken,final=True)
+                        shown=_split_voice_lang(clean_reply_style(acc),ja)[0]
+                        self._ui(lambda t=shown:self._stream_update(t,my_conv))
+            cleaned=clean_reply_style(acc)
+            if ja:
+                # 日语那份只留给语音：正文走文字气泡，合成在最后一次性排进去
+                reply,ja_text=_split_voice_lang(cleaned,True)
+                if not ja_text and reply:
+                    ja_text=self._translate_for_voice(reply)   # 模型没按格式给：本地补翻，保证有声音
+                if ja_text:self._tts_enqueue(ja_text)
+            else:
+                reply=cleaned.strip()
+                if voice:
+                    self._speak_stream(clean_reply_style(acc),spoken,final=True)
         except Exception:
             reply=self._scene("connection_failed")
         if my_conv is not None and my_conv!=self._conv_id:return
         reply=reply or "刚才没有收到完整回复，请再试一次。"
-        if voice:
+        if voice and not ja:
             if not acc.strip():
                 self._tts_enqueue(reply)   # 出错兜底：把兜底文字也念出来
             self._tts_enqueue(None)        # 结束标记 → 收尾气泡
         else:
             self._ui(lambda:self._stream_finish(reply,my_conv))
+            if ja:self._tts_enqueue(None)
         threading.Thread(target=self._post_memory,args=(text,reply),daemon=True).start()
 
     def _stream_update(self, text, my_conv):
@@ -4360,12 +4543,15 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             if text is None:
                 self._tts_q.put(None)
             else:
-                t = speakable(text)          # 日文之类先剔掉，别送进合成
+                t = speakable(text, kana=getattr(self, "_tts_lang", "zh") == "ja")   # 日文语音时保留假名，否则先剔掉
                 if t.strip(" ．。,.!?！？、；;：:"):
                     self._tts_q.put((t, self._conv_id, gap_ms))
 
     def _voice_bubble_ensure(self):
-        """确保语音气泡存在（没有就建一个）。"""
+        """确保语音气泡存在（没有就建一个）。
+        日语语音时不建：屏幕显示的是中文那份，气泡里再冒出日语原文只会打架。"""
+        if self._voice_on and getattr(self, "_tts_lang", "zh") == "ja":
+            return
         if self._voice_win is not None:
             return
         # 提醒的语音气泡就是"抱闹钟"差分的生命周期：气泡在，闹钟差分就在
@@ -4445,6 +4631,11 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             else:
                 self._reporting_now()             # 正文真的开始显示了：查资料的差分到此为止
             self._voice_bubble_ensure()
+            if self._voice_win is None:
+                # 日语语音不显示语音气泡：没有打字动画可等，直接标记完成，
+                # 否则 _wait_voice_type_done 会按「文字打完」的时长白等一整段。
+                self._voice_type_done = True
+                return
             self._voice_dots_stop()   # 停止加载省略号，开始打字
             self._voice_full = text or ""
             self._voice_shown = 0
@@ -4812,7 +5003,9 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 ref_txt = ""
             # 纯外文片段（论文题名之类）可以按英文音素念：中文音素碰到拉丁文常常读不出东西
             text_lang = "zh"
-            if getattr(self, "_tts_en_phonemes", False) and _text_lang(text) == "foreign":
+            if _has_kana(text):
+                text_lang = "ja"      # 日语回复：假名交给 ja 音素，用中文音素会读成乱码
+            elif getattr(self, "_tts_en_phonemes", False) and _text_lang(text) == "foreign":
                 text_lang = "en"
             params = {
                 "text": text, "text_lang": text_lang,
@@ -5371,41 +5564,30 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             pass
 
     def _place_bubble(self, win):
-        # 单次定位：贴角色头顶（可重复调用，驱动跟随）
+        # 单次定位：贴角色头顶（可重复调用，驱动跟随）。
+        # 跟聊天输入框同一套算法：按「素材可见矩形」对「立绘可见范围」，
+        # 这样气泡和输入框的底边、左右边都在同一条线上。
         try:
-            w = win.winfo_reqwidth()
-            if w < 60:
-                w = 60
-            h = win.winfo_reqheight()
-            pet_x = self.pet.winfo_rootx()
-            pet_y = self.pet.winfo_rooty()
-            pet_w = self.pet.winfo_width()
-            pet_h = self.pet.winfo_height()
+            px, py, fw, fh, ox, oy = self._frame_anchor(win)
             left, top, right, bottom = self._screen_bounds()
-            px = pet_x + (pet_w - w) // 2
-            py = pet_y - h - 8
             # 若聊天输入框开着，气泡放到输入框上方，避免重叠
             chat = self._chat_win
             if chat is not None:
                 try:
-                    ch = chat.winfo_height()
+                    ch = getattr(chat, "_frame_size", (0, chat.winfo_height()))[1]
                     if ch > 1:
-                        py = pet_y - ch - 8 - h - 8
+                        py -= ch + 8
                 except Exception:
                     pass
             if py < top:
-                py = pet_y + pet_h + 8
-                if py + h > bottom:
-                    py = bottom - h - 8
+                py = self.pet.winfo_rooty() + self.pet.winfo_height() + 8
+                if py + fh > bottom:
+                    py = bottom - fh - 8
             if px < left:
                 px = left
-            if px + w > right:
-                px = right - w - 8
-            # 位置没变就不重复 set geometry（减少闪烁）
-            geo = f"+{px}+{py}"
-            if getattr(win, "_last_geo", None) != geo:
-                win._last_geo = geo
-                win.geometry(geo)
+            if px + fw > right:
+                px = right - fw - 8
+            self._apply_frame_pos(win, px, py, fw, fh, ox, oy)
         except Exception:
             pass
 
@@ -5673,6 +5855,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             bar.pack(fill="x", padx=8, pady=6)
             tk.Button(bar, text="保存", width=8, command=self._save_memory_rows).pack(side="left", padx=4)
             tk.Button(bar, text="刷新", width=8, command=self._build_memory_rows).pack(side="left", padx=4)
+            tk.Button(bar, text="整理", width=8, command=self._tidy_memory_rows).pack(side="left", padx=4)
             tk.Button(bar, text="关闭", width=8, command=self._close_memory_window).pack(side="right", padx=4)
 
             win.protocol("WM_DELETE_WINDOW", self._close_memory_window)
@@ -5721,15 +5904,19 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             tk.Label(inner, text="还没有记忆哦", bg="#2b2b3a", fg="#9a9ab0").pack(pady=12)
             return
         for i, it in enumerate(items, 1):
+            dead = it.get("status", "active") == "superseded"
             row = tk.Frame(inner, bg="#2b2b3a")
             row.pack(fill="x", padx=4, pady=2)
             tk.Label(row, text=str(i), width=3, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
             cv = tk.StringVar(value=it.get("content", ""))
-            ce = tk.Entry(row, textvariable=cv, bg="#3a3a4e", fg="#e8e8f0",
+            ce = tk.Entry(row, textvariable=cv, bg="#3a3a4e", fg=("#8a8a9a" if dead else "#e8e8f0"),
                           insertbackground="#ffffff", relief="flat")
             ce.pack(side="left", fill="x", expand=True, padx=2, ipady=2)
-            ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(it.get("created", time.time())))
-            tk.Label(row, text=ts, width=16, bg="#2b2b3a", fg="#7fd6a8", anchor="w").pack(side="left", padx=2)
+            if dead:
+                tk.Label(row, text="已被取代", width=8, bg="#2b2b3a", fg="#b08a4a", anchor="w").pack(side="left", padx=2)
+            else:
+                ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(it.get("created", time.time())))
+                tk.Label(row, text=ts, width=16, bg="#2b2b3a", fg="#7fd6a8", anchor="w").pack(side="left", padx=2)
             self._mem_rows.append((it["id"], cv))
             tk.Button(row, text=("✓置顶" if it.get("pinned") else "置顶"), width=6,
                       command=lambda mid=it["id"]: self._mem_toggle_pin(mid)).pack(side="left", padx=1)
@@ -5758,6 +5945,49 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                         if txt:
                             it["content"] = txt
             mem.save()
+
+    def _tidy_memory_rows(self):
+        """把已有记忆交给模型改写成简洁事实（只改措辞，不合并、不删除）。
+        新记忆已经由记忆巡检按同一套标准写入，这里是给旧记忆做一次手动整理。"""
+        mem = get_memory()
+        items = mem.snapshot()
+        if not items:
+            self.say("现在还没有记忆呢。")
+            return
+        records = [{'id': row['id'], 'content': row['content'][:400]} for row in items[:80]]
+        self.say("我整理一下记忆，稍等一下……")
+
+        def work():
+            mapping = {}
+            try:
+                client = _disable_thinking(get_client().with_options(timeout=45, max_retries=0))
+                response = client.chat.completions.create(
+                    model=api_model(), temperature=0, max_tokens=2400,
+                    response_format={'type': 'json_object'},
+                    messages=[{'role': 'user', 'content':
+                               '把下面每条记忆改写成一句简洁、自足的中文事实：第三人称（用「用户」），'
+                               '不超过 40 字，不依赖上下文，不带引号、换行或语气词。'
+                               '只整理措辞，不得改变事实、不得合并条目、不得删除；'
+                               '本来就够简洁、或者只是临时琐事的，按原样返回。\n'
+                               '只输出 JSON {"items":[{"id":"原id","fact":"改写后的内容"}]}。\n'
+                               + json.dumps(records, ensure_ascii=False)}])
+                payload = json.loads(response.choices[0].message.content)
+                for row in payload.get('items', []):
+                    if isinstance(row, dict) and isinstance(row.get('id'), str) and isinstance(row.get('fact'), str):
+                        mapping[row['id']] = row['fact']
+            except Exception:
+                _err_log('tidy_memory')
+            changed = mem.rewrite(mapping) if mapping else 0
+            if changed:
+                try:
+                    mem.save()
+                except Exception:
+                    _err_log('tidy_memory_save')
+            self._ui(lambda: (self._build_memory_rows(),
+                              self.say("整理好了，改了 %d 条记忆。" % changed if changed
+                                       else "记忆看着都挺干净的，这次没改。")))
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _mem_delete(self, mid):
         mem = get_memory()
@@ -5906,11 +6136,13 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         tk.Frame(win, bg="#c8c8c8", height=1).pack(fill="x", pady=4)
 
     def _menu_row(self, win, text, width=12):
-        """菜单一行：左文字 + 右勾选位（宽度固定，保证对齐）"""
+        """菜单一行：左文字 + 右勾选位（勾选位宽度固定，保证对齐）。
+        文字宽度**不按字符数限制**：Tk 的 width 单位是 '0' 的宽，一个汉字差不多占两格，
+        固定 12 格会把「不确定的消息联网查证」这类中文截掉——改成按文字自适应。"""
         row = tk.Frame(win, bg="#f0f0f0")
         row.pack(fill="x")
         lbl = tk.Label(row, text=text, bg="#f0f0f0", fg="#1a1a1a",
-                       padx=18, pady=4, anchor="w", width=width)
+                       padx=18, pady=4, anchor="w")
         lbl.pack(side="left")
         mark = tk.Label(row, text="", bg="#f0f0f0", fg="#2a7a2a",
                         padx=10, pady=4, width=6, anchor="e")
@@ -6387,6 +6619,21 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             w.bind("<Button-1>", toggle)
 
 
+    def _add_menu_tts_lang(self, win, width=16, level=0):
+        """朗读语言：中文 / 日文。选日文时让模型直接用日语写要念的话，
+        合成走 GPT-SoVITS 的 ja 音素（见 _tts_synth 的 _has_kana 判断）。"""
+        if not gsv_available():
+            return
+        self._add_menu_option(win, "朗读语言", [("zh", "中文"), ("ja", "日文")],
+                              lambda: getattr(self, "_tts_lang", "zh"),
+                              self._set_tts_lang, level=level, width=width)
+
+    def _set_tts_lang(self, key):
+        self._tts_lang = key if key in ("zh", "ja") else "zh"
+        self._save_settings()
+        self.say("以后就用日语念啦，回复也会直接用日语写。" if self._tts_lang == "ja"
+                 else "以后还是用中文念。")
+
 
     def _schedule_hide_submenu(self, level=1):
         self._cancel_hide_submenu()
@@ -6448,6 +6695,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             "quiet_fold": bool(getattr(self, "_quiet_fold", True)),
             "quiet_apps": list(getattr(self, "_quiet_apps", [])),
             "voice_en_phonemes": bool(getattr(self, "_tts_en_phonemes", False)),
+            "voice_lang": getattr(self, "_tts_lang", "zh"),
             "web_search": bool(getattr(self, "_web_search_on", True)),
             "music_volume": int(getattr(self, "_music_volume", MUSIC_VOLUME)),
         }
@@ -6945,7 +7193,21 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                     if is_reminder:self._reminder_showing=False
                     return
                 if self._voice_on:
-                    self._speak(text)   # 语音驱动显示（文字跟着语音出）
+                    ja=getattr(self,"_tts_lang","zh")=="ja"
+                    if ja:
+                        # 日语语音：屏幕显示中文那份，语音念日语那份（固定中文台词就照中文念）
+                        show,spoken_text=_split_voice_lang(text,True)
+                        base=show or text
+                        self._play_reply(base,is_reminder,activity=activity)
+                        if spoken_text:
+                            self._speak(spoken_text)
+                        else:
+                            # 模型没给日语版：后台补翻一次，别在 UI 线程里等
+                            def work(base=base):
+                                self._speak(self._translate_for_voice(base) or base)
+                            threading.Thread(target=work,daemon=True).start()
+                    else:
+                        self._speak(text)   # 语音驱动显示（文字跟着语音出）
                 else:
                     self._play_reply(text,is_reminder,activity=activity)
                 if source=='待办提醒':self._todo_notice_win=self._reply_win

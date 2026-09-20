@@ -96,7 +96,9 @@
 - 角色包在 `characters/<id>/character.json`（`renderer: layered` 或 `static`），人设在同目录 `persona.json`。`character_packs.discover_packs()` 扫描，`selected_pack()` 按 `data/settings.json` 的 `character_pack` 选。
 - 微动版是**分层 PNG 局部网格**：`LayeredRenderer` + `LocalMesh` 做头/发梢/下半身变形，闭眼/说话/撇嘴/下落嘴型用局部覆盖贴片。
 - **透明是色键（chroma-key）**：`TRANS_COLOR = "#000001"`，`render_display()` 把 alpha 阈值化后填色键；`set_window_transparent()` 设 `-transparentcolor`。所以**不是真 alpha**（色键区自动穿透点击）。整体淡入淡出用窗口属性 `-alpha`。
-- 圆角窗口（聊天输入框、气泡）用 `ui_theme.round_window()`：色键透明 + Canvas 画**采样过的圆弧多边形**（不要用 `create_polygon(smooth=True)`，那样只切掉 1~2px，看着还是方的）。内容必须四边缩进 `radius`，否则会盖住圆角。
+- 圆角窗口：输入框/气泡已改成分层窗口（见下条），`ui_theme.round_window()` 已删除。若以后还有窗口要用色键圆角，记得：色键透明 + Canvas 画**采样过的圆弧多边形**（不要用 `create_polygon(smooth=True)`，那样只切掉 1~2px，看着还是方的），内容四边缩进 `radius`。
+- **聊天输入框 / 回复气泡的素材边框**（`assets/chat_box.png`、`bubble_box.png`）：走**分层窗口**（`layered_window.set_image()`：WS_EX_LAYERED + `UpdateLayeredWindow`，把 PIL 图预乘成 BGRA 直接贴成窗口表面），PNG 的 alpha 原样保留——Tk 的 `-transparentcolor` 是色键，只有全透/全不透两档，会把外圈柔光糊成一圈脏边。因此是**两个窗口**：外框窗（分层、不透明区域可点）+ 内容窗（不透明，盖在素材内框上放文字/按钮）；`pet._frame_anchor()/_apply_frame_pos()` 负责按「外框可见矩形对住立绘可见范围」同步移动两个窗，点外面判定用 `_hit_rect`（整张外框）。缩放走 `_resize()`（`convert("RGBa")` 预乘 → resize → 转回 `RGBA`），否则透明像素的黑色 RGB 会渗进边缘。发送键画在外框图上，点击在外框窗上判定（`conversation_ui`）。
+- **回复气泡的排版（2026-09-20 定稿）**：外框 = 分层窗口贴 `bubble_box.png`（`bubble_frame(extra)`：在**素材尺度**上把中段 `MID_TOP..MID_BOTTOM`(395..436) 上下拉伸，最后整张只缩放一次——分开贴中段会有半像素偏移、接缝对不齐）；内容窗是另一个窗，**面板色键透明**（`-transparentcolor = PANEL_BG = #E5EFFC` = 素材内框色，透出外框原图，同时文字抗锯齿朝浅色混合、不会像近黑色键那样糊黑边）。内容窗四边内缩 `INSET_SIDE/TOP/BOTTOM = 6`（面板透明，只为容纳内容）；白底圆角框（`_round_points` 采样多边形，无描边）留白 `BOX_PAD_X=8 / BOX_PAD_TOP=16（+6 躲开探进内框的星星音符，实测侵入上 21px、下 16px、左右 3px）/ BOX_PAD_BOTTOM=8`，圆角 `BOX_RADIUS=9`；文字控件（白底）再内缩 `BOX_INSET=8`（≥ 圆角半径，圆角才露得出来）；`收起/复制/显示全部` 是 Canvas 文字项，按钮条高 `bar_h = 按钮字体行高 + 6`，贴内容窗底部（`-bar_h+3`）。布局尺寸每次都写进 `data/bubble.log`（只留最近 64KB），窗口/位图尺寸对不上时看它。
 - 性能：`_RenderWorker` 后台线程渲染最新姿态，主线程只取成品帧；基础组按高度缓存 + 动态补丁叠加。
 
 ### 2. 聊天与上下文
@@ -142,6 +144,7 @@
 - 流水线：`_tts_synth` → `_speak`/`_speak_stream`/`_tts_enqueue`/`_tts_producer`/`_tts_loop`；`_voice_type_*` 让文字按朗读时长逐字出；`_startup_gate` 未就绪先显示「语音服务加载中…」（最多等 4 分钟）。
 - **分段与停顿**：`_tts_segments()` 切段（同时标出「这一段是不是整段末尾」），`_tts_split()` 只是它的取文本版；停顿由 `_tts_gap(piece, following, block_end)` 分级——下一段是标题 `TTS_TITLE_GAP_MS`=130 < 逗号 `TTS_PAUSE_COMMA_MS`=120/半句 `TTS_HALF_GAP_MS`=160 < 句末 `TTS_SENTENCE_GAP_MS`=220 < 另起一段 `TTS_PARAGRAPH_GAP_MS`=340。停顿跟着分段进队列（`_tts_enqueue(text, gap_ms)` → 3 元组 → `_synth_q` 7 元组），`_tts_loop` 按段取。流式那边没有分段元信息，所以靠「句末标点后面紧跟换行」判断段落（换行自己会变成空片段被丢掉，不能只看 `c == "\n"`）。
 - **外语片段**：`settings.json` 的 `voice_en_phonemes`（菜单「英文按英文念」，默认关）打开后，`_text_lang(text) == "foreign"` 的片段改用 `text_lang="en"` 合成——中文音素碰整行拉丁文常常读不出东西；英文音素是否可用取决于对方的 GPT-SoVITS 安装，所以默认关、失败了也只是这一段没声音。
+- **朗读语言（中文 / 日文）**：`settings.json` 的 `voice_lang`，菜单「更多设置 › → 朗读语言」。选日文时**屏幕仍显示中文、只有语音念日语**：`_voice_lang_hint()` 要求模型按「中文正文 + 单独一行 `[[JA]]` + 日语口语版」输出，`_split_voice_lang()` 拆成 (显示, 朗读) 两份——`_ask_model` 里显示走文字气泡、日语在收尾时一次性入队；`say()` 那条路（主动发言/问候/剪贴板反应）显示中文那份、念日语那份。语音气泡在日文模式下不建（`_voice_bubble_ensure` 直接返回），否则会再冒一份日语原文；`_voice_type_start` 相应直接标记「打字完成」，不然 `_wait_voice_type_done` 会白等。`speakable(text, kana=True)` 保留假名（默认会把假名整段剔掉，日语会被清空），`_tts_synth` 用 `_has_kana()` 判成 `text_lang="ja"`。写死的中文台词（菜单提示、待办提醒、摸头回应）没有日语版，仍按中文音素念。
 - **暖机当健康检查**：`_preheat_tts()` 用 `TTS_WARM_TIMEOUT`=15 秒合成一句短的（不是默认 120 秒），超时会被 `_tts_synth` 判成「端口开着但不响应」→ `_restart_stuck_tts_server()` 重启，再等一轮（`_wait_tts_port`）。教训：桌宠被强杀时会把服务留在「占着端口不响应」的状态，之后所有合成都要白等 120 秒。
 - 参考音色 `assets/voice_ref1.wav` 随包；GPT-SoVITS 本体约 14GB，不随包发布。
 
@@ -240,7 +243,19 @@
 
 ## 六、版本历史（简）
 
-### 2026-09-18 — 未发版（待并入下个版本）
+### 2026-09-20 — V0.8.5
+
+**气泡 / 输入框换素材**：输入框与回复气泡都改成「分层窗口」贴原图（新增 `src/layered_window.py`：WS_EX_LAYERED + `UpdateLayeredWindow`，把 PIL 图预乘成 BGRA 直接当窗口表面），PNG 的 alpha 原样保留——Tk 的 `-transparentcolor` 只有全透/全不透，会把外圈柔光糊成一圈脏边。结构是**两个窗口**：外框窗（分层）+ 内容窗，`pet._frame_anchor()/_apply_frame_pos()` 负责同步移动（会校验两个窗的**实际位置**、外框先动，避免"内容挤到边框外"和拖动变形），点外面判定用 `_hit_rect`。回复气泡 `bubble_frame(extra)` 在**素材尺度**上拉伸中段后整张只缩放一次（分开贴会有半像素偏移、接缝对不齐）；内容窗面板色键 = 素材内框色 `#E5EFFC`（透出外框原图、文字抗锯齿朝浅色混合不会糊黑边），四边内缩 `INSET_SIDE/TOP/BOTTOM=6`；白底圆角框留白 `BOX_PAD_X=8 / BOX_PAD_TOP=16 / BOX_PAD_BOTTOM=8`、圆角 9、文字内缩 8；按钮条高按按钮字体行高算。布局尺寸每次写 `data/bubble.log`（只留 64KB）。
+
+**输入框附件**：新增「截图」「文件」两个按钮（画在外框图上，点击在外框窗上判定）。截图 = 全屏遮罩框选（`attach_screenshot`，Esc 取消）；文件 = `attach_file`（图片当图带，文本/代码按 utf-8-sig/utf-8/gbk 自动识别读入，二进制拒绝）。附件在按钮左边显示**缩略图 / 名字条**（最多 3 个，点一下移除）；选附件期间 `_chat_attach_busy` 让「点外面关闭」暂停，结束后 `_refocus_chat_entry()` 把键盘焦点还给输入框。带附件的消息在 `on_chat_submit` 里**不走意图分流**，直接进 `_ask_model`：图片拼 `image_url`（data URL）、文本附件贴进正文。
+
+**记忆系统**：巡检落库改为「改写后的事实」（新增 `fact` 字段，`grounded_facts()` 校验后落 fact、不合法退回原话），并加三道本地护栏 `fact_guard()`（时间范围升级 / 数字守卫 / 语义或字面差太远）；`replaces` + `status=superseded` 做记忆冲突（旧条目保留、只退出注入，`injectable()` 只取 active，并给 `PINNED_QUOTA=5` 条永久记忆保底名额）；巡检失败按批次记 `failures`，连续 3 次进死信，`processed` 只保留最近 800 条；「查看记忆」新增**「整理」**按钮（`MemoryStore.rewrite()`，只改措辞、不合并不删除）。
+
+**语音**：新增 `voice_lang`（菜单「更多设置 › → 朗读语言」，中文/日文）。选日文时屏幕显示中文、只念日语：`_voice_lang_hint()` 要求模型输出「中文正文 + `[[JA]]` + 日语口语版」，`_split_voice_lang()` 负责拆分（容忍 `[JA]`/`【JA】`/`[[ JA ]]` 等变体），模型没给日语版时 `_translate_for_voice()` 本地补翻一次保证有声音；日文模式下不建语音气泡（否则屏幕会再冒一份日语原文）。
+
+**其它**：菜单行文字改为自适应宽度（原来固定字符宽，中文长条目会被截断）；`release_smoke` 跟上新结构（气泡分层窗口、输入框偏移），并给气泡按钮回调加了无参兜底。
+
+### 2026-09-18 — 并入 V0.8.5（未单独发版）
 
 **接口类型可选 chat / responses**：「模型与接口」窗口新增「接口类型」下拉（`settings.json` 的 `api_mode`，默认 `chat`），两种接口都由 `api_runtime` 的形状翻译层兜住，其他 OpenAI 兼容服务商同样适用；连上之后桌宠会自己说一句「现在使用的是 xxx 模型，chat/response api 哦，连接成功啦！／连接失败……」。详见「未解决／待验证」里的同条说明（含真机踩到的三个坑：reasoning 事件、thinking 字段在 responses 下失效、流式不支持时回退）。
 
