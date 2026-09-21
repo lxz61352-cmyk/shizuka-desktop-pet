@@ -54,7 +54,23 @@ class EnqueueTests(unittest.TestCase):
             obj._tts_enqueue("これはテストです 你好呀")
         finally:
             pet.threading.Thread = original
-        self.assertEqual(obj._tts_q.get()[0], "你好呀")
+        item = obj._tts_q.get()
+        self.assertEqual(item[0], "これはテストです 你好呀")   # 显示用原文：整句都留着
+        self.assertEqual(item[1], "你好呀")                    # 合成用文本：日语被剔掉
+
+    def test_display_text_keeps_sentence_punctuation(self):
+        """合成会把句末标点削掉；显示不能用合成文本，否则每句话最后的标点都会被吞。"""
+        obj = self.make_pet()
+        original = pet.threading.Thread
+        pet.threading.Thread = lambda *a, **k: type("T", (), {"start": lambda self: None, "is_alive": lambda self: True})()
+        try:
+            obj._tts_enqueue("好的呀。我这就去办。")
+        finally:
+            pet.threading.Thread = original
+        display, tts, _conv, _gap = obj._tts_q.get()
+        self.assertEqual(display, "好的呀。我这就去办。")
+        self.assertTrue(tts.endswith("去办"))
+        self.assertFalse(tts.endswith("。"))
 
 
 if __name__ == "__main__":

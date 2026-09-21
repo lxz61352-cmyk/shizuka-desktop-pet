@@ -229,6 +229,7 @@ class MachineTests(unittest.TestCase):
         def __init__(self):
             self.reason = ""
             self._quitting = False
+            self._quiet_boot_at = -1e6        # 测试里当作早就启动了，不受开机保护期影响
             self._quiet_active = False
             self._quiet_since = None
             self._quiet_resume_at = None
@@ -303,6 +304,17 @@ class MachineTests(unittest.TestCase):
         self._tick(0, "Overwatch")
         self._tick(30, "Overwatch")
         self.assertEqual(self.machine.entered, [])
+
+    def test_startup_grace_ignores_boot_window_churn(self):
+        """刚开机 90 秒内不判免打扰：开机时前台常是播放器/桌面/启动画面，
+        一进一出就会冒出「进入免打扰模式 / 免打扰结束」两个莫名其妙的提示。"""
+        self.machine._quiet_boot_at = 0.0
+        self._tick(5, "Windows 默认播放器桌面")
+        self._tick(pet.QUIET_SETTLE_SEC + 5, "Windows 默认播放器桌面")
+        self.assertEqual(self.machine.entered, [])          # 保护期内不进入
+        self._tick(pet.QUIET_STARTUP_GRACE_SEC, "Overwatch")
+        self._tick(pet.QUIET_SETTLE_SEC + 1, "Overwatch")
+        self.assertEqual(self.machine.entered, ["Overwatch"])   # 过了保护期照常工作
 
 
 if __name__ == "__main__":

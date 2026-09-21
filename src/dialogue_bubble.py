@@ -1,5 +1,5 @@
 """Bounded, scrollable and selectable speech panel for short and long replies."""
-import math,os,time,tkinter as tk
+import math,os,tkinter as tk
 from tkinter import font as tkfont
 from PIL import Image
 from ui_theme import copy_bindings,copy_text
@@ -44,19 +44,6 @@ _slice_cache=None
 def _resize(img,size):
     """预乘 alpha 再缩放：透明像素的 RGB 常常是黑的，直接缩会把黑/杂色渗进边缘。"""
     return img.convert("RGBa").resize(size,Image.Resampling.LANCZOS).convert("RGBA")
-
-
-def _debug(line):
-    """气泡的窗口/位图尺寸对不上时用来查问题：只留最近 64KB。"""
-    try:
-        import pet as engine
-        path=os.path.join(engine.DATA_DIR,"bubble.log")
-        if os.path.exists(path) and os.path.getsize(path)>65536:
-            os.remove(path)
-        with open(path,"a",encoding="utf-8") as stream:
-            stream.write(time.strftime("%H:%M:%S ")+line+"\n")
-    except Exception:
-        pass
 
 
 def _round_points(x1,y1,x2,y2,r,steps=8):
@@ -140,11 +127,16 @@ def make_bubble(parent,**unused):
     canvas=tk.Canvas(win,width=content_w,height=content_h,bg=PANEL_BG,highlightthickness=0,bd=0)
     canvas.pack(fill='both',expand=True)
     font=tkfont.Font(family='Microsoft YaHei UI',size=12)
-    max_lines=max(4,min(14,(parent.winfo_screenheight()//2-70)//max(1,font.metrics('linespace')+7)))
+    # 默认就能长到接近整屏（原来卡 14 行、后来卡半屏，稍长的回复都会被截断，看着像"写一半断了"）；
+    # 超过一屏的极长回复用滚轮 / 「显示全部」看。
+    _line_h=max(1,font.metrics('linespace')+7)
+    max_lines=max(4,(parent.winfo_screenheight()-160)//_line_h)
+    max_lines_all=max(4,(parent.winfo_screenheight()-160)//_line_h)
     box=tk.Text(canvas,width=38,height=2,wrap='word',bg=TEXT_BG,fg=TEXT_FG,font=font,
                 relief='flat',bd=0,highlightthickness=0,selectbackground='#c7dcf5',selectforeground=TEXT_FG,
                 spacing1=2,spacing3=5,state='disabled',cursor='arrow',exportselection=False)
     copy_bindings(box)
+    box.bind('<MouseWheel>',lambda e:box.yview_scroll(-1 if e.delta>0 else 1,'units'))
     box_item=canvas.create_polygon(_round_points(0,0,10,10,BOX_RADIUS),fill=TEXT_BG,outline='')
     text_item=canvas.create_window(0,0,anchor='nw',window=box,width=60,height=60)
     btn_font=tkfont.Font(family=BTN_FONT[0],size=BTN_FONT[1])
@@ -162,7 +154,11 @@ def make_bubble(parent,**unused):
 
     add_button('收起',close)
     add_button('复制',lambda:copy_text(box,True))
-    show_item=add_button('显示全部',lambda:getattr(win,'_reveal_all',lambda:None)())
+    def show_all():
+        win._show_all=True                      # 放宽行数上限 → 气泡长高，把剩下的字露出来
+        set_text(state['text'])
+        getattr(win,'_reveal_all',lambda:None)()
+    show_item=add_button('显示全部',show_all)
 
     def button_bar(content_bottom):
         """三个按钮贴在最下面、紧挨内框：从右往左排（右边留出花纹的宽度）。"""
@@ -193,12 +189,13 @@ def make_bubble(parent,**unused):
             frame_win.update_idletasks()
             layered_window.set_image(frame_win,frame)
             frame_win.geometry(geo)
-        _debug("paint geo=%s ok=%s win=%dx%d content=%dx%d extra=%s" % (
-            geo,ok,frame_win.winfo_width(),frame_win.winfo_height(),
-            win.winfo_width(),win.winfo_height(),shown['extra']))
 
     def relayout(extra):
         content_bottom=M['top_h']+M['natural_mid']+extra+M['content_bottom_off']
+        h=content_bottom-M['content_top']-INSET_TOP-INSET_BOTTOM
+        if shown['extra']==extra and shown.get('h')==h:
+            return content_bottom      # 布局没变：流式时每个字都调一次 itemconfig/geometry 太费
+        shown['h']=h
         if shown['extra']!=extra:
             frame=bubble_frame(extra)
             shown['extra']=extra
@@ -208,10 +205,8 @@ def make_bubble(parent,**unused):
             win._frame_visible=(frame.getchannel('A').point(lambda a:255 if a>=128 else 0).getbbox()
                                 or (0,0,frame.width,frame.height))
             win._frame_offset=(M['left']+INSET_SIDE,M['content_top']+INSET_TOP)
-            h=content_bottom-M['content_top']-INSET_TOP-INSET_BOTTOM
             canvas.config(width=content_w,height=h)
             win.geometry(f"{content_w}x{h}")
-        h=content_bottom-M['content_top']-INSET_TOP-INSET_BOTTOM
         box_x1,box_y1=BOX_PAD_X,BOX_PAD_TOP
         box_x2,box_y2=content_w-BOX_PAD_X,h-bar_h-BOX_PAD_BOTTOM   # 白框只铺中间纯色区，底部留给按钮
         canvas.coords(box_item,*_round_points(box_x1,box_y1,box_x2,box_y2,BOX_RADIUS))
@@ -233,9 +228,22 @@ def make_bubble(parent,**unused):
         else:box.delete('1.0','end');box.insert('1.0',value)
         box.configure(state='disabled');state['text']=value
         line_h=max(1,font.metrics('linespace')+7)
-        usable=max(60,content_w-2*(BOX_PAD_X+BOX_INSET))
-        lines=sum(max(1,math.ceil(font.measure(line)/usable)) for line in value.split('\n'))
-        lines=min(max_lines,max(1,lines))
+        text_w=max(40,int(content_w-2*(BOX_PAD_X+BOX_INSET)))
+        canvas.itemconfig(text_item,width=text_w)      # 先定宽，Tk 才知道按什么宽度换行
+        # 行数用 Tk 自己的换行结果（displaylines）算：按字宽估算在混排/英文长词时会少算，
+        # 少算 → 白框不够高 → 末尾几行被吞。窗口还没映射时（刚建好）才退回估算。
+        lines=None
+        try:
+            box.update_idletasks()
+            real=box.count('1.0','end-1c','displaylines')
+            if isinstance(real,(tuple,list)):real=real[0]
+            if win.winfo_ismapped() and real:lines=int(real)
+        except Exception:
+            lines=None
+        if not lines:
+            usable=max(60,text_w)
+            lines=sum(max(1,math.ceil(font.measure(line)/usable)) for line in value.split('\n'))
+        lines=min(max_lines_all if getattr(win,'_show_all',False) else max_lines,max(1,lines))
         content_h=(M['top_h']+M['natural_mid']+M['content_bottom_off']-M['content_top']
                    -INSET_TOP-INSET_BOTTOM)
         need=(INSET_TOP+INSET_BOTTOM+BOX_PAD_TOP+BOX_PAD_BOTTOM+2*BOX_INSET+BOX_TOP_PAD
@@ -244,17 +252,10 @@ def make_bubble(parent,**unused):
         content_bottom=relayout(extra)
         canvas.itemconfig(show_item,fill=LINK_FG if hasattr(win,'_reveal_all') else LINK_OFF)
         if follow:box.see('end')
-        win.update_idletasks();win.geometry(f"{content_w}x{content_bottom-M['content_top']-INSET_TOP-INSET_BOTTOM}")
-        try:
-            _debug("set lines=%d extra=%d content=%dx%d text=%dx%d@%d,%d canvas=%dx%d btn_y=%d scale=%.2f ls=%d" % (
-                lines,extra,win.winfo_width(),win.winfo_height(),
-                box.winfo_width(),box.winfo_height(),
-                canvas.coords(text_item)[0],canvas.coords(text_item)[1],
-                canvas.winfo_width(),canvas.winfo_height(),
-                canvas.coords(buttons[0][0])[1],
-                float(win.tk.call("tk","scaling")),font.metrics("linespace")))
-        except Exception:
-            pass
+        win_h=content_bottom-M['content_top']-INSET_TOP-INSET_BOTTOM
+        if shown.get('win_h')!=win_h:
+            shown['win_h']=win_h
+            win.update_idletasks();win.geometry(f"{content_w}x{win_h}")
 
     def mirror(event=None):
         try:
@@ -268,6 +269,7 @@ def make_bubble(parent,**unused):
     win.bind('<Map>',mirror);win.bind('<Unmap>',mirror)
     win.bind('<Destroy>',lambda e:frame_win.destroy() if frame_win.winfo_exists() else None)
 
+    win._show_all=False
     set_text('…')
     win._text_box=box
     win._frame_win=frame_win

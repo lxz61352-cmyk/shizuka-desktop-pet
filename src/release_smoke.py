@@ -48,6 +48,12 @@ def run(pet):
             assert app._chat_photos[1].width==app._chat_photos[2].width   # 发送键两态同尺寸
             app.close_chat_win();app.root.update()
             checks.append('New composer artwork: layered frame, dark blue text, pressed send key')
+            # 番茄钟：图标按钮点开是头顶面板（表盘 + 倒计时 + 开始/设置）
+            app.show_pomodoro();app.root.update()
+            assert app._pomo_panel is not None and app._pomo_panel.winfo_exists()
+            assert app._pomo_panel_text is not None
+            app.show_pomodoro();app.root.update()
+            checks.append('Pomodoro: head panel with clock face, countdown and start/settings')
             # 回复气泡：外框走分层窗口（真 alpha），内容窗盖在内框上
             app._show_think_bubble();app.root.update()
             assert getattr(app._dot_win,'_frame_win',None) is not None

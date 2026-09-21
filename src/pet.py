@@ -10,6 +10,7 @@ from display_dpi import DISPLAY_DPI, DPI_SCALE, restore_position
 from api_runtime import DEEPSEEK_MODEL
 import conversation_memory
 from memory_maintenance import MemoryFeaturesMixin
+from pomodoro import PomodoroMixin
 from dialogue_features import DialogueFeaturesMixin
 from conversation_ui import ConversationUIMixin
 from dialogue_style import clean_text,reading_cps,punctuation_pause,hold_milliseconds,PLAIN_STYLE,load_style,clean_filler_tail
@@ -268,6 +269,7 @@ if ACTIVE_PACK:
 MENU_ICON_PATH = os.path.join(ASSETS_DIR, "menu_icon.png")
 CHAT_ICON_PATH = os.path.join(ASSETS_DIR, "chat_icon.png")
 TODO_ICON_PATH = os.path.join(ASSETS_DIR, "todo_icon.png")
+POMODORO_ICON_PATH = os.path.join(ASSETS_DIR, "pomodoro_icon.png")
 APP_ICON_PATH = os.path.join(ASSETS_DIR, "pet_icon.ico")
 APP_ICON_PNG = os.path.join(ASSETS_DIR, "app_icon_256.png")
 TRAY_ICON_PATH = os.path.join(ASSETS_DIR, "app_icon_64.png")
@@ -1863,6 +1865,8 @@ QUIET_SETTLE_SEC = 4.0        # 连续安静这么久才算「进入免打扰」
 QUIET_RESUME_SEC = 10.0       # 退出后再等这么久才展开（alt-tab 来回不用折来折去）
 QUIET_NOTICE_MS = 2500        # 「进入免打扰模式」气泡显示多久
 QUIET_FOLD_DELAY_MS = 1600    # 先让提示露个脸，再把桌宠折叠到屏幕边上
+QUIET_STARTUP_GRACE_SEC = 90.0  # 刚开机这段时间不判免打扰：开机时前台常是播放器/桌面/启动画面，
+                                # 一进一出会莫名冒出「进入免打扰模式 / 免打扰结束」两个提示
 IDLE_CHAT_ENABLED = True      # 是否开启"长时间无操作主动搭话"
 IDLE_CHAT_MAX = 2             # 一轮空闲最多主动搭话几次（2 次≈30 分钟），之后认为用户离开，不再说话直到回来
 IDLE_CHECK_MS = 30000         # 每 30 秒检查一次系统空闲时间
@@ -2262,7 +2266,7 @@ class _RenderWorker:
 from activity_states import ActivityMixin
 from speech_motion import SpeechMotionMixin
 
-class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFeaturesMixin, MemoryFeaturesMixin, TodoFeaturesMixin, ComputerAssistantMixin, WeixinMixin, AssistantFeaturesMixin, WeatherNewsMixin, UpdateFeaturesMixin):
+class DeskPet(PomodoroMixin, SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFeaturesMixin, MemoryFeaturesMixin, TodoFeaturesMixin, ComputerAssistantMixin, WeixinMixin, AssistantFeaturesMixin, WeatherNewsMixin, UpdateFeaturesMixin):
     def _computer_data_dir(self):
         return DATA_DIR
 
@@ -2421,6 +2425,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._quiet_reason_text = ""
         self._quiet_checked_at = 0.0
         self._quiet_active = False        # 现在是不是在免打扰里
+        self._quiet_boot_at = time.monotonic()   # 启动时刻：开机头 90 秒不判免打扰
         self._quiet_since = None          # 连续安静的起始时间（确认几秒才真的进）
         self._quiet_resume_at = None      # 退出免打扰后延迟展开的时间点
         self._quiet_folded = False        # 这次免打扰是不是把她折起来了
@@ -2549,6 +2554,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self.gear, self.gear_label = self._create_icon_button(self._icon_gear, "⚙", self.show_menu)
         self.chatbtn, self.chatbtn_label = self._create_icon_button(self._icon_chat, "💬", self.show_chat_log)
         self.todobtn, self.todobtn_label = self._create_icon_button(self._icon_todo, "☑", self.show_todos)
+        self._icon_pomo = self._load_icon(POMODORO_ICON_PATH)
+        self._pm_pomo = premultiply_image(self._icon_pomo) if self._icon_pomo is not None else None
+        self.pomobtn, self.pomobtn_label = self._create_icon_button(self._icon_pomo, "🍅", self.show_pomodoro)
+        self._pomodoro_init()
         self._btn_size = 0
         self._buttons_visible = False
         self._buttons_last_hover = -100.0
@@ -2998,7 +3007,12 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 or not self.visible):
             return
         if touch["double"]:
-            self.play_action("happy",gesture=True)
+            if self._is_speaking() or self._tts_pending():
+                # 正在说话/出字：双击 = 结束这段对话，直接开输入框写新的
+                self._cancel_reply()
+                self.open_chat_input(interrupt=False)
+            else:
+                self.play_action("happy",gesture=True)
         else:
             self._toggle_pending = True
             self._pending_click = (now,event.x_root,event.y_root,touch["body"])
@@ -3091,7 +3105,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._btn_size = size
             for pm, lbl in ((getattr(self, "_pm_gear", None), self.gear_label),
                             (getattr(self, "_pm_chat", None), self.chatbtn_label),
-                            (getattr(self, "_pm_todo", None), self.todobtn_label)):
+                            (getattr(self, "_pm_todo", None), self.todobtn_label),
+                            (getattr(self, "_pm_pomo", None), self.pomobtn_label)):
                 if pm is None or lbl is None:
                     continue
                 img = ImageTk.PhotoImage(render_display(pm, size))
@@ -3164,7 +3179,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             top = int(pet_y + by1 * s)
             bottom = int(pet_y + by2 * s)
             char_h = bottom - top
-            stack_h = btn * 3 + gap * 2
+            stack_h = btn * 4 + gap * 3
             stack_top = top + int(char_h * 0.62) - stack_h // 2   # 竖排中心放在角色 ~62% 高度处
             x = right + max(4, int(btn * 0.12))                   # 角色右侧
             mon = monitor_rect_of_point(pet_x + self.pet.winfo_width() // 2,
@@ -3175,10 +3190,11 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                     x = left - btn - max(4, int(btn * 0.12))
                 x = max(ml, x)
                 stack_top = max(mt, min(stack_top, mb - stack_h))
-            ty = stack_top
+            py = stack_top
+            ty = py + btn + gap
             cy = ty + btn + gap
             gy = cy + btn + gap
-            for win, y in ((self.todobtn, ty), (self.chatbtn, cy), (self.gear, gy)):
+            for win, y in ((self.pomobtn, py), (self.todobtn, ty), (self.chatbtn, cy), (self.gear, gy)):
                 geo = f"+{x}+{y}"
                 if getattr(win, "_last_geo", None) != geo:
                     win._last_geo = geo
@@ -3228,7 +3244,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
     def _hide_buttons(self):
         self._buttons_visible = False
         self._buttons_last_hover = -100.0
-        for w in (self.gear, self.chatbtn, self.todobtn):
+        for w in (self.gear, self.chatbtn, self.todobtn, self.pomobtn):
             try:
                 w.withdraw()
             except Exception:
@@ -3255,7 +3271,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
     def _pointer_on_button_stack(self,x,y):
         """鼠标是否在按钮条上；正在转的唱片也算——不然悬停/长按唱片时按钮会收起来。"""
         if self._buttons_visible:
-            windows=(self.gear,self.chatbtn,self.todobtn)
+            windows=(self.gear,self.chatbtn,self.todobtn,self.pomobtn)
             left=min(w.winfo_rootx() for w in windows)
             top=min(w.winfo_rooty() for w in windows)
             right=max(w.winfo_rootx()+w.winfo_width() for w in windows)
@@ -3280,7 +3296,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if self._buttons_visible:
             return
         self._place_buttons()
-        for window in (self.gear,self.chatbtn,self.todobtn):
+        for window in (self.gear,self.chatbtn,self.todobtn,self.pomobtn):
             window.deiconify();window.lift()
         self._buttons_visible=True
 
@@ -3375,14 +3391,16 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if not self._toggle_pending:
             return
         self._toggle_pending = False
+        if self._is_speaking() or self._tts_pending():
+            return   # 正在说话/出字：单击不反应，双击才打断并开输入框
         if self.visible and self._touch is None and self._drag is None and not self._ground.active:
             self.toggle_chat()
 
-    def toggle_chat(self):
+    def toggle_chat(self, interrupt=True):
         if self._chat_win is not None:
             self.save_chat_and_close()
         else:
-            self.open_chat_input()
+            self.open_chat_input(interrupt=interrupt)
 
     def save_chat_and_close(self):
         if self._chat_win is not None:
@@ -4385,6 +4403,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             self._stream_shown = 0
             self._stream_done = False
             def reveal():
+                win._show_all=True
                 self._stream_shown=len(self._stream_full)
                 set_text(self._stream_full)
                 self._speech_stop(win)
@@ -4545,7 +4564,9 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             else:
                 t = speakable(text, kana=getattr(self, "_tts_lang", "zh") == "ja")   # 日文语音时保留假名，否则先剔掉
                 if t.strip(" ．。,.!?！？、；;：:"):
-                    self._tts_q.put((t, self._conv_id, gap_ms))
+                    # 队列里同时带「显示用原文」和「合成用文本」：合成会把句末标点抹掉，
+                    # 直接拿合成文本去显示，就会吞掉每句话最后的标点。
+                    self._tts_q.put((text, t, self._conv_id, gap_ms))
 
     def _voice_bubble_ensure(self):
         """确保语音气泡存在（没有就建一个）。
@@ -4739,7 +4760,12 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 if item is None:
                     self._synth_q.put(("end",))
                     continue
-                text, conv, gap = (list(item) + [None])[:3]   # 兼容旧的 2 元组
+                vals = list(item)
+                if len(vals) >= 4:
+                    text, tts, conv, gap = vals[:4]          # (显示文本, 合成文本, 对话, 停顿)
+                else:
+                    text, conv, gap = (vals + [None])[:3]    # 兼容旧的 2/3 元组
+                    tts = text
                 if conv != self._conv_id:
                     continue   # 旧对话，丢弃
                 # 只在一段话开头显示"加载中"省略号；后续段已提前合成，不再闪省略号
@@ -4747,7 +4773,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                     self._voice_active = True
                     self._ui(self._voice_dots_start)
                 out = os.path.join(DATA_DIR, "_tts_p%d.wav" % (slot % 8))
-                ok, path, dur = self._tts_synth(text, out_path=out)
+                ok, path, dur = self._tts_synth(tts, out_path=out)
                 slot += 1
                 self._synth_q.put(("seg", text, conv, ok, path, dur, gap))
             except Exception:
@@ -5397,9 +5423,10 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             # 位置：排在最上面那个按钮（待办）的正上方，和三个按钮同宽、同一列
             gap = max(3, int(btn * 0.12))
             try:
-                tx = self.todobtn.winfo_rootx()
-                ty = self.todobtn.winfo_rooty()
-                tw = self.todobtn.winfo_width() or btn
+                anchor_btn = getattr(self, "pomobtn", self.todobtn)
+                tx = anchor_btn.winfo_rootx()
+                ty = anchor_btn.winfo_rooty()
+                tw = anchor_btn.winfo_width() or btn
                 cx = tx + tw / 2
                 cy = ty - gap - size / 2
             except Exception:
@@ -5602,7 +5629,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
                 self._place_bubble(win)
             except Exception:
                 pass
-            self._follow[win_id] = win.after(40, tick)
+            self._follow[win_id] = win.after(16, tick)   # 60fps：拖动时气泡/输入框跟得上，不顿
         self._follow[win_id] = win.after(0, tick)
 
     def _stop_follow(self, win):
@@ -6698,6 +6725,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
             "voice_lang": getattr(self, "_tts_lang", "zh"),
             "web_search": bool(getattr(self, "_web_search_on", True)),
             "music_volume": int(getattr(self, "_music_volume", MUSIC_VOLUME)),
+            "pomodoro_focus": int(getattr(self, "_pomo_focus", 25)),
+            "pomodoro_break": int(getattr(self, "_pomo_break", 5)),
         }
         self._settings.update(data)
         with _FILE_LOCK:
@@ -8220,6 +8249,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         if now - getattr(self, "_quiet_checked_at", 0.0) < self.QUIET_CACHE_SEC:
             return getattr(self, "_quiet_reason_text", "")
         title, exe = get_foreground_app()
+        self._quiet_last_exe = exe or ""      # 只给日志用：出问题能看出是哪个程序触发的
         fullscreen = bool(getattr(self, "_quiet_fullscreen", True)) and quiet_mode.foreground_is_fullscreen()
         reason = quiet_mode.quiet_reason(
             title, exe, fullscreen,
@@ -8244,6 +8274,8 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         """免打扰状态机：连续安静几秒才算数（免得切一下窗口就折叠），退出后也等几秒再展开。"""
         if getattr(self, "_quitting", False):
             return
+        if time.monotonic() - getattr(self, "_quiet_boot_at", 0.0) < QUIET_STARTUP_GRACE_SEC:
+            return   # 刚开机：窗口还在乱切，先不判（避免开机冒「免打扰结束」）
         reason = self._quiet_now()
         now = time.monotonic()
         if reason:
@@ -8269,7 +8301,7 @@ class DeskPet(SpeechMotionMixin, ActivityMixin, ConversationUIMixin, DialogueFea
         self._quiet_resume_at = None
         self._quiet_folded = False
         try:
-            _sound_log("quiet: 进入免打扰（%s）" % reason)
+            _sound_log("quiet: 进入免打扰（%s / %s）" % (reason, getattr(self, "_quiet_last_exe", "")))
         except Exception:
             pass
         if not self.visible:

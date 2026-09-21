@@ -160,11 +160,12 @@ class Composer(ScrolledText):
     def get(self,*args):return super().get(*(args or ('1.0','end-1c')))
 
 class ConversationUIMixin:
-    def open_chat_input(self,prefill=''):
+    def open_chat_input(self,prefill='',interrupt=True):
         self._cancel_chat_click();self._wake_pet()
         if self._chat_win is not None:
             self._chat_win.lift();return
-        self._cancel_reply();self.close_popup()
+        if interrupt:self._cancel_reply()
+        self.close_popup()
         box,send_img,send_press=chat_images()
         width,height=box.width,box.height
         x1,y1,x2,y2=chat_text_rect(width,height)
