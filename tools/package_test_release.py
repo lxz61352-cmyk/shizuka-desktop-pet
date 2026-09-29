@@ -39,6 +39,18 @@ def copy_runtime(source, target):
         shutil.copy2(path, dest)
 
 
+def normalize_app_text(bundle):
+    """Match repository LF rules without changing bundled third-party files."""
+    suffixes = {'.py', '.md', '.txt', '.json', '.mjs', '.yml', '.yaml', '.bat', '.cmd', '.lock'}
+    for path in bundle.rglob('*'):
+        if (not path.is_file() or path.relative_to(bundle).parts[0] in ('_internal', 'LICENSES')
+                or path.suffix not in suffixes):
+            continue
+        data = path.read_bytes()
+        if b'\r\n' in data:
+            path.write_bytes(data.replace(b'\r\n', b'\n'))
+
+
 def license_files(bundle):
     copy_runtime(ROOT / 'LICENSES', bundle / 'LICENSES')
     versions = {'python': sys.version, 'packages': {}}
@@ -119,8 +131,18 @@ def build(kind, output, build_root, reports, desktop_profile=None):
     if not chat:
         for component in ('assets', 'characters', 'src'):
             copy_runtime(ROOT / component, directory / component)
-        for doc in ('README.md', '更新公告.md'):
+        for doc in ('README.md', '更新公告.md', 'AI-DEVELOPMENT.md', 'verify_package.py',
+                    '启动桌宠.bat', '源码启动.bat'):
             shutil.copy2(ROOT / doc, directory / doc)
+        # Keep the readme's local links useful inside the downloaded bundle.
+        for doc in ('开发与验证.md', '使用说明/桌宠本次打包说明.md', '使用说明/朋友聊天测试版.md'):
+            target = directory / '文档' / doc
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(ROOT / '文档' / doc, target)
+        if (ROOT / 'version.json').exists():
+            release = json.loads((ROOT / 'version.json').read_text('utf-8-sig'))
+            if release.get('version') == version:
+                shutil.copy2(ROOT / 'version.json', directory / 'version.json')
         # Modules using __file__ live in _internal in an onedir build.
         for asset in ROOT.glob('src/*.mjs'):
             shutil.copy2(asset, directory / '_internal' / asset.name)
@@ -134,6 +156,7 @@ def build(kind, output, build_root, reports, desktop_profile=None):
     if smoke.get('errors') or smoke.get('ok') is False or not smoke.get('checks'):
         raise RuntimeError('Offline frozen acceptance failed')
     # A frozen GUI test has its own temporary data root; none may be published.
+    normalize_app_text(directory)
     privacy = audit(directory)
     write_json(directory / 'BUILD-INFO.json', {'version': version, 'built_at': datetime.now().astimezone().isoformat(),
                'kind': kind, 'offline_gui_checks': len(smoke['checks']), 'model_requests_during_build': 0,

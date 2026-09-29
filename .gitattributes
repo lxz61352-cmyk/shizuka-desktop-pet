@@ -1,2 +1,19 @@
 voice_model/*.ckpt filter=lfs diff=lfs merge=lfs -text
 voice_model/*.pth filter=lfs diff=lfs merge=lfs -text
+
+# Keep runtime checksums stable when the release is checked out from Git.
+*.py text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.json text eol=lf
+*.mjs text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.bat text eol=lf
+*.cmd text eol=lf
+*.lock text eol=lf
+/_internal/** -text
+/LICENSES/** -text
+/BUILD-INFO.json -text
+/MANIFEST.json -text
+/VERIFICATION.json -text

@@ -1,8 +1,8 @@
 {
-  "version": "0.8.6",
-  "unit_tests": 449,
-  "frozen_gui_checks": 18,
+  "version": "0.8.17",
+  "unit_tests": 619,
+  "public_test_modules": 53,
+  "frozen_gui_checks": 32,
   "private_data_audit": "passed",
-  "python_modules_audited": 1949,
-  "original_asset_files_verified": 42
+  "scope": "Public offline functional regression; two outdated test adapters repaired and rerun. Not a real WeChat delivery or dialogue-quality verdict."
 }

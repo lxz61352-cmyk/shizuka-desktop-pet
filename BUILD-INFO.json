@@ -1,0 +1,16 @@
+{
+  "version": "0.8.17",
+  "built_at": "2026-09-29T20:10:43.686021+08:00",
+  "kind": "desktop",
+  "offline_gui_checks": 32,
+  "model_requests_during_build": 0,
+  "dialogue_profile": "s31r-o1b",
+  "production_settings_included": false,
+  "credentials_included": false,
+  "audit": {
+    "files_checked": 3248,
+    "private_paths_excluded": true,
+    "key_literal_scan": "passed",
+    "scope": "strict input allowlist + paths + sk-style plaintext literals; not universal PII detection"
+  }
+}
