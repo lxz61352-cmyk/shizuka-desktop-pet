@@ -61,11 +61,12 @@ class AttachPreviewTests(unittest.TestCase):
         self.assertEqual(wide.getpixel((22, 2)), (255, 255, 255))
         self.assertNotEqual(wide.getpixel((22, 15)), (255, 255, 255))
 
-    def test_max_three_previews(self):
+    def test_max_six_previews_with_overflow(self):
         from PIL import Image
-        img = Image.new("RGBA", (460, 280), (0, 0, 0, 0))
-        atts = [{"kind": "text", "name": "a%d" % i} for i in range(5)]
-        self.assertLessEqual(len(cu._draw_attach_previews(img, 161, 180, 32, atts)), 3)
+        img = Image.new("RGBA", (900, 280), (0, 0, 0, 0))
+        atts = [{"kind": "text", "name": "a%d" % i} for i in range(7)]
+        rects = cu._draw_attach_previews(img, 880, 180, 32, atts)
+        self.assertEqual([rect[0] for rect in rects], [6, 5, 4, 3, 2, 1])
 
 
 if __name__ == "__main__":

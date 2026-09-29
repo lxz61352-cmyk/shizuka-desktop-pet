@@ -40,6 +40,25 @@ class AnnouncementTests(unittest.TestCase):
                 self.assertEqual(updater.read_announcement("v0.7.6"), "旧内容")
                 self.assertEqual(updater.read_announcement("9.9.9"), "")
 
+    def test_full_version_matches_with_author_credit(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "更新公告.md"
+            path.write_text(
+                "# 更新公告\n\n## v0.8.17（由gpt代写）\n\n新版\n\n"
+                "## v0.8.10 （由gpt代写）\n\n中间版\n\n"
+                "## v0.8.1（由大肥鱼代写）\n\n旧版\n\n"
+                "## v0.7.6beta（由大肥鱼代写）\n\n测试版\n",
+                encoding="utf-8-sig",
+            )
+            with patch.object(updater, "ANNOUNCE_FILE", str(path)):
+                self.assertEqual(updater.read_announcement("v0.8.17"), "新版")
+                self.assertEqual(updater.read_announcement("0.8.10"), "中间版")
+                self.assertEqual(updater.read_announcement("0.8.1"), "旧版")
+                self.assertEqual(updater.read_announcement("0.7.6beta"), "测试版")
+                self.assertEqual(updater.read_announcement("0.7.6"), "")
+                self.assertEqual(updater.read_announcement("0.8"), "")
+                self.assertEqual(updater.read_announcement("0.8.170"), "")
+
 
 class PendingUpdateTests(unittest.TestCase):
     def test_round_trip_removes_the_marker(self):

@@ -53,6 +53,7 @@ class TodoVoiceMixin:
         import pet as engine
         if not hasattr(self,'root') or not item.get('due') or item['due']-now>600 or not engine.has_api_key():return
         options=self._todo_options(item);key=phrase_key(item,options)
+        if options.get('snooze_until'):return
         cached=options.get('reminder_phrase',{})
         if (cached.get('key')==key and valid_phrase(cached.get('text'),item,options)) or options.get('phrase_retry_at',0)>now:return
         if not hasattr(self,'_todo_phrase_jobs'):self._todo_phrase_jobs=set()
@@ -88,6 +89,8 @@ class TodoVoiceMixin:
         threading.Thread(target=work,name='shizuka-reminder-phrase',daemon=True).start()
 
     def _todo_reminder_text(self,item,now=None):
+        if self._todo_options(item).get('snooze_until'):
+            return LiteralReply('你选的稍后提醒到了：'+item['text']+'。原来的事项安排没有自动改变。')
         now=time.time() if now is None else now;options=self._todo_options(item)
         cached=options.get('reminder_phrase',{});schedule=options.get('schedule',{})
         text=cached.get('text') if cached.get('key')==phrase_key(item,options) else None

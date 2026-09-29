@@ -7,6 +7,7 @@ idna==3.19
 jiter==0.17.0
 openai==3.13.0
 pillow==12.3.0
+pypdfium2==5.13.0
 pydantic==2.13.5
 pydantic_core==2.46.5
 pystray==0.19.5

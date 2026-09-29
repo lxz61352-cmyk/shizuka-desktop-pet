@@ -10,8 +10,9 @@ import threading
 import time
 import tkinter as tk
 from tkinter import messagebox
+from tkinter import font as tkfont
 from PIL import Image, ImageTk
-from ui_theme import INK
+from ui_theme import INK,page_header,PAGE_X
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 POMODORO_CLOCK_PATH = os.path.join(_ROOT, "assets", "pomodoro_clock.png")
@@ -47,6 +48,8 @@ class PomodoroMixin:
         self._pomo_game_asked = set()
         self._pomo_pending_announce = ""
         self._pomo_game_check_id = None
+        self._pomo_outside_id = None
+        self._pomo_settings_win = None
 
     def _pomo_minutes(self, key, default):
         try:
@@ -83,11 +86,17 @@ class PomodoroMixin:
         photo = self._pomo_clock_photo(side)
         canvas.create_image(0, 0, anchor="nw", image=photo)
         canvas._ph = photo
-        font = ("Microsoft YaHei UI", int(side * 0.20), "bold")
+        # Canvas dimensions are pixels; a positive font size is points and gets
+        # enlarged again by Tk scaling. Fit the longest supported timer in pixels.
+        size=round(side*.17)
+        font=tkfont.Font(root=win,family='Microsoft YaHei UI',size=-size,weight='bold')
+        while font.measure('180:00')>side*.68 and size>12:
+            size-=1;font.configure(size=-size)
+        canvas._timer_font=font
         text = canvas.create_text(side / 2, side * 0.44, text="25:00", fill=POMO_BLUE, font=font)
         buttons = {}
         if with_buttons:
-            small = ("Microsoft YaHei UI", int(side * 0.095), "bold")
+            small = ("Microsoft YaHei UI", -round(side * 0.075), "bold")
             for index, (key, label) in enumerate((("start", "开始"), ("settings", "设置"))):
                 cx = side * (0.32 + index * 0.36)
                 cy = side * 0.72
@@ -120,6 +129,11 @@ class PomodoroMixin:
     # ---------------- 头顶面板 ----------------
     def show_pomodoro(self, event=None):
         """点图标：露出/收起头顶面板。"""
+        if self._pomo_phase is None and hasattr(self,'_workflow') and self._workflow().data.get('focus'):
+            self._pomo_offer_recovery();return
+        if self._pomo_phase is not None:
+            win=self._pomo_float_show() if self._pomo_phase=='focus' else self._pomo_ensure_panel()
+            win.attributes('-topmost',True);win.lift();return
         win = self._pomo_panel
         if win is not None and win.winfo_exists():
             self._pomo_hide_panel()
@@ -127,6 +141,10 @@ class PomodoroMixin:
         self._pomo_ensure_panel()
 
     def _pomo_hide_panel(self):
+        if getattr(self,'_pomo_outside_id',None):
+            try:self.root.after_cancel(self._pomo_outside_id)
+            except tk.TclError:pass
+            self._pomo_outside_id=None
         win = self._pomo_panel
         self._pomo_panel = None
         self._pomo_panel_canvas = None
@@ -146,7 +164,7 @@ class PomodoroMixin:
         if win is not None and win.winfo_exists():
             return win
         win, canvas, text, buttons = self._pomo_canvas(PANEL_CLOCK, with_buttons=True)
-        win.bind("<Escape>", lambda *a: self._pomo_hide_panel())
+        win.bind("<Escape>", lambda *a: self._pomo_hide_panel() if self._pomo_phase is None else self._pomo_ask_stop())
         self._pomo_panel = win
         self._pomo_panel_canvas = canvas
         self._pomo_panel_text = text
@@ -156,7 +174,33 @@ class PomodoroMixin:
         win.deiconify()
         win.lift()
         self._pomo_refresh_text()
+        # Wait for release of the click that opened it, then watch new presses.
+        self._pomo_pointer_down=True
+        self._pomo_outside_id=self.root.after(80,lambda:self._pomo_poll_outside(win))
         return win
+
+    def _pomo_outside_press(self,x,y):
+        """Only the idle chooser dismisses. A running countdown is persistent."""
+        if self._pomo_phase is not None:return False
+        for window in (self._pomo_panel,getattr(self,'_pomo_settings_win',None)):
+            if window is not None and window.winfo_exists():
+                if window.winfo_rootx()<=x<window.winfo_rootx()+window.winfo_width() and window.winfo_rooty()<=y<window.winfo_rooty()+window.winfo_height():
+                    return False
+        self._pomo_hide_panel();return True
+
+    def _pomo_poll_outside(self,win):
+        self._pomo_outside_id=None
+        if self._pomo_panel is not win or not win.winfo_exists():return
+        if self._pomo_phase is not None:return
+        try:
+            import ctypes
+            down=any(ctypes.windll.user32.GetAsyncKeyState(key)&0x8000 for key in (0x01,0x02))
+            if down and not self._pomo_pointer_down:
+                x,y=win.winfo_pointerxy()
+                if self._pomo_outside_press(x,y):return
+            self._pomo_pointer_down=down
+        except (AttributeError,OSError,tk.TclError):pass
+        self._pomo_outside_id=self.root.after(40,lambda:self._pomo_poll_outside(win))
 
     def _pomo_refresh_text(self):
         label = self._pomo_mmss(self._pomo_left())
@@ -181,12 +225,16 @@ class PomodoroMixin:
 
     # ---------------- 设置窗口 ----------------
     def show_pomodoro_settings(self, event=None):
+        existing=getattr(self,'_pomo_settings_win',None)
+        if existing is not None and existing.winfo_exists():existing.lift();return existing
         win = tk.Toplevel(self.root)
+        self._pomo_settings_win=win
         win.title("番茄钟设置")
         win.attributes("-topmost", True)
         win.resizable(False, False)
+        page_header(win,'番茄钟设置').pack(fill='x')
         body = tk.Frame(win, bg="#F3F3F0")
-        body.pack(padx=18, pady=16)
+        body.pack(fill='x',padx=PAGE_X,pady=(0,14))
         focus = tk.IntVar(value=self._pomo_focus)
         rest = tk.IntVar(value=self._pomo_break)
 
@@ -218,16 +266,23 @@ class PomodoroMixin:
         tk.Button(foot, text="取消", width=8, command=win.destroy).pack(side="right", padx=8)
         win.bind("<Escape>", lambda *a: win.destroy())
         win.update_idletasks()
-        self._place_dialog(win, 260, win.winfo_reqheight())
+        self._place_dialog(win, max(320,win.winfo_reqwidth()), win.winfo_reqheight())
         win.lift()
         return win
 
     # ---------------- 开始 / 结束 ----------------
-    def _pomo_start(self, phase="focus"):
+    def _pomo_start(self, phase="focus",resume_seconds=None):
+        if hasattr(self,'_workflow') and resume_seconds is None:
+            if self._workflow().data.get('focus'):
+                if self._pomo_phase:self._pomo_checkpoint()
+                self._workflow().finish('切换阶段')
+            self._workflow().begin(phase,(self._pomo_focus if phase=='focus' else self._pomo_break)*60,
+                                   getattr(self,'_pomo_linked_todo',None))
         self._pomo_phase = phase
         self._pomo_pending_announce = ""
         minutes = self._pomo_focus if phase == "focus" else self._pomo_break
-        self._pomo_end_at = time.monotonic() + minutes * 60
+        self._pomo_end_at = time.monotonic() + (minutes * 60 if resume_seconds is None else resume_seconds)
+        self._pomo_last_tick=time.monotonic();self._pomo_last_saved=time.monotonic()
         self._pomo_hide_panel()
         if phase == "focus":
             self._pomo_float_show()
@@ -241,11 +296,16 @@ class PomodoroMixin:
         self._pomo_refresh_text()
         self._pomo_schedule()
         try:
-            self.say("番茄钟开始啦，%d 分钟后叫你休息。" % minutes, source="番茄钟")
+            message=('已恢复'+('专注' if phase=='focus' else '休息')+'，还剩 '+self._pomo_mmss(resume_seconds)+'。' if resume_seconds is not None
+                     else "番茄钟开始啦，%d 分钟后叫你休息。" % minutes if phase=='focus' else '开始休息，%d 分钟。' % minutes)
+            self.say(message, source="番茄钟")
         except Exception:
             pass
 
     def _pomo_stop(self, message=""):
+        if hasattr(self,'_workflow'):
+            self._pomo_checkpoint();self._workflow().finish('主动结束')
+        self._pomo_linked_todo=None
         self._pomo_phase = None
         self._pomo_pending_announce = ""
         self._pomo_cancel_tick()
@@ -288,6 +348,13 @@ class PomodoroMixin:
         self._pomo_after = None
         if self._pomo_phase is None:
             return
+        now=time.monotonic()
+        if hasattr(self,'_workflow') and now-getattr(self,'_pomo_last_tick',now)>30:
+            self._pomo_phase=None;self._pomo_float_hide();self._pomo_hide_panel()
+            self._pomo_offer_recovery();return
+        self._pomo_last_tick=now
+        if hasattr(self,'_workflow') and now-getattr(self,'_pomo_last_saved',0)>=5:
+            self._pomo_checkpoint();self._pomo_last_saved=now
         if self._pomo_end_at - time.monotonic() <= 0:
             self._pomo_finish_phase()
             return
@@ -295,9 +362,15 @@ class PomodoroMixin:
         self._pomo_schedule()
 
     def _pomo_finish_phase(self):
+        completed=None
+        if hasattr(self,'_workflow'):
+            self._workflow().checkpoint(0);completed=self._workflow().finish('倒计时结束')
         if self._pomo_phase == "focus":
             self._pomo_phase = "break"
             self._pomo_end_at = time.monotonic() + self._pomo_break * 60
+            if hasattr(self,'_workflow'):
+                self._workflow().begin('break',self._pomo_break*60,getattr(self,'_pomo_linked_todo',None))
+                self.root.after(500,lambda:self._pomo_finished_actions(completed))
             if self._pomo_game_running():
                 # 正在打游戏：先不弹出来打扰，等退出游戏再播报（浮动番茄钟继续显示休息倒计时）
                 self._pomo_pending_announce = "到休息时间了。"
@@ -334,7 +407,7 @@ class PomodoroMixin:
         win = self._pomo_float
         if win is not None and win.winfo_exists():
             try:
-                win.deiconify(); win.lift()
+                win.attributes('-topmost',True);win.deiconify(); win.lift()
             except Exception:
                 pass
             return win

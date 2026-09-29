@@ -5,10 +5,12 @@ import tkinter as tk
 from tkinter import ttk,messagebox
 from todo_model import CATEGORIES
 from tkinter.scrolledtext import ScrolledText
-from ui_theme import apply as apply_theme,copy_bindings
+from ui_theme import apply as apply_theme,copy_bindings,page_header
 
 from todo_editor import TodoEditorMixin
 from todo_schedule import schedule_facts
+from art_table import ArtTable, ArtTabs
+from art_transcript import ArtTranscript
 
 class TodoUIMixin(TodoEditorMixin):
     def show_todos(self,event=None):
@@ -18,19 +20,19 @@ class TodoUIMixin(TodoEditorMixin):
         win=self._todo_win=tk.Toplevel(self.root)
         win.attributes('-topmost',True)
         win.title('静香 · 待办');win.minsize(680,500);self._place_dialog(win,900,690)
-        heading=ttk.Frame(win,padding=(20,18,20,4));heading.pack(fill='x')
-        ttk.Label(heading,text='一起安排好',style='Pet.Title.TLabel').pack(side='left')
+        heading=page_header(win,'一起安排好');heading.pack(fill='x')
         self._todo_count=tk.StringVar()
         ttk.Label(heading,textvariable=self._todo_count,style='Pet.Muted.TLabel').pack(side='right')
         top=ttk.Frame(win,padding=(12,10));top.pack(fill='x')
         ttk.Button(top,text='＋ 新建待办',command=self._todo_new).pack(side='left')
         ttk.Button(top,text='编辑 / 选择时间',command=self._todo_edit_selected).pack(side='left',padx=8)
+        ttk.Button(top,text='快捷处理 / 专注',command=self.show_todo_quick).pack(side='left')
         ttk.Button(top,text='刷新',command=self._refresh_todo_view).pack(side='right')
-        self._todo_notebook=ttk.Notebook(win);self._todo_notebook.pack(fill='both',expand=True,padx=12)
+        self._todo_notebook=ArtTabs(win);self._todo_notebook.pack(fill='both',expand=True,padx=12)
         self._todo_trees={}
         for name in (*CATEGORIES,'已完成'):
             page=ttk.Frame(self._todo_notebook);self._todo_notebook.add(page,text=name)
-            tree=ttk.Treeview(page,columns=('text','time','notify','status'),show='headings',selectmode='browse',height=4)
+            tree=ArtTable(page,columns=('text','time','notify','status'))
             for key,label,width in [('text','事项',270),('time','提醒时间',140),('notify','提醒方式',100),('status','状态',140)]:
                 tree.heading(key,text=label);tree.column(key,width=width,minwidth=70,stretch=key in ('text','status'))
             bar=ttk.Scrollbar(page,orient='vertical',command=tree.yview);tree.configure(yscrollcommand=bar.set)
@@ -41,8 +43,11 @@ class TodoUIMixin(TodoEditorMixin):
             self._todo_trees[name]=tree
         details=ttk.Frame(win,padding=(14,10,14,0));details.pack(fill='x')
         ttk.Label(details,text='事项与备注',style='Pet.Muted.TLabel').pack(anchor='w')
-        self._todo_details_box=ScrolledText(details,height=4,wrap='word',state='disabled')
-        self._todo_details_box.pack(fill='x',pady=(5,0));copy_bindings(self._todo_details_box)
+        self._todo_details_box=ArtTranscript(details,plain=True,height=90)
+        notes_bar=ttk.Scrollbar(details,orient='vertical',command=self._todo_details_box.yview)
+        self._todo_details_box.configure(yscrollcommand=notes_bar.set)
+        notes_bar.pack(side='right',fill='y',pady=(5,0))
+        self._todo_details_box.pack(fill='x',expand=True,pady=(5,0))
         self._todo_notebook.bind('<<NotebookTabChanged>>',lambda e:self._todo_show_details())
         actions=ttk.Frame(win,padding=(12,8));actions.pack(fill='x')
         self._todo_complete_button=ttk.Button(actions,text='完成',command=self._todo_toggle_selected);self._todo_complete_button.pack(side='left')
@@ -80,7 +85,7 @@ class TodoUIMixin(TodoEditorMixin):
             self._todo_complete_button.configure(text='恢复' if item and item.get('done') else '完成本次' if rule and not rule.get('until_done') else '完成')
             if rule and not rule.get('until_done') and not item.get('done'):self._todo_end_button.pack(side='left',after=self._todo_complete_button,padx=6)
             else:self._todo_end_button.pack_forget()
-        box.configure(state='normal');box.delete('1.0','end');box.insert('1.0','\n'.join(lines));box.configure(state='disabled')
+        box.set_rows([{'text':'\n'.join(lines)}]);box.yview('moveto',0)
 
     def _close_todo_window(self):
         win=getattr(self,'_todo_win',None);self._todo_win=None
@@ -99,6 +104,7 @@ class TodoUIMixin(TodoEditorMixin):
     def _todo_state_label(self,item):
         if item.get('done'):return '已完成'
         options=self._todo_options(item);notice=options.get('notice',{})
+        if options.get('snooze_until',0)>time.time():return '稍后 '+time.strftime('%m-%d %H:%M',time.localtime(options['snooze_until']))
         from dialogue_grounding import event_expired
         if event_expired(item,options):return '开始时间已过，完成待确认'
         if options.get('time_hint') and not item.get('due') and not item.get('on_boot'):return '时间待确认'
@@ -168,6 +174,7 @@ class TodoUIMixin(TodoEditorMixin):
         except ValueError:current=datetime.now()
         win=tk.Toplevel(parent);win.title('选择日期');win.resizable(False,False)
         win.transient(parent);win.attributes('-topmost',True)
+        page_header(win,'选择日期').pack(fill='x')
         year=tk.IntVar(value=current.year);month=tk.IntVar(value=current.month)
         head=ttk.Frame(win,padding=8);head.pack(fill='x')
         title=tk.StringVar();grid=ttk.Frame(win,padding=8);grid.pack()

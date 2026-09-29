@@ -46,7 +46,17 @@ def _main():
                     return 0
                 time.sleep(0.2)
         try:
+            from personal_backup import apply_pending
+            apply_pending(pet.DATA_DIR)  # Only after the single-instance lock, before loading app data.
             app = pet.DeskPet()
+            if pet.DESKTOP_DIALOGUE_PROFILE:
+                import json, os
+                from desktop_dialogue_profile import metadata
+                status = dict(metadata(pet.DESKTOP_DIALOGUE_PROFILE), app_version=pet.APP_VERSION,
+                              pid=os.getpid(), executable=sys.executable,
+                              started_at=datetime.datetime.now().astimezone().isoformat())
+                (Path(pet.DATA_DIR) / 'dialogue-runtime.json').write_text(
+                    json.dumps(status, ensure_ascii=False, indent=2), encoding='utf-8')
             if "--computer" in sys.argv:
                 app.root.after(100, app.show_computer_assistant)
             if "--weixin" in sys.argv or "--weixin-pair" in sys.argv:

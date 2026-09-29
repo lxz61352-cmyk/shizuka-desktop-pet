@@ -1,0 +1,16 @@
+{
+  "generator": "built-in image_gen",
+  "model_selection": "The tool does not expose a model selector; no specific backend version is asserted.",
+  "date": "2026-09-28",
+  "assets": [
+    {
+      "file": "composer.png",
+      "prompt": "Use case: ui-mockup. Asset type: production raster UI skin for a desktop anime companion application's COMPOSER INPUT WINDOW, not a screenshot or presentation. Create ONE empty ornamental horizontal dialogue frame, landscape 3:2 canvas. Transparent background outside the frame, real alpha. Frame occupies almost full canvas, with about 3 percent transparent margin. Style: polished restrained Japanese visual novel UI, cool porcelain-white flat opaque interior, fine dusty-blue double outline, subtle silver trim, soft periwinkle and pale cyan accents. A small elegant satin-blue ribbon folded around the upper-left border with a tiny four-point star charm; lower-right border has a delicate translucent pale-blue leaf/feather flourish and two tiny sparkles. All decoration stays within outermost 8 percent of frame. Huge clean near-uniform light interior for live editable text and buttons, NO interior text boxes, NO dividers, NO text, NO icons, NO lettering, NO people, NO card illustration, NO dark backdrop, NO mockup shadows outside, NO checkerboard. Corners gently rounded, not pill shaped. Border straight and simple in the middle of all four sides so it can be nine-slice resized in application without stretching corner ornaments. Flat front view, crisp professional game UI artwork, not 3D. Keep ornament restrained and readable when displayed 460 px wide."
+    },
+    {
+      "file": "reply.png",
+      "prompt": "Use case: ui-mockup. Produce a single production UI asset, an empty DECORATIVE SPEECH BUBBLE for an anime desktop companion. Landscape canvas 3:2, one large rounded-rectangle bubble filling most of canvas and one small downward tail near lower right. REAL TRANSPARENT ALPHA outside the entire silhouette including corners and below tail; absolutely no colored backdrop or square background. Bubble interior is nearly uniform opaque porcelain white with a barely visible cool pale-blue tint, empty for readable live text. Tasteful polished Japanese visual novel UI: fine dusty-blue double outline, silver detail, pale periwinkle highlights. One small satin blue bow with a tiny four-point star pendant decorates the upper-left border; tiny pale-blue feathers/leaves and two star sparkles decorate the lower-right border beside the tail. Decorations only within outermost 8 percent, leave huge central area entirely blank. Frame's middle edges straight to allow nine-slice resizing, ornaments compact so the frame can display at 440px wide. NO words, NO letters, NO fake text, NO icons, NO buttons, NO photographs, NO people, NO card illustration, NO checkerboard, NO rectangular outside background. Crisp delicately illustrated game UI, flat front view, restrained ornament rather than ornate scrollwork."
+    }
+  ],
+  "runtime": "Original RGBA preserved. App resizes in nine sections and adapts alpha to Tk color-key transparency."
+}

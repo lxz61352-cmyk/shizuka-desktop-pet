@@ -47,6 +47,7 @@ class UpdateFeaturesMixin:
         try:
             if info and info[0] and not self._update_notified:
                 self._update_notified = True
+                self._record_notice('可更新至 v'+str(info[1]),'版本更新',key='version:'+str(info[1]))
                 self.say("检测到新版本 v%s，去右键菜单里更新一下吧～" % info[1])
         except Exception:
             pass
@@ -116,9 +117,8 @@ class UpdateFeaturesMixin:
             win.title("停止接收更新" if disable else "重新接收更新")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
-            tk.Label(win, text=("确定要停止接收更新吗？" if disable else "要开启更新吗？"),
-                     bg="#2b2b3a", fg="#e8e8f0",
-                     font=("Microsoft YaHei", 12, "bold")).pack(padx=22, pady=(16, 8))
+            from ui_theme import page_header
+            page_header(win,'停止接收更新' if disable else '重新接收更新').pack(fill='x')
             body = ("停止接收更新后，您仍可以在更新按钮的位置上再次右键开始更新。"
                     "此设置适合有使用经验，想要自己修改程序的用户，"
                     "但更改程序后再进行更新会覆盖掉更改的内容，请谨慎选择。") if disable else \
@@ -153,8 +153,8 @@ class UpdateFeaturesMixin:
             win.title("发现新版本")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
-            tk.Label(win, text="发现新版本 %s" % ver, bg="#2b2b3a", fg="#e8e8f0",
-                     font=("Microsoft YaHei", 12, "bold")).pack(padx=20, pady=(14, 6))
+            from ui_theme import page_header
+            page_header(win,'发现新版本 '+str(ver)).pack(fill='x')
             txt = tk.Text(win, width=54, height=12, bg="#3a3a4e", fg="#e8e8f0",
                           relief="flat", wrap="word")
             txt.insert("1.0", notes or "（这个版本没有写更新说明）")
@@ -190,9 +190,8 @@ class UpdateFeaturesMixin:
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
             win.resizable(False, False)
-            tk.Label(win, text=("正在下载 v%s …" % ver) if ver else "正在下载更新…",
-                     bg="#2b2b3a", fg="#e8e8f0",
-                     font=("Microsoft YaHei", 11, "bold")).pack(padx=24, pady=(18, 8))
+            from ui_theme import page_header
+            page_header(win,'正在下载 v'+str(ver) if ver else '正在下载更新').pack(fill='x')
             bar = ttk.Progressbar(win, orient="horizontal", length=320,
                                   mode="determinate", maximum=100)
             bar.pack(padx=24, pady=6)
@@ -284,8 +283,8 @@ class UpdateFeaturesMixin:
             win.title("更新公告")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
-            tk.Label(win, text="更新公告", bg="#2b2b3a", fg="#e8e8f0",
-                     font=("Microsoft YaHei", 13, "bold")).pack(padx=22, pady=(16, 2))
+            from ui_theme import page_header
+            page_header(win,'更新公告').pack(fill='x')
             tk.Label(win, text=("已更新到 v%s" % ver) if ver else "更新完成",
                      bg="#2b2b3a", fg="#9a9ab0",
                      font=("Microsoft YaHei", 9)).pack(padx=22, pady=(0, 8))

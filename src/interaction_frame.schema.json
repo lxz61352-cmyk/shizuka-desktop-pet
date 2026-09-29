@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "shizuka-interaction-frame",
+  "description": "Phase S4 read-only InteractionFrame: facts about the current exchange with traceable evidence. No behavior, tone, posture or reply fields are allowed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema", "current_signal", "reference", "known_context",
+               "interaction_history", "capability_evidence", "memory_evidence"],
+  "properties": {
+    "schema": {"const": "shizuka-interaction-frame-v1"},
+    "current_signal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "evidence"],
+      "properties": {
+        "kind": {"enum": ["ordinary", "emotion_disclosure", "relationship_feedback",
+                          "opinion_disagreement", "request", "boundary_violation",
+                          "memory_query"]},
+        "evidence": {
+          "type": "array", "minItems": 1,
+          "items": {"$ref": "#/definitions/evidence"}
+        }
+      }
+    },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "assistant_turn_index"],
+      "properties": {
+        "target": {"enum": ["current_topic", "prior_assistant_turn", "third_party",
+                            "unknown"]},
+        "assistant_turn_index": {"type": ["integer", "null"], "minimum": 0}
+      }
+    },
+    "known_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cause", "cause_evidence", "requested_help",
+                   "requested_help_evidence"],
+      "properties": {
+        "cause": {"enum": ["explicit", "inferred", "unknown"]},
+        "cause_evidence": {
+          "type": "array", "items": {"$ref": "#/definitions/evidence"}
+        },
+        "requested_help": {"type": "boolean"},
+        "requested_help_evidence": {
+          "type": "array", "items": {"$ref": "#/definitions/evidence"}
+        }
+      }
+    },
+    "interaction_history": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["same_boundary_continues", "supporting_turn_indices",
+                   "escalation_level"],
+      "properties": {
+        "same_boundary_continues": {"type": "boolean"},
+        "supporting_turn_indices": {
+          "type": "array", "items": {"type": "integer", "minimum": 0}
+        },
+        "escalation_level": {"type": "integer", "minimum": 0, "maximum": 3,
+                             "description": "0 无同类事件；1 首次；2 同类再次出现（含拒绝后继续）；3 持续或升级（拒绝后仍累计，或已有≥2 次前例）"}
+      }
+    },
+    "capability_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["real_world_action_receipts", "tool_receipts", "observations"],
+      "properties": {
+        "real_world_action_receipts": {"type": "array", "items": {"type": "string"}},
+        "tool_receipts": {"type": "array", "items": {"type": "string"}},
+        "observations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "memory_evidence": {
+      "type": "array", "items": {"type": "string", "pattern": "^memory:.+"}
+    }
+  },
+  "definitions": {
+    "evidence": {
+      "type": "string",
+      "pattern": "^(current_user|turn:[0-9]+:(user|assistant)|memory:.+|tool:.+|event:.+)$"
+    }
+  }
+}

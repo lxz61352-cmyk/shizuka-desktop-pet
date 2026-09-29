@@ -2,6 +2,7 @@
 import gzip as _gzip
 import json
 import time
+from datetime import datetime
 import urllib.parse
 import urllib.request
 import zlib
@@ -308,7 +309,7 @@ def _geo_ip():
 def weather_report(detail=True):
     """一次性给出天气查询的完整结果，供调用方按原因回话。
 
-    返回 {"city", "text", "source", "reason"}：
+    返回 {"city", "text", "source", "fetched_at", "reason"}：
       - reason == ""           取到了（source 为 'cma' 或 'open-meteo'）
       - reason == "no-location"  IP 定位没认出城市
       - reason == "no-match"     气象局没有这个地名的站点（不猜同名城市）
@@ -318,7 +319,7 @@ def weather_report(detail=True):
     city = (pro + ct).strip()
     loc = ct or pro
     if not loc:
-        return {"city": "", "text": "", "source": "", "reason": "no-location"}
+        return {"city": "", "text": "", "source": "", "fetched_at": "", "reason": "no-location"}
     # 站点只解析一次：None 表示「这个地名在气象局站点里没有精确匹配」。
     station = _cma_station(loc)
     open_meteo = _weather_openmeteo_detail if detail else _weather_openmeteo_simple
@@ -332,9 +333,12 @@ def weather_report(detail=True):
         except Exception:
             text = ""
         if text:
-            return {"city": city, "text": text, "source": source, "reason": ""}
+            # 这是本机完成查询的时间，不是上游天气观测时间。
+            fetched_at = datetime.now().astimezone().isoformat(timespec="seconds")
+            return {"city": city, "text": text, "source": source,
+                    "fetched_at": fetched_at, "reason": ""}
     reason = "no-match" if station is None else "no-network"
-    return {"city": city, "text": "", "source": "", "reason": reason}
+    return {"city": city, "text": "", "source": "", "fetched_at": "", "reason": reason}
 
 
 def get_location_and_weather():

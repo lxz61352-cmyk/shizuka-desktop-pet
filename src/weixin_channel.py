@@ -1,4 +1,4 @@
-"""Text-only Weixin iLink transport, owner binding and durable duplicate guard.
+"""Weixin iLink transport, received materials, quotes and durable duplicate guard.
 
 Protocol reference: https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol.md
 No desktop WeChat automation, no OpenClaw runtime, no model credentials here.
@@ -15,6 +15,8 @@ import threading
 import time
 from urllib import error, parse, request
 from computer_agent import write_json
+from weixin_materials import InboundText, MaterialStore, MAX_MATERIALS, partial_quote
+from weixin_typing import TypingState
 
 BASE_URL = "https://ilinkai.weixin.qq.com"
 CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c"
@@ -206,8 +208,8 @@ class ILinkClient:
         self.opener = opener or request.build_opener(NoRedirect())
         self.media_opener = request.build_opener(CdnRedirect())
 
-    def download(self, media, aeskey=""):
-        """下载微信图片（自动用 aeskey 解密）。"""
+    def download(self, media, aeskey="", *, max_bytes=IMAGE_MAX_BYTES, require_key=False):
+        """下载有大小上限的微信媒体；附件必须带有效解密密钥。"""
         if not isinstance(media, dict):
             raise ValueError("图片缺少下载信息")
         url = media.get("full_url") or ""
@@ -216,14 +218,19 @@ class ILinkClient:
             if not isinstance(parameter, str) or not parameter:
                 raise ValueError("图片缺少下载地址")
             url = CDN_BASE + "/download?encrypted_query_param=" + parse.quote(parameter, safe="")
-        with self.media_opener.open(request.Request(trusted_cdn(url), headers={"iLink-App-Id": "bot"}), timeout=60) as response:
-            raw = response.read(IMAGE_MAX_BYTES + 1)
-        if len(raw) > IMAGE_MAX_BYTES:
-            raise ValueError("图片超过 16MB，已跳过")
         key = decode_aes_key(aeskey) or decode_aes_key(media.get("aes_key"))
-        return aes_ecb_decrypt(key, raw) if key else raw
+        if require_key and not key:
+            raise ValueError('附件解密信息无效，请重新发送。')
+        with self.media_opener.open(request.Request(trusted_cdn(url), headers={"iLink-App-Id": "bot"}), timeout=60) as response:
+            raw = response.read(max_bytes + 17)
+        if len(raw) > max_bytes + (16 if key else 0):
+            raise ValueError('附件超过大小限制，已跳过。')
+        data = aes_ecb_decrypt(key, raw) if key else raw
+        if len(data) > max_bytes:
+            raise ValueError('附件超过大小限制，已跳过。')
+        return data
 
-    def call(self, endpoint, payload=None, timeout=20):
+    def call(self, endpoint, payload=None, timeout=20, allow_empty=False):
         headers = {"iLink-App-Id": "bot", "iLink-App-ClientVersion": str((2 << 16) | (4 << 8) | 8)}
         body = None
         if payload is not None:
@@ -240,7 +247,7 @@ class ILinkClient:
                 raw = response.read(4 * 1024 * 1024 + 1)
             if len(raw) > 4 * 1024 * 1024:
                 raise ValueError("微信接口响应过大")
-            result = json.loads(raw)
+            result = {} if allow_empty and not raw.strip() else json.loads(raw)
         except error.HTTPError as exc:
             raise ApiError("HTTP " + str(exc.code)) from None
         except (TimeoutError, socket.timeout):
@@ -275,6 +282,13 @@ class ILinkClient:
         return self.call("sendmessage", {"msg": {"from_user_id": "", "to_user_id": peer,
             "client_id": client_id, "message_type": 2, "message_state": 2,
             "context_token": context, "item_list": [{"type": 1, "text_item": {"text": text}}]}})
+
+    def get_config(self, peer, context):
+        return self.call('getconfig', {'ilink_user_id': peer, 'context_token': context}, timeout=3)
+
+    def send_typing(self, peer, ticket, status):
+        return self.call('sendtyping', {'ilink_user_id': peer, 'typing_ticket': ticket,
+                                       'status': status}, timeout=3, allow_empty=True)
 
 
 class ProtectedStore:
@@ -396,7 +410,7 @@ class ImageIndex:
 
     def resolve(self, text):
         """解析「图2 / 第2张 / 倒数第2张 / 最新那张」；返回 (命中的记录, 今天不存在的序号)。"""
-        items = self.data.get("items", [])
+        items = [r for r in self.data.get("items", []) if Path(r.get('path', '')).is_file()]
         today = self.data.get("day")
         found, unknown = [], []
 
@@ -427,7 +441,7 @@ class ImageIndex:
 
 
 class WeixinChannel:
-    def __init__(self, store, responder, status=None, client=None, media_dir=None):
+    def __init__(self, store, responder, status=None, client=None, media_dir=None, proactive=None, on_proactive=None, proactive_guard=None):
         self.store, self.responder = store, responder
         self.session = dict(store.data["session"] or {})
         if not self.session.get("owner") or not self.session.get("token"):
@@ -442,13 +456,24 @@ class WeixinChannel:
         self.jobs = queue.Queue(maxsize=8)
         self.task_lock = threading.RLock()
         self.active = False
+        self.active_progress = None
         self.answer_pending = None
+        self.proactive = proactive
+        self.proactive_guard=proactive_guard or (lambda:True)
+        self.on_proactive = on_proactive or (lambda text, topic: None)
+        self.proactive_cancel = threading.Event()
+        self._proactive_busy = False
+        self.materials = MaterialStore(store.path.parent, self.session, store.crypt,
+            media_root=lambda: Path(self.media_dir()).parent / '微信附件' if callable(self.media_dir) else None)
+        self.typing = TypingState(self.client, self.session['owner'])
 
     def start(self):
         self.poller = threading.Thread(target=self._poll, name="deskpet-weixin-poll", daemon=True)
         self.worker = threading.Thread(target=self._work, name="deskpet-weixin-task", daemon=True)
         self.worker.start()
         self.poller.start()
+        if self.proactive:
+            threading.Thread(target=self._proactive_loop,name='deskpet-weixin-proactive',daemon=True).start()
 
     def cancel_task(self):
         with self.task_lock:
@@ -458,10 +483,64 @@ class WeixinChannel:
                     self.jobs.get_nowait()
                 except queue.Empty:
                     break
+        self.typing.clear()
 
     def stop(self):
         self.stopped.set()
+        self.proactive_cancel.set()
         self.cancel_task()
+        self.typing.clear(close=True)
+
+    def _proactive_loop(self):
+        import random
+        while not self.stopped.wait(random.uniform(50,90)):
+            try:self.proactive_tick()
+            except Exception:self.status({'proactive_status':'主动搭话暂未完成，稍后再检查'})
+
+    def proactive_tick(self):
+        from proactive_chat import state,eligible,acceptable
+        now=time.time()
+        with self.task_lock,self.store.lock:
+            value=state(self.store.data)
+            if (not self.proactive or not self.proactive_guard() or self.active or self._proactive_busy or not self.jobs.empty()
+                    or not self.reminder_ready() or not eligible(value,now)[0]):return False
+            self._proactive_busy=True
+            cancel=self.proactive_cancel=threading.Event()
+            value['attempts']=[t for t in value['attempts'] if now-t<86400]+[now]
+            self.store.update(proactive_chat=value)
+        try:
+            result=self.proactive(value,cancel)
+            if not result or cancel.is_set():return False
+            text,topic=result['text'],result['topic']
+            with self.send_lock:
+                with self.task_lock,self.store.lock:
+                    current=state(self.store.data)
+                    recheck=dict(current,attempts=[])
+                    # Recheck the controls and user activity AFTER generation, before any delivery.
+                    if (cancel.is_set() or self.stopped.is_set() or not self.proactive_guard() or self.active or not self.jobs.empty()
+                            or not current['enabled'] or current['awaiting'] or current['paused_until']>time.time()
+                            or current['last_user']!=value['last_user'] or not self.reminder_ready()
+                            or not eligible(recheck,time.time())[0]
+                            or not acceptable(text,current['history'])):return False
+                    now=time.time()
+                    current['last_sent']=now;current['awaiting']=True
+                    current['history']=([r for r in current['history'] if now-r['at']<14*86400]+
+                                        [{'at':now,'topic':topic,'text':text,'category':result.get('category',''),
+                                          'delivery':'unconfirmed'}])[-30:]
+                    # Reserve durably before send; release preference locks during network I/O.
+                    self.store.update(proactive_chat=current)
+                    context=self.store.data['notification_context']['context']
+                if cancel.is_set() or self.stopped.is_set():return False
+                self._send(context,text,'shizuka-proactive-'+str(int(now*1000)))
+                with self.store.lock:
+                    current=state(self.store.data)
+                    for record in current['history']:
+                        if record['at']==now and record['topic']==topic:record['delivery']='sent'
+                    self.store.update(proactive_chat=current)
+            self.on_proactive(text,topic)
+            self.status({'proactive_status':'主动消息已发送'})
+            return True
+        finally:self._proactive_busy=False
 
     def reply(self, message, text, suffix="result"):
         if self.stopped.is_set():
@@ -474,7 +553,17 @@ class WeixinChannel:
                 break
             client_id = "deskpet-" + message["key"][:40] + "-" + suffix + "-" + str(index // 1500)
             with self.send_lock:
-                self.client.send(self.session["owner"], message["context"], text[index:index+1500], client_id)
+                self._send(message["context"], text[index:index+1500], client_id)
+
+    def _send(self, context, text, client_id):
+        result = self.client.send(self.session['owner'], context, text, client_id)
+        if isinstance(result, dict) and result.get('message_id'):
+            try:
+                self.materials.remember([result['message_id']], text=text, role='assistant')
+            except Exception:
+                self.status({'status': '消息已发送，但本地引用缓存写入失败'})
+        self.typing.refresh()
+        return result
 
     def image_index(self):
         if self._images is None:
@@ -488,7 +577,15 @@ class WeixinChannel:
                 base.mkdir(parents=True, exist_ok=True)
             except Exception:
                 return None
-            self._images = ImageIndex(base / "index.json")
+            self._images = ImageIndex(base / self.materials.scope / 'index.json')
+            # Attribute the old unscoped index once to the existing bound account.
+            # Subsequent accounts get their own numbering and never inherit it.
+            if not self.store.data.get('legacy_images_claimed_by'):
+                legacy = ImageIndex(base / 'index.json')
+                if not self._images.path.exists():
+                    self._images.data = legacy.data
+                    self._images._save()
+                self.store.update(legacy_images_claimed_by=self.materials.scope)
         return self._images
 
     def save_images(self, items, key):
@@ -507,15 +604,65 @@ class WeixinChannel:
             if not data:
                 continue
             extension = image_extension(data)
-            stamp = time.strftime("%H%M%S")
-            record = index.add(lambda n, day: index.path.parent / ("图%d-%s-%s%s" % (n, day, stamp, extension)))
+            folder = Path(self.media_dir()).parent / '微信附件' / self.materials.scope / time.strftime('%Y-%m-%d')
+            folder.mkdir(parents=True, exist_ok=True)
             try:
-                Path(record["path"]).write_bytes(data)
+                def persist(n, day):
+                    path = folder / (key[:20] + '-图%d%s' % (n, extension))
+                    with path.open('xb') as handle:
+                        handle.write(data)
+                    return path
+                record = index.add(persist)
             except Exception:
-                index.drop(record)
                 continue
             saved.append(record)
         return saved
+
+    def _references(self, items, key):
+        rows = []
+        for item in items:
+            ref = item.get('ref_msg')
+            if not isinstance(ref, dict):
+                continue
+            if len(rows) >= MAX_MATERIALS:
+                raise ValueError('一次最多处理6条引用，请分开提问。')
+            row = self.materials.lookup(ref.get('svr_id')) if ref.get('svr_id') else None
+            if row is None:
+                quoted = ref.get('message_item')
+                if not isinstance(quoted, dict):
+                    raise ValueError('这条引用的原消息没有保存在本机，可能早于这次更新或已过期。请把原文或附件再发一次。')
+                if quoted.get('type') == 1:
+                    body = (quoted.get('text_item') or {}).get('text')
+                    if not isinstance(body, str) or not body:
+                        raise ValueError('引用里没有带原文，请把那句话再发一次。')
+                    row = dict(text=body[:20000], images=[], files=[], role='unknown')
+                elif quoted.get('type') == 2:
+                    images = self.save_images([quoted], key + '-quote')
+                    if not images:
+                        raise ValueError('引用图片已失效或下载失败，请重新发这张图片。')
+                    row = dict(text='（图片）', images=images, files=[], role='unknown')
+                elif quoted.get('type') == 4:
+                    file = self.materials.save_file(quoted, self.client, key, 100 + len(rows))
+                    row = dict(text='（附件）', images=[], files=[file], role='unknown')
+                else:
+                    raise ValueError('目前可以引用文字、图片和文件；这条引用请先转成文字或重新发附件。')
+            if ref.get('partial_text'):
+                selected = partial_quote(row.get('text', ''), ref['partial_text'])
+                if selected is None:
+                    raise ValueError('这条局部引用没能核对上原文，请重新引用或复制选中的句子。')
+                row = dict(row, text=selected)
+            if any(not Path(r['path']).is_file() for r in row.get('images', []) + row.get('files', [])):
+                raise ValueError('引用里的附件已移动或删除，请重新发送；我不会替换成最近的其他附件。')
+            rows.append(row)
+        return rows
+
+    def attachment_list_text(self):
+        rows = self.materials.recent()
+        if not rows:
+            return '最近没有收到文件附件。可以直接发送文件，或引用先前发过的文件继续问。'
+        return '最近收到的附件：\n' + '\n'.join('附件%d · %s · %s' %
+            (r['n'], time.strftime('%m-%d %H:%M', time.localtime(r['at'])), r['name']) for r in rows) + \
+            '\n直接引用文件继续问，也可以说“总结附件2”“附件2第1-3页”。'
 
     @staticmethod
     def image_block(records, note):
@@ -530,6 +677,13 @@ class WeixinChannel:
         if index is None:
             return "", [], False
         found, unknown = index.resolve(text)
+        if not images and not found and not unknown and re.search(r'(?:比较|对比|一起看).*(?:两张|两幅|图片)|(?:两张|两幅).*(?:比较|对比|一起看)',text):
+            recent=index.recent(2,hours=LATEST_IMAGE_HOURS_REF)
+            if len(recent)==2:return self.image_block(recent,'用户要一起看最近两张图片：'),[],False
+        if not images and text.strip() in ('讲题','提取文字','翻译','总结','讲解题目'):
+            recent=index.recent(1,hours=LATEST_IMAGE_HOURS_REF)
+            if recent:return self.image_block(recent,'用户选择了最近一张图片的操作：'),[],False
+            return '',[],True
         if found:
             return self.image_block(found, index.note_for(found)), [], False
         if images:
@@ -590,7 +744,7 @@ class WeixinChannel:
             if not self.reminder_ready():raise ValueError('请先连接微信，并向绑定的助手发送一条消息')
             with self.store.lock:context=dict(self.store.data['notification_context'])
             client_id='shizuka-reminder-'+hashlib.sha256(identity.encode()).hexdigest()[:40]
-            self.client.send(self.session['owner'],context['context'],str(text)[:1500],client_id)
+            self._send(context['context'],str(text)[:1500],client_id)
 
     def notify_question(self,text,identity):
         if not self.reminder_ready():raise ValueError('微信对话尚未连接')
@@ -598,7 +752,7 @@ class WeixinChannel:
         for index in range(0,len(text),1500):
             with self.send_lock:
                 if not self.reminder_ready():raise ValueError('微信连接已结束')
-                self.client.send(self.session['owner'],context['context'],text[index:index+1500],
+                self._send(context['context'],text[index:index+1500],
                     'shizuka-question-'+identity+'-'+str(index//1500))
 
     def receive(self, raw):
@@ -614,18 +768,82 @@ class WeixinChannel:
         items = [i for i in raw.get("item_list", []) if isinstance(i, dict)]
         texts = [i.get("text_item", {}).get("text", "") for i in items if i.get("type") == 1]
         text = "\n".join(t for t in texts if isinstance(t, str)).strip()
-        identity = raw.get("message_id") or raw.get("msg_id") or raw.get("client_id")
+        identity = raw.get("message_id") or raw.get("msg_id") or raw.get("client_id") or next((i.get('msg_id') for i in items if i.get('msg_id')), None)
         if identity is None:
             return  # no reliable id => never run a remote file operation
         key = hashlib.sha256((self.session["owner"] + ":" + str(identity)).encode()).hexdigest()
         if not self.store.claim(key):
             return
+        message = {"key": key, "context": context, "text": text, "images": [], 'files': [], 'quotes': []}
+        self.typing.begin(key, context)
+        try:
+            self._receive_authorized(raw, items, message)
+        finally:
+            if not message.get('queued'):
+                self.typing.finish(key)
+
+    def _receive_authorized(self, raw, items, message):
+        text, key, context = message['text'], message['key'], message['context']
+        if len(text) > 20000:
+            self.reply(message, '文字请不超过20000字，长资料可以作为文件发送。', 'too-long')
+            return
+        self.proactive_cancel.set()
         self.store.update(notification_context={'owner':self.session['owner'],'bot':self.session['bot_id'],
                                                'context':context})
-        message = {"key": key, "context": context, "text": text, "images": []}
+        from proactive_chat import command as proactive_command, state as proactive_state
+        control=proactive_command(text,self.store.data)
+        if control is not None:
+            with self.store.lock:self.store.update(proactive_chat=control[0])
+            self.reply(message,control[1],'proactive-control')
+            return
+        if (text and not text.startswith(('/', '／'))) or any(i.get('type')==2 for i in items):
+            with self.store.lock:
+                value=proactive_state(self.store.data)
+                value.update(last_user=time.time(),awaiting=False)
+                self.store.update(proactive_chat=value)
         image_items = [i for i in items if i.get("type") == 2]
+        file_items = [i for i in items if i.get('type') == 4]
+        if len(image_items) + len(file_items) > MAX_MATERIALS:
+            self.reply(message, '一次最多接收6份附件，请分开发送。', 'too-many')
+            return
         if image_items:
             message["images"] = self.save_images(image_items, key)
+        errors = []
+        for position, item in enumerate(file_items):
+            try:
+                message['files'].append(self.materials.save_file(item, self.client, key, position))
+            except ValueError as exc:
+                errors.append(str(exc))
+            except Exception:
+                errors.append('附件没能下载保存，请重新发送；电脑端可以检查文件工作区。')
+        if image_items and len(message['images']) != len(image_items):
+            errors.append('有图片未下载成功，请重新发送。')
+        try:
+            identities = [raw.get('message_id'), raw.get('msg_id'), raw.get('client_id')]
+            self.materials.remember(identities, text, message['images'], message['files'])
+            # Item IDs can be the only IDs carried by newer quoted messages.
+            for item in items:
+                if item.get('msg_id'):
+                    if item.get('type') == 1:
+                        self.materials.remember([item['msg_id']], (item.get('text_item') or {}).get('text', ''))
+                    elif not errors:
+                        records = message['images'] if item.get('type') == 2 else message['files'] if item.get('type') == 4 else []
+                        matching = image_items if item.get('type') == 2 else file_items
+                        if records and item in matching:
+                            record = records[matching.index(item)]
+                            self.materials.remember([item['msg_id']], images=[record] if item.get('type') == 2 else [],
+                                files=[record] if item.get('type') == 4 else [])
+            message['quotes'] = self._references(items, key)
+        except ValueError as exc:
+            errors.append(str(exc))
+        except Exception:
+            errors.append('本地引用记录暂时不可用，请在电脑端检查存储目录。')
+        if errors:
+            prefix = '已保存成功接收的附件，其余未处理。\n' if message['files'] or message['images'] else ''
+            self.reply(message, prefix + '\n'.join(dict.fromkeys(errors)), 'material-error')
+            return
+        if message['files']:
+            self.materials.select(message['files'])
         now = time.time()
         pending = self.store.data.get("pending_image")
         if pending and now - pending.get("at", 0) > PENDING_IMAGE_SECONDS:
@@ -648,11 +866,36 @@ class WeixinChannel:
             self.reply(message, self.store.data.get("last_result") or "目前没有可查看的结果。", "last")
         elif text in ("/图片", "/images"):
             self.reply(message, self.image_list_text(), "images")
+        elif text in ('/附件', '/attachments'):
+            self.reply(message, self.attachment_list_text(), 'attachments')
         elif text in ("/帮助", "/help"):
             self.reply(message, "可以直接聊天。/待办 加事项与时间，可以创建待办；到期可通过微信提醒。\n"
-                                "发来的图片会按天编号存到电脑工作区，之后用「/电脑 用图2 写一份文档」这样指代就行。\n"
+                                "图片和文件按日期保存在电脑工作区。直接引用原消息继续问；文件也可以用“附件2”指代。\n"
                                 "文件任务：/电脑 加具体要求。\n/图片：看最近收到的图片编号\n/停止：停止任务\n"
-                                "/状态：查看连接与任务状态\n/结果：查看最近结果\n请保持电脑和桌宠运行。", "help")
+                                "/附件：看最近文件\n/状态：查看连接与任务状态\n/结果：查看最近结果\n/主动：主动搭话的开关、时间、频率与状态\n请保持电脑和桌宠运行。", "help")
+        elif message['quotes'] or message['files']:
+            self.store.update(pending_image=None, pending_text=None)
+            if not text:
+                if pending_text:
+                    text = pending_text['task']
+                    message['text'] = text
+                elif message['files']:
+                    names = '、'.join('附件%d《%s》' % (r['n'], r['name']) for r in message['files'])
+                    self.reply(message, names + ' 已保存。直接引用文件说要怎么处理；PDF可以指定“第1-3页”。', 'file')
+                    return
+                else:
+                    self.reply(message, '引用收到了，你想问这条消息的哪一点？', 'quote')
+                    return
+            images = message['images'] + [r for q in message['quotes'] for r in q.get('images', [])]
+            message['files'] += [r for q in message['quotes'] for r in q.get('files', [])]
+            images = list({r['path']: r for r in images}.values())
+            message['files'] = list({r['path']: r for r in message['files']}.values())
+            if len(images) + len(message['files']) > MAX_MATERIALS:
+                self.reply(message, '附带和引用的材料合计最多6份，请分开提问。', 'too-many')
+                return
+            message['images'] = images
+            block = self.image_block(images, '本轮明确附带或引用的图片：') if images else ''
+            self.queue_job(message, (text + '\n\n' + block).strip())
         elif pending and not COMMAND_RE.match(text):
             # 正在等「哪一张」的回答；但用户要是直接发了新指令（如 /电脑 …），
             # 就以新指令为准，别把指令当成选图回答。
@@ -670,16 +913,16 @@ class WeixinChannel:
             if message["images"]:
                 if pending_text:
                     self.store.update(pending_text=None)
+                    message['text'] = pending_text['task']
                     self.queue_job(message, pending_text["task"] + "\n\n"
                                    + self.image_block(message["images"], "用户随后发来的图片："))
                     return
                 numbers = "、".join("图%d" % r["n"] for r in message["images"])
-                self.reply(message, "%s 收到了，已存到电脑工作区。\n想让我讲讲或看图，直接说「讲下图%d」就行；\n要拿它写文件，发「/电脑 用图%d 写一份说明文档」这样的指令。"
-                           % (numbers, message["images"][-1]["n"], message["images"][-1]["n"]), "image")
+                self.reply(message, numbers+" 收到了。直接说“讲题”“提取文字”“翻译”就会用最近这张；也可以说“比较刚发的两张”。\n想选更早的图，可以发 /图片 查看。", "image")
             else:
                 self.reply(message, "图片没能下载成功，请再发一次。", "image_failed")
         elif not text or len(text) > 20000:
-            self.reply(message, "先支持文字和图片，文字任务请不超过 20000 字。", "unsupported")
+            self.reply(message, "支持文字、图片和文件附件；语音条和视频暂未接入。文字请不超过20000字。", "unsupported")
         else:
             self.store.update(pending_text=None, pending_image=None)
             if self.answer_pending:
@@ -687,6 +930,19 @@ class WeixinChannel:
                 if answer is not None:
                     self.reply(message,answer,'answer')
                     return
+            files, missing = self.materials.resolve_file(text)
+            if not files and not missing and text.strip() in ('总结', '翻译', '提取文字', '读一下'):
+                recent = self.materials.recent(1)
+                images = self.image_index().recent(1) if self.image_index() else []
+                if recent and time.time() - recent[0]['at'] < 600 and (not images or recent[0]['at'] > images[0]['at']):
+                    files = recent
+            if missing:
+                self.reply(message, '没找到你指的文件。请直接引用那份文件，或发 /附件 查看编号。', 'file-missing')
+                return
+            if files:
+                message['files'] = files
+                self.queue_job(message, text)
+                return
             block, ask, wait = self.image_context(text, message["images"])
             if wait:
                 self.store.update(pending_text={"task": text, "at": time.time()})
@@ -701,11 +957,29 @@ class WeixinChannel:
 
     def queue_job(self, message, text):
         """把消息排进任务队列（带"队列已满"提示）。"""
-        message["text"] = text
+        visible = message.get('text', text)
+        if not visible and self.store.data.get('pending_text'):
+            visible = self.store.data['pending_text']['task']
+        # Only paths produced by the channel enter the structured transport payload.
+        images = list(message.get('images', []))
+        if IMAGE_BLOCK_MARK in text and not images:
+            index = self.image_index()
+            if index:
+                images = [r for r in index.data['items'] if r['path'] in text]
+        if images and '\n\n' + IMAGE_BLOCK_MARK in text:
+            visible = text.split('\n\n' + IMAGE_BLOCK_MARK, 1)[0]
+        message["text"] = InboundText(text, visible=visible, images=images,
+            files=message.get('files', []), quotes=message.get('quotes', []))
+        if message.get('files'):
+            self.materials.select(message['files'])
+        message['queued_at']=time.monotonic()
         full = False
         with self.task_lock:
             try:
                 self.jobs.put_nowait(message)
+                message['queued'] = True
+                if self.active_progress is not None:
+                    self.active_progress.superseded.set()
             except queue.Full:
                 full = True
         if full:
@@ -744,7 +1018,39 @@ class WeixinChannel:
                 self.stopped.wait(backoff)
                 backoff = min(backoff * 2, 30)
 
+    def _collect_burst(self,message,token):
+        """Coalesce only adjacent plain chat; never reorder commands or attachments."""
+        def plain(row):
+            return (not getattr(row['text'], 'files', []) and not getattr(row['text'], 'quotes', [])
+                    and not getattr(row['text'], 'images', []) and not row.get('images') and not row['text'].startswith(('/', '／'))
+                    and IMAGE_BLOCK_MARK not in row['text'] and len(row['text'])<2000)
+        try:delay=max(0,min(2,float(self.store.data.get('chat_merge_seconds',.8))))
+        except (TypeError,ValueError):delay=.8
+        if not delay or not plain(message):return message
+        start=time.monotonic();deadline=start+delay
+        parts=[message['text']]
+        message['typing_keys'] = [message['key']]
+        while not token.is_set() and not self.stopped.is_set() and time.monotonic()<deadline:
+            # Peek under Queue's mutex so a non-chat message remains in original order.
+            with self.task_lock,self.jobs.mutex:
+                upcoming=self.jobs.queue[0] if self.jobs.queue else None
+                if upcoming and not plain(upcoming):break
+                if upcoming:
+                    upcoming=self.jobs.queue.popleft()
+                    self.jobs.not_full.notify()
+                    parts.append(upcoming['text'])
+                    message['typing_keys'].append(upcoming['key'])
+                    message['context']=upcoming['context']
+                    if self.active_progress:self.active_progress.superseded.clear()
+                    deadline=min(start+3,time.monotonic()+delay)
+                    if len(parts)>=8 or sum(map(len,parts))>=6000:break
+            if not upcoming:self.stopped.wait(.03)
+        message['text']=InboundText('\n'.join(parts))
+        message['parts']=parts
+        return message
+
     def _work(self):
+        from weixin_segments import DeliveredReply, ReplyProgress
         while not self.stopped.is_set():
             # Fetch and install cancellation token under the same lock as /stop.
             with self.task_lock:
@@ -756,23 +1062,48 @@ class WeixinChannel:
                     self.task_cancel = threading.Event()
                     token = self.task_cancel
                     self.active = True
+                    def send_part(text, index, interrupted):
+                        client_id = 'deskpet-' + message['key'][:40] + '-part-' + str(index)
+                        with self.send_lock:
+                            if interrupted():
+                                raise InterruptedError()
+                            self._send(message['context'], text, client_id)
+                    progress = ReplyProgress(self.status, send_part, token, self.stopped,
+                        checkpoint=lambda text: self.store.update(last_result=text))
+                    self.active_progress = progress
             if not message:
                 self.stopped.wait(.1)
+                continue
+            message=self._collect_burst(message,token)
+            if token.is_set() or self.stopped.is_set():
+                self.typing.finish(*message.get('typing_keys', [message['key']]))
+                with self.task_lock:self.active=False;self.active_progress=None
                 continue
             try:
                 self.status({"status": "正在处理微信任务", "task": message["text"]})
                 self.store.update(last_result="上一项任务正在处理；若程序意外退出，请先核对任务记录，再重新发起任务。")
-                result = self.responder(message["text"], token, self.status)
-                if token.is_set():
+                result = self.responder(message["text"], token, progress)
+                if token.is_set() and not isinstance(result, DeliveredReply):
                     result = "本轮任务已停止，已完成的文件更改会保留。"
             except Exception:
-                result = "本轮未能完成，请在电脑端检查接口或电脑助手配置。"
-            self.store.update(last_result=result)
-            self.status({"status": "最近一轮已返回", "output": result})
+                result = (DeliveredReply('\n\n'.join(progress.sent), 'delivery_failed')
+                          if progress.attempts else "本轮未能完成，请在电脑端检查接口或电脑助手配置。")
             try:
-                self.reply(message, result)
+                if isinstance(result, DeliveredReply):
+                    label = {'complete': '最近一轮已返回', 'interrupted': '已收起未发送的后续回复',
+                             'delivery_failed': '部分消息未确认送达，不自动重发',
+                             'generation_failed': '回复生成中断，已发送部分保留',
+                             'empty': '本轮没有生成完整回复'}.get(result.status, '本轮已结束')
+                    self.store.update(last_result=result.text or '本轮没有已确认发送的聊天内容。')
+                    self.status({'status': label, 'output': result.text})
+                else:
+                    self.store.update(last_result=result)
+                    self.status({"status": "最近一轮已返回", "output": result})
+                    self.reply(message, result)
             except Exception:
                 self.status({"status": "结果尚未送达，可发送 /结果 查看；文件任务不会重复执行"})
             finally:
+                self.typing.finish(*message.get('typing_keys', [message['key']]))
                 with self.task_lock:
                     self.active = False
+                    self.active_progress = None

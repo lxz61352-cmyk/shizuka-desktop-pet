@@ -82,6 +82,19 @@ class ImageContextTests(unittest.TestCase):
         self.assertIn("图2-", block)
         self.assertEqual((ask, wait), ([], False))
 
+    def test_short_operation_uses_only_latest(self):
+        block,ask,wait=self.channel.image_context('提取文字',[])
+        self.assertIn('图3-',block);self.assertNotIn('图2-',block)
+        self.assertEqual((ask,wait),([],False))
+
+    def test_compare_recent_two_and_preserve_explicit_selection(self):
+        block,_,_=self.channel.image_context('比较刚发的两张',[])
+        self.assertIn('图2-',block);self.assertIn('图3-',block);self.assertNotIn('图1-',block)
+        block,_,_=self.channel.image_context('比较图1和图3',[])
+        self.assertIn('图1-',block);self.assertIn('图3-',block);self.assertNotIn('图2-',block)
+        block,ask,_=self.channel.image_context('比较图99',[])
+        self.assertFalse(block);self.assertTrue(ask)
+
     def test_missing_number_offers_candidates(self):
         block, ask, wait = self.channel.image_context("讲下图9", [])
         self.assertEqual(block, "")

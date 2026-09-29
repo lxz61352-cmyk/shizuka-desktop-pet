@@ -128,13 +128,13 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         self._place_dialog(win, 720, 670)
         win.columnconfigure(0, weight=1)
         win.rowconfigure(5, weight=1)
-        top = tk.Frame(win, padx=16, pady=14)
+        from ui_theme import page_header, PAGE_X
+        top = tk.Frame(win)
         top.grid(row=0, column=0, sticky="ew")
-        top.columnconfigure(0, weight=1)
-        tk.Label(top, text="电脑助手", font=("Microsoft YaHei UI", 16, "bold"), anchor="w").grid(row=0, column=0, sticky="w")
+        heading=page_header(top,'电脑助手');heading.pack(fill='x');win._page_header=heading
         enabled = tk.BooleanVar(value=config.get("enabled", True))
-        tk.Checkbutton(top, text="启用文件任务", variable=enabled).grid(row=0, column=1)
-        tk.Label(top, text="由本机 dsh 执行。选择工作文件夹后，可以读取、创建、编辑和整理文件。", anchor="w", wraplength=640).grid(row=1, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        tk.Checkbutton(heading, text="启用文件任务", variable=enabled).pack(side='right')
+        tk.Label(top, text="由本机 dsh 执行。选择工作文件夹后，可以读取、创建、编辑和整理文件。", anchor="w", wraplength=640).pack(fill='x',padx=PAGE_X,pady=(0,10))
         paths = tk.Frame(win, padx=16)
         paths.grid(row=1, column=0, sticky="ew")
         paths.columnconfigure(1, weight=1)

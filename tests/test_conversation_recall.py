@@ -39,8 +39,9 @@ class RecallTests(unittest.TestCase):
         self.assertNotIn(USER_WEAK, got)   # 只有「压力」一个词重合
         self.assertIn(USER_STRONG, got)    # 「压力」「力带」两个词重合
 
-    def test_summaries_are_always_recalled(self):
-        self.assertIn(SUMMARY, texts("毫不相关的一句话", 1))
+    def test_legacy_summary_is_not_a_retrieval_bypass(self):
+        self.assertNotIn(SUMMARY, texts("毫不相关的一句话", 1))
+        self.assertNotIn(SUMMARY, texts("用户提过压力", 1))
 
     def test_recent_turns_are_excluded(self):
         self.assertIn(USER_STRONG, texts("压力带要怎么处理", 1))

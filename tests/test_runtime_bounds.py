@@ -117,16 +117,56 @@ class UpdateBatTests(unittest.TestCase):
         self.assertIn("/XF api_key.txt", bat)
 
 
+class EmptyReplyRetryTests(unittest.TestCase):
+    """空正文兜底：聊天上限抬高，且流式为空时会非流式重试一次（桌面与微信同一套上限）。"""
+
+    def test_chat_token_cap_is_raised(self):
+        self.assertGreaterEqual(pet.CHAT_MAX_TOKENS, 6000)
+        self.assertGreater(pet.CHAT_RETRY_MAX_TOKENS, pet.CHAT_MAX_TOKENS)
+
+    def test_deskpet_has_empty_reply_retry(self):
+        self.assertTrue(callable(getattr(pet.DeskPet, "_retry_chat_reply", None)))
+
+    def test_desktop_chat_uses_the_cap_and_retries(self):
+        source = (ROOT / "src" / "pet.py").read_text(encoding="utf-8")
+        self.assertIn("max_tokens=CHAT_MAX_TOKENS", source)
+        self.assertIn("self._retry_chat_reply(messages)", source)
+
+    def test_weixin_uses_the_same_cap_and_retries(self):
+        source = (ROOT / "src" / "weixin_ui.py").read_text(encoding="utf-8")
+        self.assertIn("max_tokens=engine.CHAT_MAX_TOKENS", source)
+        self.assertIn("engine.CHAT_RETRY_MAX_TOKENS", source)
+
+
 class LeadRegexTests(unittest.TestCase):
     def test_pet_reuses_the_shared_lead_regexes(self):
-        self.assertIs(pet._ACK_LEAD_RE, dialogue_style.ACK_LEAD_RE)
+        self.assertIs(pet._BOILERPLATE_LEAD_RE, dialogue_style.BOILERPLATE_LEAD_RE)
         self.assertIs(pet._FORMULA_LEAD_RE, dialogue_style.FORMULA_LEAD_RE)
+
+    def test_boilerplate_leads_are_cleaned_in_both_entries(self):
+        for text in ("嗯，关于你说的这个问题，我再想想。", "哦，其实这样也可以。", "嗯，首先看这里。"):
+            self.assertFalse(pet.clean_reply_style(text).startswith(("嗯", "哦")), text)
+            self.assertFalse(dialogue_style.clean_text(text).startswith(("嗯", "哦")), text)
+
+    def test_character_particles_survive(self):
+        # 「嗯/哦/呵呵」后面不是空泛承接词时保留，别把正常角色语气削平。
+        for text in ("嗯，我觉得可以。", "呵呵，做到了呢。", "哦，这样啊。"):
+            self.assertEqual(pet.clean_reply_style(text), text, text)
+            self.assertEqual(dialogue_style.clean_text(text), text, text)
+
+    def test_ai_templates_are_dropped(self):
+        cleaned = dialogue_style.clean_text("作为AI，我不能这么做。希望这能帮到你。")
+        self.assertNotIn("作为AI", cleaned)
+        self.assertNotIn("帮到你", cleaned)
+        kept = dialogue_style.clean_text("先看这一句。如果还有其他问题，随时告诉我。")
+        self.assertIn("先看这一句。", kept)
+        self.assertNotIn("还有其他问题", kept)
 
     def test_you_are_still_lead_is_cleaned_in_both_entries(self):
         # 「你还在……」以前只有 dialogue_style 会删，pet 的闸门认不出来。
-        for text in ("哦，这样啊。", "你还在忙呢。", "又在看代码。"):
-            self.assertFalse(pet.clean_reply_style(text).startswith(("哦", "你还在", "又在")), text)
-            self.assertFalse(dialogue_style.clean_text(text).startswith(("哦", "你还在", "又在")), text)
+        for text in ("你还在忙呢。", "又在看代码。"):
+            self.assertFalse(pet.clean_reply_style(text).startswith(("你还在", "又在")), text)
+            self.assertFalse(dialogue_style.clean_text(text).startswith(("你还在", "又在")), text)
 
 
 if __name__ == "__main__":

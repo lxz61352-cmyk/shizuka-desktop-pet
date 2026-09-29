@@ -1,0 +1,453 @@
+{
+  "schema": "shizuka-backgrounds-v1",
+  "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+  "retrieved_at": "2026-09-28T06:46:02.920630+00:00",
+  "revision": 10103,
+  "count": 34,
+  "rights": "World Dai Star game artwork. Fandom hosts these files; no blanket CC license for the artwork is claimed.",
+  "selection": "All Card Images and Card Cameos on the source page at retrieval time.",
+  "cards": [
+    {
+      "file": "card-01.webp",
+      "title": "Sirius (Shizuka).png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Sirius_(Shizuka).png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/6/67/Sirius_%28Shizuka%29.png/revision/latest?cb=20241225173355",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "997ce615949078adefbfef9558ce604f47f8798dff6080dd2e903ead63c9e22a",
+      "sha256": "e2e46d66fc86ed29139f0717ed038c3d143b26c1e0ffda23e7523f38b5646523"
+    },
+    {
+      "file": "card-02.webp",
+      "title": "Tsukkomi of Sirius.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Tsukkomi_of_Sirius.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/2/2a/Tsukkomi_of_Sirius.png/revision/latest?cb=20241225173501",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "55eb37ea0878c1025851f0763b3ddab3365157e8c3a474be96a6a99e0ebc1bd9",
+      "sha256": "377277873d650b0e5d8e3746a5e8eb1e4898c563b2de906561aef03fc3b19da9"
+    },
+    {
+      "file": "card-03.webp",
+      "title": "For the First Bath.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:For_the_First_Bath.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/d/da/For_the_First_Bath.png/revision/latest?cb=20230729145754",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "857a0933e43bd91b9cfd39f7b8f9bfa1abad710cb53196901c6426064f784972",
+      "sha256": "b2ae8a91a772680d6ec58aeeeb90c557d155fbd5cda01e67fb0cafb5eb318b7c"
+    },
+    {
+      "file": "card-04.webp",
+      "title": "Drawing Good Fortunes Is My Talent!.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Drawing_Good_Fortunes_Is_My_Talent!.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/c/cd/Drawing_Good_Fortunes_Is_My_Talent%21.png/revision/latest?cb=20241225174017",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "63d7eac50a3a58154ec1de250416b5e4d3e101bf3d83d2ec7731a751e983e8d4",
+      "sha256": "75c50b92169ad5e83016236e22383b6739051e2ff93b00ee33cdfa172c017477"
+    },
+    {
+      "file": "card-05.webp",
+      "title": "It's Only 3 Minutes!.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:It%27s_Only_3_Minutes!.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/e/e9/It%27s_Only_3_Minutes%21.png/revision/latest?cb=20241225174503",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "e6989e8250434096741b96f3088fedb04e354c6c7e2fff5ed91194f9e49be4b8",
+      "sha256": "b393943c5b942134692849ec87ff091d301d98f8adfdabdab3708d8fe18d59d4"
+    },
+    {
+      "file": "card-06.webp",
+      "title": "Masquerade Romance.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Masquerade_Romance.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/a/aa/Masquerade_Romance.png/revision/latest?cb=20250212090239",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "1eace2c67e60928a74b8285c5cc6a35bc74b3e18cfb707d250e1353dec00663a",
+      "sha256": "5a10afdf36242ebd99f657791ec6a6389fb9231d6282bc8555cb04f2cd7dea67"
+    },
+    {
+      "file": "card-07.webp",
+      "title": "Innocent Admiration.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Innocent_Admiration.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/c/ce/Innocent_Admiration.png/revision/latest?cb=20250322095642",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "4785b4063db8a56d47aee5bbfbfa082d0bd2dc4ad5d50a260091ac447d58bebd",
+      "sha256": "d1379797ce9481060ef9965e9fbe87147de5dbf71932dd466670ee67e75dfec6"
+    },
+    {
+      "file": "card-08.webp",
+      "title": "Magical ☆ Sweets.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Magical_%E2%98%86_Sweets.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/d/d4/Magical_%E2%98%86_Sweets.png/revision/latest?cb=20231104214159",
+      "original_size": [
+        984,
+        605
+      ],
+      "original_sha256": "8e4a24a4f2feb66c865ceba6a97fdd81cb2d72d00cff2659927fbc4e866392cd",
+      "sha256": "bf52aaaa5168094f037d58c804d7c397f55ec0920bb757c7982b73e59b7941b7"
+    },
+    {
+      "file": "card-09.webp",
+      "title": "Magical ☆ Sweets E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Magical_%E2%98%86_Sweets_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/8/8b/Magical_%E2%98%86_Sweets_E.png/revision/latest?cb=20241225173711",
+      "original_size": [
+        984,
+        605
+      ],
+      "original_sha256": "9016d902550641f5869129e989b2e324b11855884c0b589be60130c9f93fa7a6",
+      "sha256": "86067d2bee88d45109512e2ea4ceb247dbd94c22751078756d418e779677b9b6"
+    },
+    {
+      "file": "card-10.webp",
+      "title": "Take Her Hand and Put Her Wings Together.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Take_Her_Hand_and_Put_Her_Wings_Together.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/6/6a/Take_Her_Hand_and_Put_Her_Wings_Together.png/revision/latest?cb=20241225125924",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "25fcd212bcb104c4835117b37e6137613116df430a7cff961b6b5da2a258edb2",
+      "sha256": "365e6db00b613cb6d5557ded64d564a8d2b5dc0b19c51532e81e245d71f58d04"
+    },
+    {
+      "file": "card-11.webp",
+      "title": "Take Her Hand and Put Her Wings Together E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Take_Her_Hand_and_Put_Her_Wings_Together_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/5/53/Take_Her_Hand_and_Put_Her_Wings_Together_E.png/revision/latest?cb=20241225130013",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "3a24d594a92f1a16f6fb1e79be3670476cafcab7b3600707b48deb60759d8085",
+      "sha256": "0c21a6558f8657b0b02454252acff5a413089fb4454118608dbe3cf837a6ecb4"
+    },
+    {
+      "file": "card-12.webp",
+      "title": "At the Automata Theater.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:At_the_Automata_Theater.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/c/c6/At_the_Automata_Theater.png/revision/latest?cb=20241225174416",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "ca5870346be647973dba745b9fb113fc94dc50b9d8dac847a7dc64a6fe19c97b",
+      "sha256": "b3a7ea6128a0de1fa5e15dfb789c574daf99799fd5cb76efc4ef7520ff48d43f"
+    },
+    {
+      "file": "card-13.webp",
+      "title": "At the Automata Theater E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:At_the_Automata_Theater_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/e/e1/At_the_Automata_Theater_E.png/revision/latest?cb=20241225174440",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "fd89c99a19bc0b4334f4cd3b006b995fde5b0ede84f67f4a2e310be90bbc5dd8",
+      "sha256": "0e156094edd311d6744a0c279e1f18c7eae248ac312e4c9379933f2d0013f835"
+    },
+    {
+      "file": "card-14.webp",
+      "title": "Your Voice Echoes Through the Waves.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Your_Voice_Echoes_Through_the_Waves.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/c/c7/Your_Voice_Echoes_Through_the_Waves.png/revision/latest?cb=20241225131112",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "625bd79b2c6c63737b5fdf68a3e2ff84626d4cb5e8e172735bae9be5c04da66c",
+      "sha256": "8252e597499025434acdfa674af714e6c1c1fd70748f531df5d699414334f55f"
+    },
+    {
+      "file": "card-15.webp",
+      "title": "Your Voice Echoes Through the Waves E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Your_Voice_Echoes_Through_the_Waves_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/0/08/Your_Voice_Echoes_Through_the_Waves_E.png/revision/latest?cb=20241225174729",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "373cd4826243368002e74b9968ba321da745fc1c8052d3bf504a686a3c1b2a8d",
+      "sha256": "addb5f1caba7d2b42833932dcac2364b23f2cbd2a24b0e8c63a595b958c2dd2f"
+    },
+    {
+      "file": "card-16.webp",
+      "title": "Salt Fragment.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Salt_Fragment.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/1/1b/Salt_Fragment.png/revision/latest?cb=20241225175144",
+      "original_size": [
+        966,
+        593
+      ],
+      "original_sha256": "7d226c8a87ac1401404166fdcc63726a7f901132ce99c755994e43d1cde76905",
+      "sha256": "8b43b93da7ce55576ad396c7c44a32034921af28058a817f1c953d0bb7200e5f"
+    },
+    {
+      "file": "card-17.webp",
+      "title": "Salt Fragment E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Salt_Fragment_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/0/04/Salt_Fragment_E.png/revision/latest?cb=20241225175156",
+      "original_size": [
+        966,
+        593
+      ],
+      "original_sha256": "f44a55a66c9ed5aa7bff09d7f77721b4be0cbe948ec83da7ec5a5d3322c81b81",
+      "sha256": "7e690faa029dc3011c2b02c0df628c93ee91239295c44dbb754cce0556f94405"
+    },
+    {
+      "file": "card-18.webp",
+      "title": "Elite Santa Runs Through the Night.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Elite_Santa_Runs_Through_the_Night.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/0/02/Elite_Santa_Runs_Through_the_Night.png/revision/latest?cb=20241225135546",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "06f0f912ce2332d74e18cebad33a9ea71923d3a13eac06f6636ccb3974a0f5ee",
+      "sha256": "106fe4b8894d8437851dd460cb562cc03805914595a4db78fcc2be307df1b3d1"
+    },
+    {
+      "file": "card-19.webp",
+      "title": "Elite Santa Runs Through the Night E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Elite_Santa_Runs_Through_the_Night_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/1/1b/Elite_Santa_Runs_Through_the_Night_E.png/revision/latest?cb=20241225135601",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "a4512e8f82c8f358e7122fb73b736055cc7687a3706d57b786e25310dc38bb39",
+      "sha256": "a0261bb7afef89a02a27ca9f24a274d363be2f39c400df165e14d49e477e3fe8"
+    },
+    {
+      "file": "card-20.webp",
+      "title": "Royal Wedding!.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Royal_Wedding!.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/8/80/Royal_Wedding%21.png/revision/latest?cb=20250924044414",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "507acbdc9f26b7f8f62b778b7c990e83bbafaeea73ded12bd26d25ea18fcac59",
+      "sha256": "0acb1bae6199fad0433b55c4fabd8a1883ceeeab2f4820b3b4f77f2cb8447517"
+    },
+    {
+      "file": "card-21.webp",
+      "title": "Royal Wedding! E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Royal_Wedding!_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/9/9a/Royal_Wedding%21_E.png/revision/latest?cb=20250924044507",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "df9982c394cad57cf29fb43917ecb60b37a94544cde144c392ecf4e60fc2d30b",
+      "sha256": "cbd4e21cb911512b2da171b97bdd7cf641bcf31074049c8f5209ffb83b3dc09a"
+    },
+    {
+      "file": "card-22.webp",
+      "title": "To the Banner of Revolution!.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:To_the_Banner_of_Revolution!.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/1/1f/To_the_Banner_of_Revolution%21.png/revision/latest?cb=20250924044837",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "73f0cc1f076d2d7376c4ce0adf858e72baed17b4a6cd0d900c95d62718e85c76",
+      "sha256": "c5febd39e7ddc0274a49c7e9cd1d56847e4516c40a9c4e09bf138ace168df636"
+    },
+    {
+      "file": "card-23.webp",
+      "title": "To the Banner of Revolution! E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:To_the_Banner_of_Revolution!_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/3/3f/To_the_Banner_of_Revolution%21_E.png/revision/latest?cb=20250924044944",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "672504c746767eed8773dbd5b53c9afaaae75353eb6c7ac92ffaa2b6603626e5",
+      "sha256": "41e60ff92c2c9a3d2bf82914e34920bd0ae3e9416af48a155dac5f16d2f2bcba"
+    },
+    {
+      "file": "card-24.webp",
+      "title": "Snow Queen Temptation.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Snow_Queen_Temptation.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/e/ee/Snow_Queen_Temptation.png/revision/latest?cb=20260226040613",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "2389ed2140870fd836d3bad05a03feb00e8b50e4ca692f2c3f8d0259889664d7",
+      "sha256": "dd5d8894d174cc9ed090441152fa6ac7b0f9aaaa97c3f4fe99cad611620f97dd"
+    },
+    {
+      "file": "card-25.webp",
+      "title": "Snow Queen Temptation E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Snow_Queen_Temptation_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/3/33/Snow_Queen_Temptation_E.png/revision/latest?cb=20260226040836",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "ac41baad9130a5e416f7ec6cf0dda4f5b64201afc76ec9a74bbad3358d73c94b",
+      "sha256": "be19abd38b8cdf01135006e5128ee4d0d21f4c078e6522944d38f9cefd6de4b0"
+    },
+    {
+      "file": "card-26.webp",
+      "title": "Farewell to the Angel of Music.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Farewell_to_the_Angel_of_Music.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/9/9e/Farewell_to_the_Angel_of_Music.png/revision/latest?cb=20260507125719",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "d0279508542bac0f0e51c884a0fdd5ab12bea466b5842fc9f3d710ecb7bba374",
+      "sha256": "399f4329462203921679fcd0c16f93b762b6cb20ad9f55e1fdd0babbecb5c35d"
+    },
+    {
+      "file": "card-27.webp",
+      "title": "Farewell to the Angel of Music E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Farewell_to_the_Angel_of_Music_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/5/5b/Farewell_to_the_Angel_of_Music_E.png/revision/latest?cb=20260507125821",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "82bf7aacb621e00e6ec23f79a21d85ce3e8c92d827d3025ac4dca1fd91e88657",
+      "sha256": "b9140a610763c06fba414102480c8086526bf15b839dca6325b761c541d3d7f2"
+    },
+    {
+      "file": "card-28.webp",
+      "title": "Melody of Sorrow and Love.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Melody_of_Sorrow_and_Love.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/3/30/Melody_of_Sorrow_and_Love.png/revision/latest?cb=20231104213531",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "0cdaccf509d7e8913db3c77ec2f25bc6ea75fff4d5af1cba4cb1c0483eb04003",
+      "sha256": "68c1ff6efc201605a61a4695d3b804d52045dbfbbf140ed9558f7bd3b646a0f4"
+    },
+    {
+      "file": "card-29.webp",
+      "title": "Melody of Sorrow and Love E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Melody_of_Sorrow_and_Love_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/3/35/Melody_of_Sorrow_and_Love_E.png/revision/latest?cb=20231104213530",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "2167c4cef0cd17a2611a29909bc03a6be3ecd01de0343c1ce72231965ab944d3",
+      "sha256": "06cfad034b4df4796fe1897fd09e602968839d1ac7346f545637d9ee2efdd37b"
+    },
+    {
+      "file": "card-30.webp",
+      "title": "How About a Wonderful Story?.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:How_About_a_Wonderful_Story%3F.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/f/fd/How_About_a_Wonderful_Story%3F.png/revision/latest?cb=20231104213530",
+      "original_size": [
+        971,
+        597
+      ],
+      "original_sha256": "02b2f58fb5d3932b98290bcdad03049eb4090eecda07948ca86e33447f511f56",
+      "sha256": "7001c88c89790c5e0c86d88fe9ae82b825cc6f10f66c59cb90a2cb6aceb99af4"
+    },
+    {
+      "file": "card-31.webp",
+      "title": "The Bird That Found Its Half.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:The_Bird_That_Found_Its_Half.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/8/8d/The_Bird_That_Found_Its_Half.png/revision/latest?cb=20241225130048",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "39c398646f2aa5cbbeeffe1f13d25f929ff741f0fef374198fb16894ecb8fce7",
+      "sha256": "ad9d10a4fac0a22d15eac69892be6d20cc6b7f5efd29f2910d953ef0c1373b02"
+    },
+    {
+      "file": "card-32.webp",
+      "title": "Be Prepared for Jiang Kaede.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Be_Prepared_for_Jiang_Kaede.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/2/20/Be_Prepared_for_Jiang_Kaede.png/revision/latest?cb=20241225130345",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "b1b50113059baa3fe9ec37ac1712c5040cfff3ccdbaefb9da1f87e9486bc6363",
+      "sha256": "28ba28aaa2b2e8948520910f6894893e560a196a01e5f5e422d729e6ec251868"
+    },
+    {
+      "file": "card-33.webp",
+      "title": "The Happiness of a Certain Devil.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:The_Happiness_of_a_Certain_Devil.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/0/0a/The_Happiness_of_a_Certain_Devil.png/revision/latest?cb=20241225131023",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "99e8e6198840d07a24d328c64fcd8d07fc30540a34de8c3fb827ea3cf8c9a11c",
+      "sha256": "55e2353ec526227551d885a9485adbb91beeacfab10352ce23a9bbc0e1f23177"
+    },
+    {
+      "file": "card-34.webp",
+      "title": "Under the Blissful Rain E.png",
+      "source_page": "https://world-dai-star.fandom.com/wiki/Shizuka/Cards",
+      "file_page": "https://world-dai-star.fandom.com/wiki/File:Under_the_Blissful_Rain_E.png",
+      "original_url": "https://static.wikia.nocookie.net/world-dai-star/images/8/8b/Under_the_Blissful_Rain_E.png/revision/latest?cb=20251123083348",
+      "original_size": [
+        1920,
+        1180
+      ],
+      "original_sha256": "7f0e8e795b1891540e7c2ee976b65ec111ba33c80d5e63ec011b5648025a5186",
+      "sha256": "b363097ce803c87b825c15868e0511222df0190423cd02cd9213b7e00563c501"
+    }
+  ]
+}

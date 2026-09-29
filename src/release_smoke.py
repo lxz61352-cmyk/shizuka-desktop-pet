@@ -4,6 +4,7 @@ from unittest.mock import patch
 import json,sys,time,traceback
 
 def run(pet):
+    import tkinter as tk
     checks=[];errors=[]
     report=Path(sys.argv[sys.argv.index('--report')+1])
     with patch.object(pet,'read_api_key',return_value=''),patch.object(pet,'_embed_texts',return_value=None),patch.object(pet.DeskPet,'_migrate_api_key'):
@@ -32,34 +33,75 @@ def run(pet):
             assert todo_reply.match_score(todo_reply.todo_core('喝水'),'已经喝过水了喵')>=2
             app._log_chat('assistant','这篇研究发表于《Fixture Journal》。',kind='proactive')
             app._log_chat('user','继续说说这篇研究。',kind='user')
-            messages=app._recent_messages(current_text='继续说说这篇研究。',channel='desktop')
-            assert any('Fixture Journal' in m['content'] for m in messages)
-            assert not any(m['content']=='继续说说这篇研究。' for m in messages)
+            history,time_block=app._recent_messages(current_text='继续说说这篇研究。',channel='desktop')
+            assert any('Fixture Journal' in m['content'] for m in history)
+            assert not any(m['content']=='继续说说这篇研究。' for m in history)
+            assert all('[历史消息时间' not in m['content'] for m in history)
+            expected_time = '【对话时间与承接】' if pet.DESKTOP_DIALOGUE_PROFILE else '【本轮时间元数据】'
+            assert time_block.startswith(expected_time) if history else not time_block
+            if pet.DESKTOP_DIALOGUE_PROFILE:
+                from desktop_dialogue_profile import persona_core, output_blocks
+                from dialogue_architecture_v2 import persona_core as compile_card
+                assert pet.ENHANCED_MODE and not pet.TONE_MODE and not pet.DIALOGUE_V2
+                card = Path(pet.CHARACTERS_DIR) / 'shizuka-side-motion/persona.s31-r.candidate.json'
+                assert persona_core(pet.DESKTOP_DIALOGUE_PROFILE, pet.ACTIVE_PACK) == compile_card(card)
+                blocks, _ = output_blocks(pet.DESKTOP_DIALOGUE_PROFILE, '今天吃什么啊', history)
+                assert '【本轮交互事实】' not in blocks and '【交互语义】' in blocks
+                checks.append('S3.1-R / O1-B shared profile, packaged card and timeline')
+                from weixin_segments import SegmentBuffer, BREAK, clean_control
+                buf = SegmentBuffer()
+                assert buf.feed('第一段'+BREAK+'第二段') == ['第一段']
+                assert clean_control(buf.finish()[0]) == '第二段'
+                app._log_chat('user', '分条归档测试', kind='weixin')
+                app._log_chat('assistant', '第一段', kind='weixin', reply_group='smoke')
+                app._log_chat('assistant', '第二段', kind='weixin', reply_group='smoke')
+                from conversation_memory import recent_turns
+                assert recent_turns(pet.load_chatlog(), 1)[0]['assistant'] == '第一段\n\n第二段'
+                app.show_weixin();app.root.update()
+                def descendants(widget):
+                    for child in widget.winfo_children():
+                        yield child
+                        yield from descendants(child)
+                assert any('分条回复与补充' in str(w.cget('text')) for w in descendants(app._weixin_win)
+                           if isinstance(w, tk.Checkbutton))
+                assert any('打开收到的附件' in str(w.cget('text')) for w in descendants(app._weixin_win)
+                           if isinstance(w, tk.Button))
+                from weixin_materials import InboundText, reference_parts
+                from weixin_typing import TypingState
+                from weixin_ui import weixin_visible_text
+                received = InboundText('这一句呢', quotes=[{'role': 'assistant', 'text': '原句'}])
+                assert weixin_visible_text(received) == '这一句呢'
+                assert '原句' in reference_parts(received.quotes)[0]['text']
+                checks.append('WeChat native quote/material/typing modules and received-files button')
+                app._weixin_win.destroy()
+                checks.append('WeChat segmentation module, persisted grouped messages and settings toggle')
             app.show_chat_log();app.root.update();checks.append('Conversation history and proactive continuation context')
-            # 新的输入框：分层外框贴素材原图（真 alpha）+ 内框里的深蓝字 + 按下带阴影的发送键
+            # 单窗口输入框：内容、附件和按钮共享位置，无外框同步窗口。
             app.open_chat_input();app.root.update()
             import conversation_ui
             win=app._chat_win
-            assert getattr(win,'_frame_win',None) is not None
-            assert app._chat_entry.cget('fg')==conversation_ui.CHAT_INK,app._chat_entry.cget('fg')
-            assert app._chat_entry.cget('bg')==conversation_ui.CHAT_TEXT_FILL
-            x1,y1,x2,y2=conversation_ui.chat_text_rect(*win._frame_size)
-            assert x1<win._frame_offset[0]<x2 and y1<win._frame_offset[1]<y2,(win._frame_offset,(x1,y1,x2,y2))
-            assert app._chat_photos[1].width==app._chat_photos[2].width   # 发送键两态同尺寸
+            assert getattr(win,'_compact_surface',False)
+            assert getattr(win,'_frame_win',None) is None
+            from ui_theme import LIGHT_INK
+            assert app._chat_entry.cget('fg')==LIGHT_INK
+            assert win._frame_offset==(0,0)
+            assert app._chat_entry.winfo_width()>250
+            assert app._chat_entry.winfo_rooty()+app._chat_entry.winfo_height()<win.winfo_rooty()+win.winfo_height()
             app.close_chat_win();app.root.update()
-            checks.append('New composer artwork: layered frame, dark blue text, pressed send key')
+            checks.append('Single-window composer: readable editor and bounded toolbar')
             # 番茄钟：图标按钮点开是头顶面板（表盘 + 倒计时 + 开始/设置）
             app.show_pomodoro();app.root.update()
             assert app._pomo_panel is not None and app._pomo_panel.winfo_exists()
             assert app._pomo_panel_text is not None
             app.show_pomodoro();app.root.update()
             checks.append('Pomodoro: head panel with clock face, countdown and start/settings')
-            # 回复气泡：外框走分层窗口（真 alpha），内容窗盖在内框上
+            # 回复气泡：单窗口圆角面板，保留可复制的完整文本。
             app._show_think_bubble();app.root.update()
-            assert getattr(app._dot_win,'_frame_win',None) is not None
+            assert getattr(app._dot_win,'_compact_surface',False)
+            assert getattr(app._dot_win,'_frame_win',None) is None
             assert app._dot_win._frame_offset and app._dot_win._frame_visible
             app._close_think_bubble();app.root.update()
-            checks.append('Reply bubble: layered frame with true per-pixel alpha')
+            checks.append('Reply bubble: single window with selectable text')
             app.show_computer_assistant();app.root.update()
             from computer_agent import DshInstallation
             command=DshInstallation('node','bin.js').command('fixture')
@@ -70,9 +112,35 @@ def run(pet):
             import qrcode
             assert qrcode.make('offline-fixture').size[0]>0
             checks.append('Weixin setup and QR dependency, without sending')
+            app.show_memory();app.show_usage();app.show_pomodoro_settings();app.root.update()
+            from tkinter import font as tkfont
+            from ui_theme import apply as theme_window
+            for win in (app._todo_win,app._chatlog_win,app._computer_win,app._weixin_win,
+                        app._mem_win,app._usage_win,app._pomo_settings_win):
+                # Reapply after background styles have been generated: semantic
+                # heading fonts must survive that second pass.
+                theme_window(win);app.root.update()
+                label=win._page_header.title_label
+                font=tkfont.Font(root=win,font=label.cget('font')).actual()
+                assert font['size']==16 and font['weight']=='bold',(win.title(),font)
+                assert (label.winfo_rootx()-win.winfo_rootx(),label.winfo_rooty()-win.winfo_rooty())==(22,18),win.title()
+                if sys.platform=='win32' and sys.getwindowsversion().build>=22000:
+                    assert all(win._chrome_attributes.get(key) for key in (34,35,36)),win.title()
+            app._close_memory_window();app._close_usage_window();app._pomo_settings_win.destroy()
+            checks.append('Seven dialogs share title position/size after repaint and accept native dark-blue chrome')
             import tkinter as tk
             menu=tk.Toplevel(app.root);app._menu_marks={};app._submenus=[];app._submenu=None
             app._build_more_settings(menu,1);app.root.update()
+            from sensitive_topics import ATTRIBUTE, enabled, policy
+            assert not enabled(app) and ATTRIBUTE in app._menu_marks
+            toggle=app._menu_marks[ATTRIBUTE]
+            toggle.event_generate('<Button-1>',when='now');app.root.update()
+            assert enabled(app) and pet.load_settings()['sensitive_topics'] is True
+            assert toggle.cget('text')=='✓' and '模式：开启' in policy(enabled(app))
+            toggle.event_generate('<Button-1>',when='now');app.root.update()
+            assert not enabled(app) and pet.load_settings()['sensitive_topics'] is False
+            assert toggle.cget('text')==''
+            checks.append('Sensitive-topic submenu toggle persists both states, default off')
             assert app._idle_minutes==5 and app._sound_mode=='todo-files'
             # 免打扰开关与语音新选项：默认「全屏/游戏时安静」，英文音素默认关闭
             import quiet_mode
@@ -260,6 +328,10 @@ def run(pet):
             from openai import OpenAI
             OpenAI(api_key='offline-fixture',base_url='http://127.0.0.1:1').close()
             checks.append('Bundled API client loads offline')
+            from experience_smoke import run as experience_smoke
+            checks.extend(experience_smoke(app,pet))
+            from workflow_smoke import run as workflow_smoke
+            checks.extend(workflow_smoke(app,pet))
             assert not errors,errors
         finally:
             for timer in app.root.tk.call('after','info'):app.root.tk.call('after','cancel',timer)

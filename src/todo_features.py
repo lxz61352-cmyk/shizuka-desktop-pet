@@ -12,11 +12,12 @@ from todo_schedule import schedule_facts
 from todo_voice import TodoVoiceMixin,confirmation_text
 from dialogue_grounding import event_expired
 from todo_reply import TodoReplyMixin
+from todo_quick import TodoQuickMixin
 
 REMINDER_GRACE = 600   # 秒。准点提醒（lead=0）的 due 等于事件开始时间，事件一开始 event_expired 就成立；
                        # 到点后留一点宽限，保证这一次提醒还能发出去（只发一次），不至于永远发不出来。
 
-class TodoFeaturesMixin(TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNotesMixin,TodoUIMixin):
+class TodoFeaturesMixin(TodoQuickMixin,TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNotesMixin,TodoUIMixin):
     def _todo_init(self):
         if hasattr(self,'_todo_details'):return
         import pet as engine
@@ -172,11 +173,14 @@ class TodoFeaturesMixin(TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNo
         self._todo_start_memory_review()
 
     def _todo_notice_signature(self,item):
-        return hashlib.sha256(json.dumps([item['id'],item.get('due'),item.get('on_boot')]).encode()).hexdigest()[:32]
+        fields=[item['id'],item.get('due'),item.get('on_boot')]
+        snooze=self._todo_options(item).get('snooze_until')
+        if snooze:fields.append(snooze)
+        return hashlib.sha256(json.dumps(fields).encode()).hexdigest()[:32]
 
     def _todo_notice_current(self,tid,due):
-        item=next((r for r in self.todos if r['id']==tid and not r.get('done') and r.get('due')==due),None)
-        return bool(item and not event_expired(item,self._todo_options(item)))
+        item=next((r for r in self.todos if r['id']==tid and not r.get('done') and self._todo_effective_due(r)==due),None)
+        return bool(item and (self._todo_options(item).get('snooze_until') or not event_expired(item,self._todo_options(item))))
 
     def _todo_cancel_notices(self,tid):
         self._pending_reminders=[r for r in getattr(self,'_pending_reminders',[]) if r.get('todo_id')!=tid]
@@ -191,15 +195,15 @@ class TodoFeaturesMixin(TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNo
             if item.get('done'):continue
             self._todo_prepare_occurrence(item,now)
             options=self._todo_options(item)
-            first_due=item.get('due')
+            first_due=self._todo_effective_due(item)
             # 事件类待办开始时间已过就不再提醒；但准点提醒（due 就是开始时间）到点后留宽限，别被直接跳过。
-            if event_expired(item,options,now) and not (first_due is not None and 0<=now-first_due<=REMINDER_GRACE):
+            if event_expired(item,options,now) and not options.get('snooze_until') and not (first_due is not None and 0<=now-first_due<=REMINDER_GRACE):
                 continue
             self._todo_prepare_phrase(item,now)
             signature=self._todo_notice_signature(item)
             prior=options.get('notice',{})
-            due=item.get('due')
-            if not ((due is not None and due<=now) or item.get('on_boot') and (startup or prior.get('signature')==signature)):continue
+            due=self._todo_effective_due(item)
+            if not ((due is not None and due<=now) or not options.get('snooze_until') and item.get('on_boot') and (startup or prior.get('signature')==signature)):continue
             if prior.get('signature')!=signature:options['notice']={'signature':signature,'desktop':False,'weixin':'pending'}
             notice=options['notice']
             if options.get('desktop',True) and not notice.get('desktop'):
@@ -220,12 +224,14 @@ class TodoFeaturesMixin(TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNo
             status,error='sent',''
             try:
                 current=next((it for it in self.todos if it['id']==item['id'] and not it.get('done')),None)
-                if current is None or self._todo_notice_signature(current)!=signature or event_expired(current,self._todo_options(current)):
+                if current is None or self._todo_notice_signature(current)!=signature or (event_expired(current,self._todo_options(current)) and not self._todo_options(current).get('snooze_until')):
                     status,error='cancelled','事项已删除、完成或更改时间，本次未发送'
                     return
                 text=self._todo_reminder_text(item)[:1500]
                 channel.notify_owner(text,'todo-'+signature)
                 self._log_chat('assistant',text,kind='weixin_proactive')
+                if hasattr(self,'_record_notice'):
+                    self._record_notice(text,'待办提醒',key='reminder:'+item['id']+':'+str(self._todo_effective_due(item)),todo_id=item['id'])
                 self._ui(lambda row=deepcopy(item):self._todo_bind_reply([row],'weixin'))
             except Exception as exc:
                 from weixin_channel import ApiError

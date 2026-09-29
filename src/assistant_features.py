@@ -49,6 +49,10 @@ class AssistantFeaturesMixin:
         self._add_idle_interval(sub)
         self._menu_separator(sub)
         self._add_menu_quiet(sub, W, level)
+        from sensitive_topics import LABEL, ATTRIBUTE
+        self._add_menu_toggle(sub, LABEL, ATTRIBUTE)
+        self._add_menu_item(sub, '敏感话题说明…', self._show_sensitive_topic_help, W)
+        self._add_menu_item(sub, '运行状态与恢复…', self.show_runtime_status, W)
         for text, attr in [('检测剪贴板', '_clip_on'), ('翻译剪贴板', '_translate_on'),
                            ('不确定的消息联网查证', '_web_search_on'),
                            ('开机问候', '_greeting_on'), ('开机待办提醒', '_summary_on'), ('记录窗口使用时长', '_usage_on'),
@@ -56,6 +60,10 @@ class AssistantFeaturesMixin:
                            ('落在窗口上', '_land_on_windows')]:
             self._add_menu_toggle(sub, text, attr)
         self._add_menu_autostart(sub)
+
+    def _show_sensitive_topic_help(self):
+        from sensitive_topics import LABEL, HELP
+        messagebox.showinfo(LABEL, HELP, parent=self.pet)
 
     def sync_now(self):
         import pet as engine
@@ -232,7 +240,8 @@ class AssistantFeaturesMixin:
             if event.widget is win:self._research_win=None
         win.bind("<Destroy>",closed)
         win.title("静香 · 研究进展");self._place_dialog(win,780,680)
-        tk.Label(win,text="研究进展",font=("Microsoft YaHei UI",16,"bold")).pack(pady=(12,2))
+        from ui_theme import page_header
+        page_header(win,'研究进展').pack(fill='x')
         tk.Label(win,text="写下你关注的研究方向，按回车确认；每加一个就立刻检索一次最新文献，之后按下面的间隔自动看一遍。",
                  wraplength=730,justify="left",fg="#555").pack(anchor="w",padx=18)
         row=tk.Frame(win);row.pack(fill="x",padx=18,pady=(10,0))
@@ -447,8 +456,10 @@ class AssistantFeaturesMixin:
     def _research_read(self,work,auto_explain=False,speak=False):
         win=tk.Toplevel(self.root)
         win.title("静香 · 文献");self._place_dialog(win,760,620)
-        tk.Label(win,text=work.get("title") or "（没有题名）",font=("Microsoft YaHei UI",12,"bold"),
-                 wraplength=700,justify="left").pack(anchor="w",padx=18,pady=(14,4))
+        from ui_theme import page_header
+        page_header(win,'文献阅读').pack(fill='x')
+        ttk.Label(win,text=work.get("title") or "（没有题名）",style='Pet.Section.TLabel',
+                  wraplength=700,justify="left").pack(anchor="w",padx=22,pady=(0,4))
         basis="含公开摘要" if work.get("abstract") else "题名线索 · 暂无公开摘要"
         meta=" · ".join(x for x in (work.get("journal"),work.get("date"),basis) if x)
         tk.Label(win,text=meta,fg="#666").pack(anchor="w",padx=18)
@@ -541,6 +552,7 @@ class AssistantFeaturesMixin:
         topics=self._research.profile.get("topics") or []
         mapping=self._research.profile.get("query_for") or {}
         width=self._research_chip_width()
+        self._research_chip_width_last=width
         chips=[]
         if topics:
             chips.append(tk.Label(frame,text="正在关注：",fg="#555"))

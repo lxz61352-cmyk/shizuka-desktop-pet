@@ -11,8 +11,10 @@
 
 - 平台：**Windows x64**（Windows 11 实测；Windows 10 待测， Mac 版开发中）
 - 技术：Python + Tkinter + Pillow，PyInstaller 打包
-- 版本：**V0.8.6**
-- 本仓库同时提供**免装 Python 的打包版**（`Shizuka.exe` + `_internal/`）和**完整源码**（`src/`）。
+- 当前源码：**V0.8.17**。本轮更新内容见 [更新公告](更新公告.md)，源码运行与验证见 [开发与验证](文档/开发与验证.md)。
+- 仓库根目录的 `Shizuka.exe`、`_internal/` 是历史 **V0.8.6** 打包版，不会因源码更新而变成新版。体验 0.8.17 请按下方说明运行源码或自行构建；已发布的安装包以 [Releases](https://github.com/lxz61352-cmyk/shizuka-desktop-pet/releases) 为准。
+
+本轮源码包括微信分条回复、引用文字/图片/文件、PDF 选页和输入状态，以及统一窗口样式、设置中心、可控的主动搭话、记忆有效期、待办快捷处理、专注恢复、聊天前后文与通知页。细节按版本记录在更新公告中；口吻和微信手机端显示仍需实际使用反馈。
 
 ---
 
@@ -42,7 +44,9 @@
 
 ## 一、第一次使用（安装）
 
-1. 把仓库/ZIP **完整解压**到一个自己能写入的文件夹（例如 `D:\静香桌宠`）。
+以下步骤适用于从 Releases 下载的完整程序包；下载仓库源码请使用后面的源码运行步骤。
+
+1. 把程序包 **完整解压**到一个自己能写入的文件夹（例如 `D:\静香桌宠`）。
    **不要只把 `Shizuka.exe` 单独拿出来**——旁边的 `_internal`、`assets`、`characters` 文件夹都要一起保留，缺一个会打不开或没声音。
 2. 双击 **`Shizuka.exe`**（或 `启动桌宠.bat`）。这个包自带运行环境，**不需要安装 Python**。
 3. 第一次打开只有动作和问候，还不会聊天。点**齿轮 →「模型与接口」**，填入你自己的 Key（DeepSeek，或任意 OpenAI 兼容接口），保存后会**自动识别服务商**并连上。
@@ -53,7 +57,15 @@
 5. 想开机自动启动：齿轮 →「更多设置 ›」→「开机自动启动」；或者给 `Shizuka.exe` 建个快捷方式，放进 `Win+R` → `shell:startup` 打开的文件夹。
 
 - 你的聊天、记忆、待办、设置都保存在解压目录的 `data/` 里。换电脑或升级前先备份；**转发给别人时，别把自己的 `data/` 一起发出去。**
-- 源码运行：装好含 Tcl/Tk 的 Python（3.10~3.13）后 `pip install -r src/requirements.txt`，再运行 `源码启动.bat`（或 `python src/run_pet.py`）。
+- 源码运行：使用带 Tcl/Tk 的 Windows x64 Python 3.13 或 3.14，先执行以下命令，再双击 `源码启动.bat`。微信连接页可用 `.venv\Scripts\python.exe src/run_pet.py --weixin` 打开。
+
+```powershell
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r src/requirements.txt
+.venv\Scripts\python.exe src/run_pet.py
+```
+
+源码默认使用 `desktop-dialogue.json` 中的 S3.1-R / O1-B 配置。首次使用需要自己配置接口与微信绑定；本仓库不包含开发者的运行数据。
 
 ---
 
@@ -181,7 +193,7 @@
 
 | 路径 | 说明 |
 | --- | --- |
-| `Shizuka.exe` + `_internal/` | 打包好的可运行程序（免装 Python） |
+| `Shizuka.exe` + `_internal/` | 历史 V0.8.6 可运行程序；当前源码请单独运行或构建 |
 | `src/` | 完整 Python 源码 |
 | `characters/` | 角色包（正式使用 静香 · 微动版），人设卡在同目录 `persona.json` |
 | `assets/` | 图标、提示音、语音参考音频、背景音乐 `i_wanna.mp3` |
@@ -190,7 +202,8 @@
 | `tools/` `tests/` | 构建/发版脚本、回归测试 |
 | `LICENSES/` | 第三方许可 |
 | `更新公告.md` | 更新后弹出的公告（按 `## vX.Y.Z` 分节） |
-| `version.json` | 当前版本与更新包文件名（更新检查的备用源读它） |
+| `desktop-dialogue.json` | 源码默认对话配置；可改为 `legacy` 回到旧链路 |
+| `version.json` | 已发布安装包的版本与文件名；发布新安装包时才更新 |
 | `data/` | 运行数据（聊天记录/记忆/待办/设置，**本机生成，不上传**） |
 
 ---

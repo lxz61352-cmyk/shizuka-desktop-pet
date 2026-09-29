@@ -107,6 +107,31 @@ class WeixinTests(unittest.TestCase):
         args = self.client.send.call_args.args
         self.assertEqual(args[:3], ("test-owner", "context-synthetic", "synthetic reply"))
 
+    def test_segment_delivery_is_not_resent_and_new_user_cancels_only_tail(self):
+        from weixin_segments import DeliveredReply
+        first_sent = threading.Event()
+        def responder(text, cancel, progress):
+            progress.delay = False
+            if text == 'first':
+                progress.emit('part one', lambda value: None)
+                first_sent.set()
+                self.assertTrue(progress.superseded.wait(2))
+                self.assertFalse(cancel.is_set())  # File task token is independent.
+                self.assertFalse(progress.emit('old tail', lambda value: None))
+                return DeliveredReply('\n'.join(progress.sent), 'interrupted')
+            progress.emit('new answer', lambda value: None)
+            return DeliveredReply('\n'.join(progress.sent))
+        self.channel.responder = responder
+        self.worker()
+        self.channel.receive(self.msg('first'))
+        self.assertTrue(first_sent.wait(2))
+        self.channel.receive(self.msg('second', '2'))
+        self.until(lambda: self.store.data['last_result'] == 'new answer' and not self.channel.active)
+        calls = self.client.send.call_args_list
+        self.assertEqual([call.args[2] for call in calls], ['part one', 'new answer'])
+        self.assertEqual(len({call.args[3] for call in calls}),2)
+        self.assertTrue(all(call.args[:2]==('test-owner','context-synthetic') for call in calls))
+
     def test_unsupported_attachment_does_not_become_model_task(self):
         self.channel.receive(self.msg(item_list=[{"type":4,"file_item":{"file_name":"do something.txt"}}]))
         self.responder.assert_not_called()
@@ -163,6 +188,8 @@ class WeixinTests(unittest.TestCase):
         app._computer_agent = Mock()
         app._computer_agent.run.return_value = {"status":"completed", "output":"file done"}
         app._log_chat = Mock()
+        # This fixture has no Tk loop; execute scheduled UI callbacks immediately.
+        app._ui = lambda callback: callback()
         with patch.object(pet, "has_api_key", return_value=False):
             reply = app._weixin_reply("/电脑 create test.txt", threading.Event(), Mock())
             self.assertIn("尚未开启", reply)

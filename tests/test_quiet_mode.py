@@ -1,5 +1,6 @@
 """免打扰判定：游戏/全屏时该安静，其他时候一律照常说话。"""
 from pathlib import Path
+import gc
 import json
 import sys
 import tempfile
@@ -111,6 +112,8 @@ class MenuTests(unittest.TestCase):
             self.root.destroy()
         except Exception:
             pass
+        self.root = None
+        gc.collect()
 
     def _shim(self, root):
         class Shim:

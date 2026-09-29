@@ -92,8 +92,10 @@ def read_announcement(ver):
             if m:
                 if cur:
                     break            # 到了下一节，结束
-                title = m.group(1).lstrip("vV").strip()
-                if want and (title == want or want in title or title in want):
+                # 署名可以跟在版本后面，但版本本身必须完整匹配：
+                # 0.8.1 不能命中 0.8.17，0.7.6 也不能命中 0.7.6beta。
+                title = re.split(r"[\s（(]", m.group(1), maxsplit=1)[0].lstrip("vV")
+                if want and title == want:
                     cur = True
                 continue
             if cur:

@@ -8,11 +8,21 @@ from todo_schedule import next_schedule,latest_due_schedule,rule_label,schedule_
 
 class TodoRecurrenceMixin:
     def _todo_install_schedule(self,item,options,schedule):
+        if options.get('schedule')!=schedule or item.get('due')!=options.get('snooze_due'):
+            options.pop('snooze_until',None);options.pop('snooze_due',None)
         options['schedule']=deepcopy(schedule)
         options['schedule']['reminder_at']=item.get('due')
 
     def _todo_prepare_occurrence(self,item,now):
         options=self._todo_options(item);schedule=options.get('schedule',{});rule=schedule.get('rule')
+        if options.get('snooze_until') and item.get('due')!=options.get('snooze_due'):
+            options.pop('snooze_until',None);options.pop('snooze_due',None);options.pop('notice',None);self._save_todo_details()
+        if options.get('snooze_until'):
+            notice=options.get('notice',{})
+            attempted=notice.get('signature')==self._todo_notice_signature(item) and (
+                notice.get('desktop') or notice.get('weixin') in ('sent','failed','uncertain'))
+            # Keep the postponed occurrence until its reminder has actually been attempted.
+            if options['snooze_until']>now or not attempted:return
         if not rule or not item.get('due') or item['id'] in self._todo_sending:return
         # Respect an explicit time edit arriving through the old portable core schema.
         if schedule.get('reminder_at') is not None and item['due']!=schedule['reminder_at']:
@@ -47,6 +57,7 @@ class TodoRecurrenceMixin:
             if done:
                 # 提前/直接完成：连同这次尚未发出的提醒状态一起清掉，不留「已完成但未提醒」的尾巴
                 options.pop('notice',None)
+                options.pop('snooze_until',None);options.pop('snooze_due',None)
             elif rule:
                 updated,due=next_schedule(schedule,now)
                 self._todo_install_schedule(item,options,updated);item['due']=due;options['schedule']['reminder_at']=due;options.pop('notice',None)
@@ -57,7 +68,8 @@ class TodoRecurrenceMixin:
     def _todo_end_series(self,tid):
         item=next((it for it in self.todos if it['id']==tid),None)
         if not item:return
-        item['done']=True;self._todo_options(item).pop('notice',None)
+        item['done']=True;options=self._todo_options(item)
+        for key in ('notice','snooze_until','snooze_due'):options.pop(key,None)
         self._save_todos();self._todo_queue_routine(item,'结束');self._save_todo_details()
         self._todo_cancel_notices(tid)
         self._refresh_todo_view();self._todo_start_memory_review()

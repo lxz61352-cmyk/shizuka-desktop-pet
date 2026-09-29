@@ -1,3 +1,3 @@
 @echo off
 cd /d "%~dp0"
-start "" pythonw "%~dp0src\run_pet.py"
+start "" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0src\run_pet.py"

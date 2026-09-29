@@ -3,7 +3,22 @@ from pathlib import Path
 import sys
 import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from dialogue_style import clean_filler_tail, PLAIN_STYLE
+from dialogue_style import clean_filler_tail, PLAIN_STYLE, NATURAL_STYLE
+
+
+class NaturalStyleStopPermissionTests(unittest.TestCase):
+    def test_style_stays_short_and_has_no_behavior_checklist(self):
+        self.assertIn("这些只是倾向，不是固定模板", NATURAL_STYLE)
+        self.assertNotIn("不要自动补充", NATURAL_STYLE)
+        self.assertNotIn("直接停下", NATURAL_STYLE)
+
+    def test_user_message_is_not_a_task(self):
+        self.assertIn("不是在处理他的消息", NATURAL_STYLE)
+        self.assertIn("先对他说的具体内容产生反应", NATURAL_STYLE)
+        self.assertIn("不要为了显得像真人故意漏答", NATURAL_STYLE)
+        self.assertIn("不要为了让反应生动而补写", NATURAL_STYLE)
+        self.assertIn("自我表达是直接说一个", NATURAL_STYLE)
+        self.assertIn("记忆确认答完记得的内容就停", NATURAL_STYLE)
 
 
 class FillerTailTests(unittest.TestCase):
@@ -15,10 +30,20 @@ class FillerTailTests(unittest.TestCase):
         self.assertEqual(clean_filler_tail("我陪你一起弄。"), "")
         self.assertEqual(clean_filler_tail("先别急，把它发我看看，我陪你一起弄。"), "")
 
+    def test_characterful_tail_is_kept(self):
+        text = "……算了，我陪你看完。"
+        self.assertEqual(clean_filler_tail(text), text)
+        self.assertEqual(clean_filler_tail("那就这样，我陪着你。"), "那就这样，我陪着你。")
+
     def test_concrete_reply_is_untouched(self):
         text = "requests 没装上呢，多半是环境不对，看看是不是忘了 source 那个虚拟环境。"
         self.assertEqual(clean_filler_tail(text), text)
         self.assertEqual(clean_filler_tail("今天陪你去医院。"), "今天陪你去医院。")
+
+    def test_math_parens_are_not_stage_directions(self):
+        from dialogue_style import clean_text
+        self.assertEqual(clean_text("(a+b)² = a² + 2ab + b²"), "(a+b)² = a² + 2ab + b²")
+        self.assertEqual(clean_text("（叹气）好吧。"), "好吧。")
 
     def test_empty_input(self):
         self.assertEqual(clean_filler_tail(""), "")

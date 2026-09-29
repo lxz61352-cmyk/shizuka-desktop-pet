@@ -4,7 +4,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
-from ui_theme import apply,copy_bindings,copy_text
+from ui_theme import apply,copy_bindings,copy_text,ACCENT,MUTED
 
 
 class PendingQuestions:
@@ -82,14 +82,14 @@ class ComputerProgressMixin:
         self._computer_progress_token=token
         win.title('静香 · DSH 执行过程');win.minsize(590,400);self._place_dialog(win,830,620)
         win.columnconfigure(0,weight=1);win.rowconfigure(1,weight=1)
-        head=ttk.Frame(win,padding=(20,18,20,10));head.grid(row=0,column=0,sticky='ew')
-        ttk.Label(head,text='文件任务',style='Pet.Title.TLabel').pack(side='left')
+        from ui_theme import page_header
+        head=page_header(win,'文件任务');head.grid(row=0,column=0,sticky='ew')
         self._computer_progress_status=tk.StringVar(value='正在连接 DSH')
         ttk.Label(head,textvariable=self._computer_progress_status,style='Pet.Muted.TLabel').pack(side='right')
         box=self._computer_progress_text=ScrolledText(win,wrap='word',state='disabled',spacing3=5)
         box.grid(row=1,column=0,sticky='nsew',padx=20);copy_bindings(box)
-        box.tag_configure('step',foreground='#486773',font=('Microsoft YaHei UI',11,'bold'),spacing1=12)
-        box.tag_configure('detail',foreground='#697780');box.tag_configure('error',foreground='#9C4949')
+        box.tag_configure('step',foreground=ACCENT,font=('Microsoft YaHei UI',11,'bold'),spacing1=12)
+        box.tag_configure('detail',foreground=MUTED);box.tag_configure('error',foreground='#FFB6B6')
         foot=ttk.Frame(win,padding=(20,12));foot.grid(row=2,column=0,sticky='ew')
         ttk.Button(foot,text='复制所选',command=lambda:copy_text(box)).pack(side='left')
         ttk.Button(foot,text='回到最新',command=lambda:box.see('end')).pack(side='left',padx=8)

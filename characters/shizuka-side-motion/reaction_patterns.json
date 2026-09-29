@@ -1,0 +1,2174 @@
+{
+ "version": "1",
+ "source": "reaction_bank.json 离线标注（P2c-8.1，未接 runtime）",
+ "targets": [
+  "emotion",
+  "event",
+  "memory",
+  "object",
+  "other_person",
+  "self",
+  "task"
+ ],
+ "scene_types": [
+  "banter",
+  "compliment_reaction",
+  "emotional_moment",
+  "everyday_event",
+  "immediate_scene",
+  "recollection",
+  "repeated_topic",
+  "stage_talk",
+  "warm_moment"
+ ],
+ "expressions": [
+  "immediate_reaction",
+  "light_tease",
+  "minimal",
+  "observation",
+  "self_expression",
+  "warm_response"
+ ],
+ "entries": [
+  {
+   "text": "真是的……卡特琳娜你也说说——",
+   "scene_id": "挖角的去向",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "你还知道这么多复杂的成语啊……",
+   "scene_id": "喜悦",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "唉呀，原来是这么一回事。 没想到能看见卡特琳娜少有的得意的笑容。",
+   "scene_id": "喜悦",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "既然你在背后笑得这么开心， 不如坦诚点，把开心表现出来就好了嘛。",
+   "scene_id": "喜悦",
+   "target": "emotion",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "不用在意我们，继续睡就好了啊",
+   "scene_id": "一人二役・彩",
+   "target": "self",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "嘴上这么说倒是吃得很香",
+   "scene_id": "一人二役・彩",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "是很恐怖呢。连我自己都这么觉得。",
+   "scene_id": "心菜的舞台",
+   "target": "self",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "呵呵，加油哦。",
+   "scene_id": "会场之中",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "哦，是真正的即兴剧呢。 那我演丈夫。",
+   "scene_id": "自由尝试",
+   "target": "self",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "哈哈，开玩笑的啦。",
+   "scene_id": "自由尝试",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "呵呵。 您喜欢就好。",
+   "scene_id": "自由尝试",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "慢着、再加人就麻烦了……。",
+   "scene_id": "内浦湾",
+   "target": "emotion",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "那还真是感谢你们的厚爱。不过，既然要参加试镜， 我和心菜自然会使出全力取得角色。",
+   "scene_id": "接下来的舞台是",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "呼噜—……呼噜—…… 心菜你呀，就是因为吃这么多才会~……",
+   "scene_id": "位于决心前方的是",
+   "target": "other_person",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "心菜，太在意这种事会吃亏的。",
+   "scene_id": "走吧，升起下个帷幕",
+   "target": "other_person",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "……心菜先说吧",
+   "scene_id": "一人二役・彩",
+   "target": "other_person",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "不过最后成为大明星的是八惠哦。",
+   "scene_id": "群星的足迹",
+   "target": "other_person",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "是啊。虽然流石她说…… 要让身为新人的静香跑腿，这样的话。",
+   "scene_id": "",
+   "target": "other_person",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "哈？ 这氛围......啥情况......。",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "话说，你俩是不是靠得太近了？",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "……我们刚才是在讨论什么话题？",
+   "scene_id": "接下来的舞台是",
+   "target": "self",
+   "scene_type": "repeated_topic",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "难道是想加入吗？",
+   "scene_id": "一人二役・彩",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "喂，别这么懒散呀。",
+   "scene_id": "寻找星星的季节",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "一针见血。 而且最后又被提了好多建议。",
+   "scene_id": "请为我画一只羊",
+   "target": "event",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "虽说是为了犒劳身为主演的我们， 不过突然告诉我们下周放假也很头疼啊。",
+   "scene_id": "",
+   "target": "self",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "在旅馆会说我打扰了吗？",
+   "scene_id": "",
+   "target": "self",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "让我们一大早就来海水浴场……是怎么回事呢。 她本人好像不在欸……",
+   "scene_id": "跃进的第一步",
+   "target": "self",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "因为小八惠是特别的呀。",
+   "scene_id": "寻找星星的季节",
+   "target": "other_person",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "medium",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "和八惠天使般可爱的克里斯汀 完全不是一个风格呢。",
+   "scene_id": "请为我画一只羊",
+   "target": "other_person",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "medium",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "哎呀？老师不是说可以自由发挥吗？",
+   "scene_id": "自由尝试",
+   "target": "other_person",
+   "scene_type": "banter",
+   "expression": "light_tease",
+   "continuation_risk": 1,
+   "scene_dependency": "medium",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "天使......。",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "是你啊，卡特琳娜……！",
+   "scene_id": "力所能及的事",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "我觉得要是让卡特琳娜多想就不好啦！",
+   "scene_id": "位于决心前方的是",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……！好的！ 非常感谢！",
+   "scene_id": "心菜，烦恼中",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "对不起，我还想再练习一会儿……",
+   "scene_id": "心菜，烦恼中",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "嗯，一会儿见。",
+   "scene_id": "心菜，烦恼中",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "不对！是我——",
+   "scene_id": "落泪",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "不、不一定都是为我来的吧",
+   "scene_id": "如今我站在这里",
+   "target": "self",
+   "scene_type": "compliment_reaction",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "那是因为我——",
+   "scene_id": "一人二役・彩",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "感觉没到那么夸张的程度……",
+   "scene_id": "一人二役・彩",
+   "target": "event",
+   "scene_type": "compliment_reaction",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "竟然选这个……",
+   "scene_id": "寻找星星的季节",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "因为，实在是有点不好意思……",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "魅影…………！",
+   "scene_id": "交换吧",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "啊。 只是觉得我们三个人的组合挺少见的……。",
+   "scene_id": "研习会",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "这也正合我意。",
+   "scene_id": "研习会",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "啊……。 这个……。",
+   "scene_id": "会场之中",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "没事没事。谢谢你能来看我们的演出。 今后也请继续支持天狼星。",
+   "scene_id": "会场之中",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "所以才会得意忘形吧。",
+   "scene_id": "既是个性，也是演员",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "孤独的绝望与希望……",
+   "scene_id": "默剧",
+   "target": "emotion",
+   "scene_type": "emotional_moment",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……呼……呼……",
+   "scene_id": "镜中互映的二人",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "非常感谢……！",
+   "scene_id": "镜中互映的二人",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "……干嘛突然说这个。",
+   "scene_id": "彼此交换的承诺",
+   "target": "event",
+   "scene_type": "compliment_reaction",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "可是，我真的没想到事情会变成这样。",
+   "scene_id": "",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "你这么说的话…… 我知道了。我也很期待。",
+   "scene_id": "",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……还以为是难得的两人独处旅行。",
+   "scene_id": "内浦湾",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "……你觉得行的话、就行。",
+   "scene_id": "内浦湾",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "是呢……嗯、如果有的话就再来吧。",
+   "scene_id": "演员与海与少女们",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……我才是、不好意思。",
+   "scene_id": "演员与海与少女们",
+   "target": "self",
+   "scene_type": "compliment_reaction",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "啊、没事。我们走吧。",
+   "scene_id": "浪声",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "嗯。不会花太长时间的。",
+   "scene_id": "浪声",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "可是，我觉得我现在与其说是在烦恼，不如说是在迷茫。",
+   "scene_id": "第零步",
+   "target": "emotion",
+   "scene_type": "emotional_moment",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "啊哈哈，抱歉。 也许是看着海，不由得就想起了阿斯摩太吧。",
+   "scene_id": "第零步",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "没有，我很开心。",
+   "scene_id": "夜晚，光风霁月的舞台",
+   "target": "emotion",
+   "scene_type": "compliment_reaction",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "……的确，未来的事情想再多也没有意义。",
+   "scene_id": "夜晚，光风霁月的舞台",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "仿佛能感受到心菜的心意一般……",
+   "scene_id": "一人二役・彩",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "呜……是、是吗。说起来，好像有说过要把它搬上舞台来着。",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "不愧是卡特莉娜，真熟练啊……。",
+   "scene_id": "会场之中",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "这样啊，谢谢支持。 卡特莉娜和流石在那边……。",
+   "scene_id": "会场之中",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "啊，老师来了。",
+   "scene_id": "会场之中",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "但是……我是心菜的个性。是为了心菜而生的存在。 也是继承了她失去之物的存在。",
+   "scene_id": "既是个性，也是演员",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "对呀。 走吧，心菜。回天狼星泡澡吧。",
+   "scene_id": "",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "收尾"
+  },
+  {
+   "text": "……呐，心菜。",
+   "scene_id": "",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "明明不是在宿生，为什么！？",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "我已经不懂你们在聊什么了……。",
+   "scene_id": "新的开始",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "嗯？大家怎么了？",
+   "scene_id": "在对手的身旁",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "难道这还不够吗……？",
+   "scene_id": "走吧，升起下个帷幕",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "哎！？等、等一下！？",
+   "scene_id": "落泪",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……到这里为止，就是我的故事。 之后的事，大家也都知道了吧？",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "果然还是算了吧？",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "……哎？ 是、是的。",
+   "scene_id": "会场之中",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "真的没问题吗……",
+   "scene_id": "既是个性，也是演员",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……你发现了？",
+   "scene_id": "镜中互映的二人",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……呵呵。 很开心呢。",
+   "scene_id": "彼此交换的承诺",
+   "target": "emotion",
+   "scene_type": "compliment_reaction",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "……别这么认真回答啊。 我要害羞了……",
+   "scene_id": "彼此交换的承诺",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "该怎么说呢，我当然没有怀疑那个计划的意思……",
+   "scene_id": "",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "那不就成了返乡了？",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "别，别这么突然地夸我……",
+   "scene_id": "",
+   "target": "self",
+   "scene_type": "compliment_reaction",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "欸？啊，不是。 ……只是，稍微有些感慨",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "说起来，为什么连小梨子都来了？",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "历小姐和小伊吕波！？",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "immediate_reaction",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "我明明都催过你了……",
+   "scene_id": "在对手的身旁",
+   "target": "self",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "呵呵，谢谢你。",
+   "scene_id": "心菜，烦恼中",
+   "target": "event",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "可我却想要和你同台演出……！",
+   "scene_id": "一人二役",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "我们原本……就是两人一体的存在啊",
+   "scene_id": "一人二役",
+   "target": "self",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "能听你说想和我同台演出 推着我前进，我真的好开心",
+   "scene_id": "落泪",
+   "target": "emotion",
+   "scene_type": "stage_talk",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……我知道了",
+   "scene_id": "落泪",
+   "target": "self",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "……谢谢你",
+   "scene_id": "谢谢",
+   "target": "event",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "但是，非常开心。",
+   "scene_id": "心菜的过去",
+   "target": "emotion",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……嗯。那就约好了。",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "event",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "嗯。虽然基本上演的都是熟悉的剧目或者童话， 但偶尔也会即兴表演突发奇想的设定。",
+   "scene_id": "既是个性，也是演员",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……。",
+   "scene_id": "默剧",
+   "target": "event",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……不过有机会的话……或许可以展示给她看。",
+   "scene_id": "镜中互映的二人",
+   "target": "event",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……。",
+   "scene_id": "彼此交换的承诺",
+   "target": "event",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……嗯。对，……很开心。",
+   "scene_id": "",
+   "target": "emotion",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……我也是这样，吗。 难得的旅行，不坦率的享受可不行。",
+   "scene_id": "",
+   "target": "self",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "玩笑·玩心"
+  },
+  {
+   "text": "心菜……",
+   "scene_id": "正因平淡而珍贵",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "啊，心菜……！",
+   "scene_id": "心菜，烦恼中",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "我不想再看到这样的心菜了",
+   "scene_id": "一人二役",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "心菜……",
+   "scene_id": "落泪",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "心菜……",
+   "scene_id": "谢谢",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "是啊，和彩排时的演技真是判若两人",
+   "scene_id": "谢谢",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "心菜……",
+   "scene_id": "天狼星期待的新人",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "嗯……！ 我也一样，想更多更多地在心菜身边表演！",
+   "scene_id": "天狼星期待的新人",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "心菜……。",
+   "scene_id": "潘达的提议",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "看起来很孤单……虽然她在舞台上假装笑着， 但内心却在哭泣，演技完全不行。",
+   "scene_id": "心菜的过去",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "是啊。我看了一会儿，就会觉得心菜的演技太差， 不自觉就插嘴了……",
+   "scene_id": "心菜的过去",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "是啊。我相信现在的心菜一定能做得更好。 两个人一起努力吧。",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "心菜……",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "如果柊姐允许的话。",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "收尾"
+  },
+  {
+   "text": "心菜模仿八惠那次吧。",
+   "scene_id": "交换吧",
+   "target": "other_person",
+   "scene_type": "warm_moment",
+   "expression": "warm_response",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "……在那时，我的记忆就结束了。",
+   "scene_id": "心菜的舞台",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "一定是在那时，在那里， 我心中的魅影觉醒了。",
+   "scene_id": "魅影的觉醒",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "没关系的，都已经是过去的事情了。",
+   "scene_id": "静静埋藏的愿望",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "想起之前的事，不经意间有些得意忘形了。 谢谢你。",
+   "scene_id": "自由尝试",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "是啊……那时候确实说过。",
+   "scene_id": "既是个性，也是演员",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "你表演壳中雏鸟时， 唤起了我的回忆。所以我才决定尝试镜中表演的。",
+   "scene_id": "镜中互映的二人",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "我无法忍受我最喜欢的舞台变形。 所以在那时，我……",
+   "scene_id": "静静埋藏的愿望",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "我是个性。我是心菜在舞台上所需要的装置。 我曾经认为，我就是为了这一天而诞生的。",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "收尾"
+  },
+  {
+   "text": "这个话题怎么还没过去？",
+   "scene_id": "接下来的舞台是",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "是啊！不觉得很过分吗？明明小时候一直都在一起演戏！",
+   "scene_id": "魅影的觉醒",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "即时吐槽"
+  },
+  {
+   "text": "……我们从今以后会变成怎样呢。 与过去截然不同的我们，究竟该怎么做才好呢。",
+   "scene_id": "夜晚，光风霁月的舞台",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "当心菜失去自信时，我苏醒了。 那时候，我就已经知道自己是谁了。",
+   "scene_id": "二人的理想。同一个心愿",
+   "target": "memory",
+   "scene_type": "recollection",
+   "expression": "self_expression",
+   "continuation_risk": 1,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "毕竟它也陪着我们过了一整场试镜呀。",
+   "scene_id": "战利品",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "observation",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "倒也不至于。 不过，她一直把自己卷在被窝里……",
+   "scene_id": "正因平淡而珍贵",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "observation",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "但也因此得到了犒劳啦。",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "observation",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "我偶尔会和心菜练这个。 卡特莉娜是那种会提前仔细准备的类型吧。",
+   "scene_id": "会场之中",
+   "target": "other_person",
+   "scene_type": "everyday_event",
+   "expression": "observation",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "心菜，你的手机在响。",
+   "scene_id": "",
+   "target": "other_person",
+   "scene_type": "everyday_event",
+   "expression": "observation",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "这是在演绎什么呢……？ 蛋壳里的样子吗……？",
+   "scene_id": "默剧",
+   "target": "object",
+   "scene_type": "everyday_event",
+   "expression": "observation",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "那就是说、我们皆出于不同的理由而来内浦的吗？ 太巧了吧。",
+   "scene_id": "内浦湾",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "observation",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "普通观察"
+  },
+  {
+   "text": "嗯…… 但是，果然还是会有点担心……",
+   "scene_id": "那是昏暗的水底",
+   "target": "emotion",
+   "scene_type": "emotional_moment",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "对呀……而掀起这股排山倒海的掌声的 毫无疑问，就是我们的主角。",
+   "scene_id": "相信自己",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "但我却扭曲了这一切",
+   "scene_id": "一人二役",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "不，一点都不奇怪",
+   "scene_id": "一人二役",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……如果我没有许下那个约定的话。",
+   "scene_id": "一人二役",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "并不是放弃。 我只是觉得，这才是我们最幸福的样子",
+   "scene_id": "一人二役",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "能听你说想和我同台演出 推着我前进，我真的好开心",
+   "scene_id": "一人二役",
+   "target": "emotion",
+   "scene_type": "stage_talk",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "并不是放弃。 我只是觉得，这才是我们最幸福的样子",
+   "scene_id": "落泪",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "…………",
+   "scene_id": "天狼星期待的新人",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "总觉得有点害怕…… 走在街上感觉一直被人盯着……",
+   "scene_id": "天狼星期待的新人",
+   "target": "emotion",
+   "scene_type": "emotional_moment",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "要这么说的话我也是",
+   "scene_id": "一人二役・彩",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "随着演出次数的增加，不断有新的理解产生 真希望公演能一直持续下去……",
+   "scene_id": "一人二役・彩",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "真是的……你就爱在这种时候撒娇",
+   "scene_id": "一人二役・彩",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "你有个性的！ 真的……你有的！我知道的……",
+   "scene_id": "二人的理想。同一个心愿",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "最开始只是，感到非常后悔。",
+   "scene_id": "静静埋藏的愿望",
+   "target": "emotion",
+   "scene_type": "emotional_moment",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "我会把这份感情还给你。",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "呵呵。 确实，今天还挺开心的。",
+   "scene_id": "既是个性，也是演员",
+   "target": "emotion",
+   "scene_type": "emotional_moment",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "虽然不是很想大声宣扬……但作为个性的我， 很少在大家面前表演，总觉得挺新鲜的。",
+   "scene_id": "既是个性，也是演员",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "默剧啊。 平时很少接触所以我还挺感兴趣的。",
+   "scene_id": "默剧",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……谢谢。",
+   "scene_id": "镜中互映的二人",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "我……没问题。 不如说还处于兴奋状态吧。",
+   "scene_id": "彼此交换的承诺",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……总算顺利结束了……太好了……",
+   "scene_id": "彼此交换的承诺",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "维持现状是好是坏， ……这才是问题所在。",
+   "scene_id": "彼此交换的承诺",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "是啊、没想到能这么巧。",
+   "scene_id": "内浦湾",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "啊……我只是想稍微整理一下自己的思绪。 抱歉，突然离席让你们担心了吧。",
+   "scene_id": "第零步",
+   "target": "other_person",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……这样啊，谢谢你。",
+   "scene_id": "第零步",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "嗯。",
+   "scene_id": "第零步",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "梦想实现了，我曾在心中描绘的未来终于成为了现实 我本应感到高兴才对——",
+   "scene_id": "第零步",
+   "target": "emotion",
+   "scene_type": "emotional_moment",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "有时，我会感到非常不安。 明明我此前从未想过要放弃的梦想，现在终于实现了。",
+   "scene_id": "第零步",
+   "target": "emotion",
+   "scene_type": "emotional_moment",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "实现大家的梦想……",
+   "scene_id": "夜晚，光风霁月的舞台",
+   "target": "other_person",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "你真了不起。 我就根本想不了这么远。",
+   "scene_id": "夜晚，光风霁月的舞台",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "不过，我也觉得这趟旅途很愉快。",
+   "scene_id": "从零到一",
+   "target": "self",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "多亏了你们俩，才有了这趟愉快的旅行。 我甚至有些舍不得离开了。",
+   "scene_id": "从零到一",
+   "target": "other_person",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "……嗯。",
+   "scene_id": "从零到一",
+   "target": "event",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "毕竟我是心菜的个性嘛。",
+   "scene_id": "排练，进行中",
+   "target": "other_person",
+   "scene_type": "everyday_event",
+   "expression": "self_expression",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "自我表达"
+  },
+  {
+   "text": "可是……",
+   "scene_id": "落泪",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "可是，我——",
+   "scene_id": "落泪",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "啊……",
+   "scene_id": "落泪",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "我……",
+   "scene_id": "气魄",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "大家……",
+   "scene_id": "如今我站在这里",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……嗯！",
+   "scene_id": "如今我站在这里",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "是啊",
+   "scene_id": "一人二役・彩",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "是啊……",
+   "scene_id": "潘达的提议",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "是、是啊……",
+   "scene_id": "静香所不知道的记忆",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "诶……。",
+   "scene_id": "全新的梦想，二人的约定",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "也就是说——",
+   "scene_id": "交换吧",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "那太好了。",
+   "scene_id": "研习会",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "……。",
+   "scene_id": "会场之中",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "――！",
+   "scene_id": "即兴剧",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "嗯……谢谢你",
+   "scene_id": "既是个性，也是演员",
+   "target": "event",
+   "scene_type": "compliment_reaction",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "好的！",
+   "scene_id": "镜中互映的二人",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "表演结束。",
+   "scene_id": "镜中互映的二人",
+   "target": "task",
+   "scene_type": "stage_talk",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "啊……",
+   "scene_id": "镜中互映的二人",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……。",
+   "scene_id": "彼此交换的承诺",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "嗯。",
+   "scene_id": "彼此交换的承诺",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "──但是。",
+   "scene_id": "彼此交换的承诺",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "但是……",
+   "scene_id": "彼此交换的承诺",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……是啊。",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……",
+   "scene_id": "",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……。",
+   "scene_id": "演员与海与少女们",
+   "target": "event",
+   "scene_type": "compliment_reaction",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "……。",
+   "scene_id": "浪声",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "嗯。谢谢。",
+   "scene_id": "浪声",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "……",
+   "scene_id": "第零步",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……",
+   "scene_id": "夜晚，光风霁月的舞台",
+   "target": "event",
+   "scene_type": "compliment_reaction",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "谢谢你。",
+   "scene_id": "夜晚，光风霁月的舞台",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "收尾"
+  },
+  {
+   "text": "这意思是……",
+   "scene_id": "跃进的第一步",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "嗯……",
+   "scene_id": "从零到一",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "犹豫·脆弱"
+  },
+  {
+   "text": "嗯。",
+   "scene_id": "从零到一",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……心菜",
+   "scene_id": "落泪",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "谢谢流石。",
+   "scene_id": "自由尝试",
+   "target": "other_person",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "收尾"
+  },
+  {
+   "text": "……卡特莉娜",
+   "scene_id": "既是个性，也是演员",
+   "target": "other_person",
+   "scene_type": "compliment_reaction",
+   "expression": "minimal",
+   "continuation_risk": 0,
+   "scene_dependency": "medium",
+   "behavior": "被夸奖时的反应"
+  },
+  {
+   "text": "什么意思？",
+   "scene_id": "位于决心前方的是",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "……欸？",
+   "scene_id": "落泪",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "欸……？",
+   "scene_id": "一人二役・彩",
+   "target": "event",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  },
+  {
+   "text": "我们的……？",
+   "scene_id": "潘达的提议",
+   "target": "self",
+   "scene_type": "immediate_scene",
+   "expression": "minimal",
+   "continuation_risk": 1,
+   "scene_dependency": "low",
+   "behavior": "反应性发言"
+  }
+ ]
+}

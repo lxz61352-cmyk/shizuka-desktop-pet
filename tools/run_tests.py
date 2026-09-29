@@ -5,6 +5,9 @@ root=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(root/'src'))
 with tempfile.TemporaryDirectory(prefix='shizuka-unit-') as folder:
     os.environ['SHIZUKA_DATA_DIR']=folder
+    # Legacy fixtures are isolated from the checkout's selected chat profile.
+    # Tests for newer profiles select them explicitly within each test.
+    os.environ['SHIZUKA_DIALOGUE_PROFILE']='legacy'
     result=unittest.TextTestRunner().run(unittest.defaultTestLoader.discover(str(root/'tests')))
     code=0 if result.wasSuccessful() else 1
 # 测试结果已经拿到了，直接硬退出：正常退出时 Tk 拆解释器会在别的线程上触发

@@ -6,7 +6,7 @@ from tkinter import ttk,messagebox
 from tkinter.scrolledtext import ScrolledText
 from todo_model import CATEGORIES
 from todo_schedule import rule_label
-from ui_theme import apply,copy_bindings
+from ui_theme import apply,copy_bindings,page_header
 
 REPEATS=('不重复','每天','每周','每月','工作日','每天直到完成')
 
@@ -17,8 +17,9 @@ class TodoEditorMixin:
         self._todo_init();parent=self._todo_win or self.root
         win=self._todo_editor_win=tk.Toplevel(parent);win.transient(parent);win.attributes('-topmost',True)
         win.title('编辑待办' if item else '新建待办');win.minsize(600,680);self._place_dialog(win,640,740)
+        page_header(win,'编辑待办' if item else '新建待办').pack(fill='x')
         options=self._todo_options(item) if item else {'category':'生活','desktop':True,'weixin':True}
-        schedule=options.get('schedule',{});rule=schedule.get('rule');body=ttk.Frame(win,padding=18);body.pack(fill='both',expand=True)
+        schedule=options.get('schedule',{});rule=schedule.get('rule');body=ttk.Frame(win,padding=(22,0,22,18));body.pack(fill='both',expand=True)
         def row():
             frame=ttk.Frame(body);frame.pack(fill='x',pady=7);return frame
         ttk.Label(body,text='标题').pack(anchor='w')

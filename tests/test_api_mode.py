@@ -1,5 +1,6 @@
 """接口类型（chat / response）：形状翻译、流式伪装、失败回退、设置读写。"""
 from pathlib import Path
+import gc
 import json
 import sys
 import tempfile
@@ -262,6 +263,8 @@ class ApiWindowTests(unittest.TestCase):
             self.root.destroy()
         except Exception:
             pass
+        self.root = None
+        gc.collect()
         self.tmp.cleanup()
 
     def _shim(self):

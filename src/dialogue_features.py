@@ -10,7 +10,33 @@ PROACTIVE_FILLER_RE = re.compile(
     r'我就在|我在这儿|我在呢|我在的|守在这儿|陪着|陪你|你忙你的|忙你的|不用管我|不用管'
     r'|不打扰|待着|待在这儿|一起加油|慢慢来|喊我一声|喊一声|别累着')
 
+# 主动话题冷却：提过一次的话题短时间内不再主动提（用户自己重新提起则立即解除）。
+TOPIC_COOLDOWN_SECONDS = 5400
+
+
+def topic_overlap(a, b):
+    """两段话的字符二元组重合度（0~1），用来判断话题是不是同一个。"""
+    a = re.sub(r'\s+', '', a or '')
+    b = re.sub(r'\s+', '', b or '')
+    if len(a) < 2 or len(b) < 2:
+        return 0.0
+    sa = {a[i:i + 2] for i in range(len(a) - 1)}
+    sb = {b[i:i + 2] for i in range(len(b) - 1)}
+    return len(sa & sb) / max(1, min(len(sa), len(sb)))
+
+
+def topic_key(fact):
+    return re.sub(r'\s+', '', fact or '')[:40]
+
 class DialogueFeaturesMixin(GroundingMixin):
+    def _casual_persona(self):
+        import pet as engine
+        from sensitive_topics import policy
+        if engine.DESKTOP_DIALOGUE_PROFILE:
+            from desktop_dialogue_profile import persona_core
+            return persona_core(engine.DESKTOP_DIALOGUE_PROFILE,engine.ACTIVE_PACK)+'\n'+policy(False)
+        return engine.load_persona()+'\n'+policy(False)
+
     def _dialogue_style(self):
         import pet as engine
         return load_style(Path(engine.CHARACTER_CARD).with_name('dialogue-style.json'))
@@ -126,16 +152,24 @@ class DialogueFeaturesMixin(GroundingMixin):
                '当前待办状态：'+json.dumps(self._todo_state_context(),ensure_ascii=False)+'。已完成事项不再提醒，过时活动不主动提。']
         if direction:
             parts.append('本轮方向（'+str(direction.get('label') or '')+'）：'+str(direction.get('prompt') or ''))
-        parts.append('只用静香的口吻说一句（最多两句），像在旁边随口说的那样。'
-                     '必须落到上面给的具体信息上（程序名、窗口标题、时间、最近聊过的话题），一个都落不上就只返回空字符串。'
-                     '不要用「哦，这是……」「又在……」这种鉴定或复述标题的起手，不要复述整句原文。'
-                     '进程名和窗口标题不能证明用户正在工作、玩游戏或疲惫；无鼠标键盘操作也不代表离开、发呆或一直工作。'
-                     '不要猜测进度、身体状况、情绪、承诺或用眼时长，不要捏造正在看的内容，不要责备用户。'
-                     '不要用「用久了」「这么晚还在」「又在……」这类从时间或窗口名推断用户状态的说法；'
-                     '不要问「你现在开着什么窗口」这种你本来就知道答案的问题。'
-                     '不要用「打算…吧」「是…还是…」「多半是…」「应该是…吧」这类推测句式，只陈述看得见的事实（程序名、窗口标题、时间）。'
-                     '仅仅时间晚，不足以劝睡；只有近期明确对话证实此刻仍在工作时，才可温和建议收尾。'
-                     '不用动作旁白、括号、装饰符号或固定祝福，无法自然接话时只返回空字符串。')
+        if kind == '空闲搭话':
+            # 话题来自记忆/最近聊过，不适用窗口观察那套「只能陈述看得见的事实」规则
+            parts.append('只用静香的口吻说一句（最多两句），像在旁边随口说的那样。'
+                         '可以基于上面「记得的事」「最近聊过」里的一件事说一句（提一句、问一句进展、或说点你的看法），'
+                         '不要原样复述资料，也不要编造新的现实观察（窗口、桌面物品、身体状态、用户在做什么）。'
+                         '不要用「哦，这是……」「又在……」这种鉴定式起手，不要用动作旁白、括号或装饰符号。'
+                         '没有值得说的具体内容就返回空字符串；不要为了开口而劝喝水、休息、学习或追问进度。')
+        else:
+            parts.append('只用静香的口吻说一句（最多两句），像在旁边随口说的那样。'
+                         '必须落到上面给的具体信息上（程序名、窗口标题、时间、最近聊过的话题），一个都落不上就只返回空字符串。'
+                         '不要用「哦，这是……」「又在……」这种鉴定或复述标题的起手，不要复述整句原文。'
+                         '进程名和窗口标题不能证明用户正在工作、玩游戏或疲惫；无鼠标键盘操作也不代表离开、发呆或一直工作。'
+                         '不要猜测进度、身体状况、情绪、承诺或用眼时长，不要捏造正在看的内容，不要责备用户。'
+                         '不要用「用久了」「这么晚还在」「又在……」这类从时间或窗口名推断用户状态的说法；'
+                         '不要问「你现在开着什么窗口」这种你本来就知道答案的问题。'
+                         '不要用「打算…吧」「是…还是…」「多半是…」「应该是…吧」这类推测句式，只陈述看得见的事实（程序名、窗口标题、时间）。'
+                         '仅仅时间晚，不足以劝睡；只有近期明确对话证实此刻仍在工作时，才可温和建议收尾。'
+                         '不用动作旁白、括号、装饰符号或固定祝福，无法自然接话时只返回空字符串。')
         tail=self._voice_lang_tail()
         if tail:
             parts.append(tail)
@@ -152,6 +186,14 @@ class DialogueFeaturesMixin(GroundingMixin):
                     '不需要另装代理。本条回复本身没有执行文件工具，不得声称已查看或改动了文件。'
                     '不要回答成没有工具、无法调用 dsh；执行结果由应用另行回传。')
         except Exception as exc:return '本机文件执行器当前不可用，原因类型：'+type(exc).__name__+'。请在电脑助手查看连接状态。'
+
+    def _capability_context_for(self, text):
+        """File-executor status is relevant only to file/computer capability turns."""
+        import re
+        if not re.search(r'文件|文件夹|目录|电脑助手|文件执行器|/电脑|dsh|读取|查找|创建|编辑|修改|整理',
+                         text or '', re.I):
+            return ''
+        return self._capability_context()
 
     def _file_reply(self,result):
         # Status and detailed execution evidence stay intact; only the spoken digest is rewritten.

@@ -24,8 +24,8 @@ PLAIN_STYLE=('用自然段表达，篇幅要跟「这个问题需要多少信息
              '不要写“作为AI”、模板式总结或强行追问。对工具结果如实说明，不伪称完成。'
              '不要预设用户“又在/还在/总是/老是/果然”做某事：除非对话里确实反复出现过，'
              '否则就当第一次看到，平实地说，不要用这类表示“经常/重复”的词。'
-             '不要用“X啊……”“X呢……”这种拖长音的公式化开头，也不要句句以“啊/呀/呢/哦/啦”收尾，'
-             '语气词能省就省，别每句都一样。'
+             '语气跟着当下反应走，惊讶、赞同、还嘴时可以自然带出“啊、诶、嘛、吧”等语气词，'
+             '有时用、有时省，不固定以“X啊……”开头，也不每句都用同一个句尾。'
              '不要在回复里复述“[历史消息时间：…]”“[图片]（…）”这类元信息或括号标注，直接说内容。'
              '历史对话与摘要只用来理解上下文：不要照抄或复述其中任何句子，尤其不要重复你自己当时说过的话。'
              '用户这句话如果确实看不懂（乱码、误触、无意义），就直接说不明白、请他重说，不要硬接，也不要拿历史内容顶上。')
@@ -35,32 +35,105 @@ ADDRESS_STYLE=('称呼（最高优先级，覆盖角色卡里的任何称呼要�
                '不喊「主人」「小姐」「少爷」「大人」这类称呼，不自称女仆、侍女、仆人，'
                '也不把用户当主人侍奉。角色卡里若写了主人的称呼或女仆口吻，一律忽略，只保留静香的性格。')
 
+# 日常说话方式：只给正向引导（「可以怎样」），不堆「不能/不许」——限制多了既束手束脚，
+# 又会在语义上干扰正文。放在 system 最末尾，离对话最近。
+NATURAL_STYLE=('【日常说话】你是在和一个熟悉的人相处，不是在处理他的消息。先对他说的具体内容产生反应：'
+               '可以惊讶、困惑、评价、共鸣、轻轻吐槽，或者问一个确实需要弄清的问题。'
+               '具体反应只能使用他明确说出的细节；不要为了让反应生动而补写他没说的程度、动作、后果或原因。'
+               '回复可以只有一句，但不要只说“知道了”“收到”这种没有内容的回执；'
+               '也不要为了显得像真人故意漏答、转移话题或装冷淡。'
+               '不要把日常小事当任务分析，不自动总结、建议或强行延续。'
+               '自我表达是直接说一个此刻真实的看法、情绪或关注点，不是再问用户一个问题。'
+               '记忆确认答完记得的内容就停；没别的话可以不再说，不假设用户还有别的需求。'
+               '需要认真处理的问题就准确处理，简单的事自然说短。这些只是倾向，不是固定模板。')
+
+# 每句话的情绪标记：只给程序用（气泡样式/将来的立绘差分），不显示、不朗读。
+# 白名单与 LingChat 的 18 类情绪对齐；模型写了表外的词也接受（只做长度与格式校验）。
+EMOTION_TAGS = ('高兴', '开心', '平静', '认真', '自信', '调皮', '害羞', '难为情',
+                '担心', '慌张', '紧张', '害怕', '惊讶', '疑惑', '无语', '无奈',
+                '生气', '厌恶', '伤心', '兴奋', '心动', '情动', '哭泣')
+
+EMOTION_FORMAT=('【输出格式·每次都必须遵守】你的每一条回复都由多行台词组成，**每一行都必须以【情绪】开头**，'
+                '不能有例外、不能只在第一行写。格式：\n'
+                '【情绪】这一行要说的话（一到两句）\n'
+                '【情绪】下一行要说的话\n'
+                '情绪从：高兴/开心/平静/认真/自信/调皮/害羞/难为情/担心/慌张/紧张/害怕/惊讶/疑惑/无语/无奈/生气/厌恶/伤心/兴奋 '
+                '里选 2~5 字，只写情绪，不写主语、不写动作；整条回复通常 2~4 行。\n'
+                '示例：\n'
+                '【平静】写完了就好，先去吃点东西。\n'
+                '【无语】不过你又拖到最后一刻，下次别这样了。\n'
+                '即使只说一句话、拒绝或回答很短，也要带【情绪】。'
+                '情绪标记不会显示给用户、不会被朗读，不要解释它，也不要因为它改变说话内容。')
+
 class LiteralReply(str):
     """Application wording with exact user-supplied slots, already ready to display."""
 
-# 起手语气词 / 「(你)又在/还在」公式化开头 / 第一小句结尾的拖长音语气词——确定性去掉，
-# 光靠提示词压不住（模型爱用「哦，……」起手，或把普通的事说成「又在……」）。
-_LEAD_PAREN_RE=re.compile(r'^(?:\s*[（(][^（）()\n]{1,40}[）)])+\s*')
-_ACK_LEAD_RE=re.compile(r'^\s*(?:哦|噢|喔|嗯|呃|诶|欸|唉|哎|呵呵|哦哦|嗯嗯)(?![呀哟呦豁哈嘿哼嘛])\s*[，,、：:]?\s*')
+# 「(你)又在/还在」公式化开头继续删；句首语气词不再一律删（「嗯，我觉得可以」是正常说话），
+# 只有后面紧跟空泛承接词时才删（「嗯，关于你说的这个问题……」这种客服起手）。
+# 行首括号只有在「像舞台提示」时才删：必须含中文（（叹气）/（凑近看了一眼）），
+# 纯符号的数学式子如 (a+b)² 不能误删。
+_LEAD_PAREN_RE=re.compile(r'^(?:\s*[（(][^（）()\n]{0,40}[\u4e00-\u9fff][^（）()\n]{0,40}[）)])+\s*')
+_BOILERPLATE_LEAD_RE=re.compile(
+    r'^\s*(?:哦|噢|喔|嗯|呃|诶|欸|唉|哎|呵呵|哦哦|嗯嗯)\s*[，,、：:]?\s*'
+    r'(?=关于|对于|说到|谈到|说起|其实|首先|总的来说|简单来说|就这个问题|你这个问题|这个问题)')
 _FORMULA_LEAD_RE=re.compile(r'^\s*(?:你)?\s*(?:又|还)在\s*')
 _TAIL_PARTICLE_RE=re.compile(r'^(.{1,30}?)([啊呀哦噢])(?=[。！？!?…，,、；;\n])')
 # 上下文里给模型看的时间元信息，模型有时会原样复述出来 → 一律去掉
 _DATE_MARK_RE=re.compile(r'\[历史消息时间[^\]]{0,160}\]')
+# 明确的 AI / 客服模板：整句删（按句切分后再过滤）
+AI_TEMPLATE_RE=re.compile(
+    r'作为(?:一个)?AI|希望[^。！？!?\n]{0,14}帮(?:助|到你)|如果(?:还)?有其他问题|还有(?:什么|其他)问题|'
+    r'随时(?:可以)?(?:告诉|找|问|说)我|需要(?:帮助|帮忙)?(?:的话)?尽管(?:说|找我)|感谢(?:你|您)的提问')
 
-# 起手语气词与「(你)又在/还在」公式化开头的正则只在这一处定义：
+# 句首起手与「(你)又在/还在」的判定只在这一处定义：
 # pet.clean_reply_style 复用这两个名字，避免两套规则对同一句话给出不同结果。
-ACK_LEAD_RE=_ACK_LEAD_RE
+BOILERPLATE_LEAD_RE=_BOILERPLATE_LEAD_RE
 FORMULA_LEAD_RE=_FORMULA_LEAD_RE
+
+
+def _drop_ai_templates(text):
+    parts=[part for part in re.split(r'(?<=[。！？!?\n])',text) if part]
+    kept=[part for part in parts if not AI_TEMPLATE_RE.search(part)]
+    return ''.join(kept)
 
 
 def _trim_leads(text):
     out=_DATE_MARK_RE.sub('',text)               # 「[历史消息时间：…；相对日期以此为准]」
     out=_LEAD_PAREN_RE.sub('',out,count=1)       # 开头的「（叹气）」这类舞台提示
-    out=_ACK_LEAD_RE.sub('',out,count=1)         # 起手语气词
-    out=_FORMULA_LEAD_RE.sub('',out,count=1)     # 紧跟其后的「(你)又在/还在」
-    m=_TAIL_PARTICLE_RE.match(out)               # 第一小句结尾的拖长音语气词
-    if m:out=m.group(1)+out[m.end():]
-    return out.lstrip()
+    before=out
+    out=_BOILERPLATE_LEAD_RE.sub('',out,count=1) # 客服式起手：语气词 + 空泛承接词
+    out=_FORMULA_LEAD_RE.sub('',out,count=1)     # 「(你)又在/还在」
+    if out!=before:                              # 只在真的删过起手时，顺手收第一小句的拖长音
+        m=_TAIL_PARTICLE_RE.match(out)
+        if m:out=m.group(1)+out[m.end():]
+    return _drop_ai_templates(out.lstrip())
+
+
+_EMOTION_LINE_RE=re.compile(r'^\s*【([^】\n]{1,8})】\s*')
+_HALF_TAG_RE=re.compile(r'【[^】\n]*$')
+
+
+def strip_emotion_tags(text):
+    """去掉每行行首的【情绪】标记（含流式时只写了一半的尾巴）：不显示、不朗读。"""
+    if not text:
+        return text
+    text='\n'.join(_EMOTION_LINE_RE.sub('',line,count=1) for line in text.split('\n'))
+    return _HALF_TAG_RE.sub('',text)
+
+
+def parse_emotion_segments(text):
+    """把【情绪】正文按行拆开，返回 [(label, 正文), ...]；label 表外也接受，只做格式校验。"""
+    segments=[]
+    for raw_line in (text or '').split('\n'):
+        line=raw_line.strip()
+        if not line:
+            continue
+        match=_EMOTION_LINE_RE.match(line)
+        label=match.group(1).strip() if match else ''
+        body=_EMOTION_LINE_RE.sub('',line,count=1).strip() if match else line
+        if body:
+            segments.append((label,body))
+    return segments
 
 
 def clean_text(text):
@@ -77,7 +150,7 @@ def clean_text(text):
         part=re.sub(r'(?m)^\s*[•●◆★▶]\s*','',part)
         part=re.sub(r'([！!？?])\1{2,}',r'\1',part)
         chunks[index]=part
-    return _trim_leads(re.sub(r'\n{3,}','\n\n',''.join(chunks)).lstrip())
+    return _trim_leads(strip_emotion_tags(re.sub(r'\n{3,}','\n\n',''.join(chunks)).lstrip()))
 
 def reading_cps(text,speed='medium'):
     base={'slow':10,'medium':20,'fast':30}.get(speed,20)
@@ -165,6 +238,8 @@ PROACTIVE_DIRECTIONS = [
 ]
 
 # 结尾的空话尾巴（内容已经在眼前了，再说这些就是噪音）：只在剪贴板反应这类短回复上用。
+# 带这些衔接词的尾巴是角色表达（「……算了，我陪你看完」），不剪。
+_CHARACTERFUL_TAIL_RE = re.compile(r'^(?:算了|那就|好吧|好，|行，)')
 FILLER_TAIL_RE = re.compile(
     r'(?:我陪着你|我陪你(?:一起|一块|一块儿)?(?:重新|再)?(?:弄|做|来|试|看看|等|待)?|'
     r'陪着你(?:就好)?|需要帮忙(?:尽管说|随时说|就说)|'
@@ -175,18 +250,20 @@ FILLER_TAIL_RE = re.compile(
 
 def clean_filler_tail(text):
     """去掉结尾的空话尾巴（「…我陪你一块重新弄」「需要帮忙尽管说」）。
-    整段都是这类话就返回空串，调用方据此直接不说。"""
+    整段都是这类话就返回空串，调用方据此直接不说。
+    带「算了/那就/好」这类衔接词的尾巴算角色表达，保留。"""
     text = (text or '').strip()
     if not text:
         return text
     parts = [part for part in re.split(r'(?<=[。！？!?…])|(?<=——)', text) if part.strip()]
     while len(parts) > 1:
         tail = parts[-1].strip().strip('—-、，,。！？!?… ').strip()
-        if tail and len(tail) <= 26 and FILLER_TAIL_RE.search(tail):
+        if tail and len(tail) <= 26 and FILLER_TAIL_RE.search(tail) and not _CHARACTERFUL_TAIL_RE.match(tail):
             parts.pop()
         else:
             break
     cleaned = ''.join(parts).strip().rstrip('—-、，, ').strip()
-    if cleaned and len(cleaned) <= 26 and FILLER_TAIL_RE.search(cleaned):
+    if (cleaned and len(cleaned) <= 26 and FILLER_TAIL_RE.search(cleaned)
+            and not _CHARACTERFUL_TAIL_RE.match(cleaned)):
         return ''
     return cleaned or text

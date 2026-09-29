@@ -91,18 +91,34 @@ class WeatherReportTests(unittest.TestCase):
         self.assertEqual(result["city"], "四川朝阳区")
 
     def test_network_failure_is_reported_as_no_network(self):
-        self.assertEqual(self.report(("四川", "成都"), "56294")["reason"], "no-network")
+        result = self.report(("四川", "成都"), "56294")
+        self.assertEqual(result["reason"], "no-network")
+        self.assertEqual(result["fetched_at"], "")
 
     def test_domestic_network_prefers_cma(self):
         result = self.report(("四川", "成都"), "56294", net="direct", texts=("外网天气", "气象局天气"))
         self.assertEqual(result["source"], "cma")
         self.assertEqual(result["text"], "气象局天气")
         self.assertEqual(result["reason"], "")
+        self.assertRegex(result["fetched_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d[+-]\d\d:\d\d$")
 
     def test_foreign_network_prefers_open_meteo(self):
         result = self.report(("", "Chengdu"), None, net="proxy", texts=("外网天气", ""))
         self.assertEqual(result["source"], "open-meteo")
         self.assertEqual(result["text"], "外网天气")
+
+    def test_answer_prompt_uses_actual_source_and_query_time(self):
+        report = {"city": "成都", "text": "小雨", "source": "open-meteo",
+                  "fetched_at": "2026-09-25T09:30:00+08:00"}
+        prompt = weather_features.weather_answer_prompt("要带伞吗", report, "2026-09-25 09:30:01")
+        self.assertIn("数据来源：Open-Meteo", prompt)
+        self.assertIn("本机查询完成时间：2026-09-25T09:30:00+08:00", prompt)
+        self.assertIn("不是气象观测时间", prompt)
+        self.assertIn("没有降雨概率就说没有这个数据", prompt)
+        self.assertIn("用户问明天时，仅引用回执中的明天预报", prompt)
+        fallback = weather_features.weather_fallback_reply(report)
+        self.assertIn("Open-Meteo", fallback)
+        self.assertIn("2026-09-25T09:30:00+08:00", fallback)
 
     def test_domestic_falls_back_to_open_meteo_when_network_is_reachable(self):
         result = self.report(("四川", "成都"), None, net="direct", texts=("外网天气", ""))
@@ -131,6 +147,51 @@ class GreetingFallbackTests(unittest.TestCase):
         holder = self.device(None)
         with patch.object(weather_features.random, "random", return_value=0.0):
             self.assertEqual(holder._greeting_weather(), "")
+
+
+class WeatherFollowupTests(unittest.TestCase):
+    def holder(self):
+        holder = weather_features.WeatherNewsMixin()
+        holder._last_weather_receipt = {
+            "report": {"city": "成都", "text": "明天阴，22~28°C",
+                       "source": "open-meteo", "fetched_at": "2026-09-25T11:04:16+08:00"},
+            "at": 1000.0, "conv": "c1"}
+        return holder
+
+    def test_immediate_followup_keeps_actual_tool_receipt_visible(self):
+        with patch.object(weather_features.time, "time", return_value=1001.0):
+            note = self.holder()._weather_followup_fact("如果搜不到就直说", "c1")
+        self.assertIn("来源：Open-Meteo", note)
+        self.assertIn("本机查询完成时间：2026-09-25T11:04:16+08:00", note)
+        self.assertIn("不要声称看不到工具回执", note)
+
+    def test_stale_or_unrelated_receipt_is_not_injected(self):
+        with patch.object(weather_features.time, "time", return_value=2000.0):
+            self.assertEqual(self.holder()._weather_followup_fact("刚才呢", "c1"), "")
+        with patch.object(weather_features.time, "time", return_value=1001.0):
+            self.assertEqual(self.holder()._weather_followup_fact("拉面真咸", "c1"), "")
+
+
+class SharedWeatherReplyTests(unittest.TestCase):
+    def test_sync_core_returns_grounded_fallback_for_both_channels(self):
+        holder = weather_features.WeatherNewsMixin()
+        holder._conv_id = "c1"
+        report = {"city": "成都", "text": "多云 17°C", "source": "open-meteo",
+                  "fetched_at": "2026-09-25T15:00:00+08:00", "reason": ""}
+        with patch.object(weather_features, "weather_report", return_value=report), \
+             patch("pet.get_client", side_effect=RuntimeError("offline")):
+            reply = holder._weather_reply("成都现在多少度", "c1")
+        self.assertIn("多云 17°C", reply)
+        self.assertIn("Open-Meteo", reply)
+        self.assertEqual(holder._last_weather_receipt["report"], report)
+
+    def test_sync_core_drops_stale_desktop_conversation(self):
+        holder = weather_features.WeatherNewsMixin()
+        holder._conv_id = "new"
+        report = {"city": "成都", "text": "多云", "source": "open-meteo",
+                  "fetched_at": "now", "reason": ""}
+        with patch.object(weather_features, "weather_report", return_value=report):
+            self.assertIsNone(holder._weather_reply("天气怎么样", "old"))
 
 
 class FailSceneTests(unittest.TestCase):

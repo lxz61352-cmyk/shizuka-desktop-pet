@@ -4,7 +4,7 @@ import time
 import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
-from ui_theme import INK,MUTED,ACCENT,apply,copy_bindings,copy_text
+from ui_theme import INK,MUTED,ACCENT,apply,copy_bindings,copy_text,page_header
 import layered_window
 
 # 新的输入框素材：整张边框图 + 发送键（常态/按下带阴影）
@@ -21,7 +21,7 @@ CHAT_TEXT_FILL='#ffffff'  # 文字区的底色（和素材内框一致）
 CHAT_GLOW_CUT=10          # 低于这个 alpha 的柔光抹掉（只清掉几乎看不见的噪声，别削掉花纹里的柔光）
 CHAT_TOOL_W=56            # 「截图 / 文件」按钮宽度
 CHAT_TOOL_GAP=8           # 按钮之间的间距
-CHAT_ATTACH_MAX=3         # 一次最多带几个附件
+CHAT_ATTACH_MAX=6         # 一次最多带几个附件或PDF页面
 CHAT_FILE_MAX=6000        # 文本附件最多读多少字
 CHAT_IMG_EXT=('.png','.jpg','.jpeg','.gif','.bmp','.webp','.tif','.tiff')
 _chat_images=None
@@ -136,7 +136,8 @@ def _draw_attach_previews(img, right, y, height, atts):
 def _read_text_file(path):
     """按常见编码试读文本文件；二进制/读不出来返回 ''。"""
     try:
-        raw = open(path, "rb").read(400000)
+        with open(path, "rb") as handle:
+            raw = handle.read(400000)
     except Exception:
         return ""
     if b"\x00" in raw[:2000]:
@@ -161,108 +162,97 @@ class Composer(ScrolledText):
 
 class ConversationUIMixin:
     def open_chat_input(self,prefill='',interrupt=True):
+        from desktop_surface import surface,button,SURFACE
+        from ui_theme import LIGHT_INK as INK,LIGHT_MUTED as MUTED
+        from PIL import ImageTk
         self._cancel_chat_click();self._wake_pet()
         if self._chat_win is not None:
-            self._chat_win.lift();return
+            self._chat_win.lift();self._refocus_chat_entry();return
         if interrupt:self._cancel_reply()
         self.close_popup()
-        box,send_img,send_press=chat_images()
-        width,height=box.width,box.height
-        x1,y1,x2,y2=chat_text_rect(width,height)
-        # 外框走分层窗口贴原图（真逐像素 alpha，柔光不被色键糊掉）；
-        # 输入框是另一个不透明小窗，盖在素材的白色内框上。
-        frame_win=tk.Toplevel(self.root);frame_win.withdraw();frame_win.overrideredirect(True)
-        frame_win.attributes('-topmost',True)
-        win=tk.Toplevel(self.root);win.withdraw();win.overrideredirect(True);win.attributes('-topmost',True)
-        ox,oy=x1+4,y1+4
-        cw,ch=max(40,x2-x1-8),max(30,y2-y1-8)
-        entry=Composer(win,height=4,width=38,wrap='word',bg=CHAT_TEXT_FILL,fg=CHAT_INK,
-                       insertbackground=CHAT_INK,relief='flat',bd=0,padx=14,pady=10,
-                       font=('Microsoft YaHei UI',11))
-        entry.pack(fill='both',expand=True)
+        width=min(460,max(320,self.root.winfo_screenwidth()-40))
+        win,canvas,resize=surface(self.root,width,280,'发消息给静香')
+        entry=Composer(win,height=4,width=38,wrap='word',bg=SURFACE,fg=INK,
+                       insertbackground=INK,relief='flat',bd=0,padx=12,pady=10,
+                       highlightthickness=0,
+                       font=('Microsoft YaHei UI',11),spacing3=4)
+        entry.place(x=44,y=72,width=width-88,height=106)
+        entry.frame.configure(bg=SURFACE)
+        entry.vbar.configure(bg=SURFACE,troughcolor=SURFACE,bd=0,highlightthickness=0,width=9)
         entry.insert('1.0',prefill or getattr(self,'_chat_text',''));copy_bindings(entry)
-        atts=[]                      # 待发送的附件：{'kind':'image'|'text','name','data_url'|'text'}
+        atts=getattr(self,'_chat_attachment_draft',[]);self._chat_attachment_draft=atts
+        previews=ttk.Frame(win)
+        tools=ttk.Frame(win)
+        actions=ttk.Frame(win)
         def close():
-            self._chat_text=entry.get();self.close_chat_win()
+            self._chat_text=entry.get();self._save_chat_draft(self._chat_text);self.close_chat_win()
         def send(event=None):
-            text=entry.get().strip()
-            payload=list(atts)
+            text=entry.get().strip();payload=list(atts)
             if not text and not payload:return 'break'
-            self._chat_text='';atts.clear();self.close_chat_win()
+            if payload:
+                try:self._remember_attachments(payload)
+                except Exception:self._record_notice('这次附件未能存入最近材料；本轮仍会发送。','附件')
+                text=(text or '请看看这些材料。')+'\n[附件：'+'；'.join(r.get('name','图片') for r in payload)+']'
+            self._chat_text='';atts.clear();entry.delete('1.0','end');self.close_chat_win()
+            self._last_chat_submission={'text':text,'attachments':payload}
+            self._save_chat_draft('')
             self.on_chat_submit(text,attachments=payload)
             return 'break'
-        # 发送键画在外框上：常态一张、按下换带阴影那张，同尺寸同坐标只换图
-        send_x=round(width*CHAT_SEND_RIGHT)-send_img.width
-        send_y=round(height*CHAT_SEND_MID_Y)-send_img.height//2
-        btn_h=send_img.height
-        shot_x=send_x-CHAT_TOOL_GAP-CHAT_TOOL_W          # 截图键（发送键左边）
-        file_x=shot_x-CHAT_TOOL_GAP-CHAT_TOOL_W          # 文件键（再往左）
-        chip_right=file_x-CHAT_TOOL_GAP                  # 附件提示条（再往左）
-        state={'pressed':False}
-        hits=[]
-        def paint():
-            del hits[:]
-            img=box.copy()
-            img.alpha_composite(send_press if state['pressed'] else send_img,(send_x,send_y))
-            hits.append(('send',send_x,send_y,send_x+send_img.width,send_y+btn_h))
-            _draw_tool_button(img,shot_x,send_y,CHAT_TOOL_W,btn_h,'截图')
-            hits.append(('shot',shot_x,send_y,shot_x+CHAT_TOOL_W,send_y+btn_h))
-            _draw_tool_button(img,file_x,send_y,CHAT_TOOL_W,btn_h,'文件')
-            hits.append(('file',file_x,send_y,file_x+CHAT_TOOL_W,send_y+btn_h))
-            for index,x1,y1,x2,y2 in _draw_attach_previews(img,chip_right,send_y,btn_h,atts):
-                hits.append(('att:%d'%index,x1,y1,x2,y2))
-            frame_win.geometry(f'{width}x{height}')
-            frame_win.update_idletasks()
-            layered_window.set_image(frame_win,img)
-        def hit_name(event):
-            for name,x1,y1,x2,y2 in hits:
-                if x1<=event.x<=x2 and y1<=event.y<=y2:return name
-            return None
-        def on_motion(event=None):
-            frame_win.config(cursor='hand2' if hit_name(event) else '')
-        def on_press(event=None):
-            if hit_name(event)=='send':
-                state['pressed']=True;paint()
-        def on_release(event=None):
-            name=hit_name(event)
-            if state['pressed']:
-                state['pressed']=False;paint()
-                if name=='send':send()
-                return
-            if name=='shot':self.attach_screenshot(atts,paint)
-            elif name=='file':self.attach_file(atts,paint)
-            elif name and name.startswith('att:'):
-                try:del atts[int(name.split(':',1)[1])]
-                except (ValueError,IndexError):pass
-                paint()
-                self._refocus_chat_entry()
-        frame_win.bind('<Motion>',on_motion)
-        frame_win.bind('<ButtonPress-1>',on_press)
-        frame_win.bind('<ButtonRelease-1>',on_release)
+        def remove(index):
+            if 0<=index<len(atts):del atts[index]
+            refresh();self._refocus_chat_entry()
+        def refresh():
+            for child in previews.winfo_children():child.destroy()
+            photos=[]
+            for index,att in enumerate(atts[:2]):
+                label=str(index+1)+'. '+att.get('name','图片')[:10]
+                chip=tk.Button(previews,text=label,command=lambda:self.manage_attachments(atts,refresh),
+                               bg=SURFACE,fg=INK,relief='flat',bd=0,font=('Microsoft YaHei UI',9),cursor='hand2')
+                if att.get('image') is not None:
+                    photo=ImageTk.PhotoImage(_thumb(att['image'],34,26),master=win);photos.append(photo)
+                    chip.configure(image=photo,compound='left',padx=4,pady=1)
+                chip.pack(side='left',padx=(0,6))
+            if len(atts)>2:
+                button(previews,'共'+str(len(atts))+'份',lambda:self.manage_attachments(atts,refresh)).pack(side='left')
+            self._chat_photos=photos
+            height=360 if atts else 320
+            resize(height)
+            if atts:previews.place(x=44,y=184,width=width-88,height=34)
+            else:previews.place_forget()
+            tools.place(x=40,y=height-77,width=width-80,height=36)
+            actions.place(x=44,y=height-112,width=width-88,height=28)
+            hint.place_configure(y=height-35)
+            self.update_chat_pos()
+        button(tools,'文件',lambda:self.attach_file(atts,refresh)).pack(side='left',padx=(0,6))
+        button(tools,'截图',lambda:self.attach_screenshot(atts,refresh)).pack(side='left')
+        button(tools,'材料',lambda:self.manage_attachments(atts,refresh)).pack(side='left',padx=4)
+        button(tools,'粘贴图',lambda:self.paste_attachment(atts,refresh)).pack(side='left')
+        button(tools,'发送',send,primary=True).pack(side='right',padx=(10,4))
+        task=tk.StringVar(value='选择材料操作…')
+        choose=ttk.Combobox(actions,textvariable=task,state='readonly',values=('看看这些材料','讲解题目','提取文字','翻译内容','总结要点','比较所选图片'),width=18)
+        choose.pack(side='left');ttk.Label(actions,text='可继续补充问题',font=('Microsoft YaHei UI',8)).pack(side='left',padx=6)
+        def task_selected(event=None):
+            existing=entry.get().strip()
+            entry.insert('end',('\n' if existing else '')+task.get());self._refocus_chat_entry()
+        choose.bind('<<ComboboxSelected>>',task_selected)
+        hint=ttk.Label(win,text='Ctrl+V 可粘贴图片 · Shift+Enter 换行',foreground=MUTED,font=('Microsoft YaHei UI',8))
+        hint.place(x=48,y=245)
+        close_btn=button(win,'×',close);close_btn.place(x=width-63,y=26,width=27,height=27)
         entry.bind('<Return>',send)
+        entry.bind('<Control-v>',lambda e:self.paste_attachment(atts,refresh))
+        entry.bind('<Control-V>',lambda e:self.paste_attachment(atts,refresh))
+        draft_timer=[None]
+        def save_draft(event=None):
+            if draft_timer[0] is not None:win.after_cancel(draft_timer[0])
+            draft_timer[0]=win.after(500,lambda:self._save_chat_draft(entry.get()))
+        entry.bind('<KeyRelease>',save_draft,add='+')
+        win.bind('<Destroy>',lambda e:win.after_cancel(draft_timer[0]) if e.widget is win and draft_timer[0] is not None else None,add='+')
         entry.bind('<Shift-Return>',lambda e:(entry.insert('insert','\n'),'break')[-1])
         win.bind('<Escape>',lambda e:close())
-        win.bind('<Destroy>',lambda e:frame_win.destroy() if frame_win.winfo_exists() else None)
-        self._chat_win=win;self._chat_entry=entry;self._chat_canvas=None
-        self._chat_photos=(box,send_img,send_press)
-        apply(win)
-        # apply() 会按主题改文字颜色，这里再压回深蓝和素材底色（内框已在图里，去掉控件边框）
-        entry.config(fg=CHAT_INK,bg=CHAT_TEXT_FILL,insertbackground=CHAT_INK,highlightthickness=0)
-        # 窗口底色也设成内框的白：内容窗万一比输入框大一点，露出来的也是白的，不会是一块灰框
-        win.configure(bg=CHAT_TEXT_FILL)
-        paint()
-        win._frame_win=frame_win
-        win._frame_offset=(ox,oy)
-        win._frame_size=(width,height)
-        win._frame_visible=chat_visible_rect()
-        win.geometry(f'{cw}x{ch}')
-        win.update_idletasks()
-        self.update_chat_pos()          # 先摆好位置再显示，不然两个窗会先在左上角闪一下
-        win.deiconify();frame_win.deiconify()
-        win.lift();entry.focus_force()
-        # 刚 deiconify 时设的位置可能不生效（窗口还没映射），补几次，等它真的映射上去
-        for _delay in (0,60,200):
-            win.after(_delay,self.update_chat_pos)
+        self._chat_win=win;self._chat_entry=entry;self._chat_canvas=canvas
+        refresh();win.update_idletasks();self.update_chat_pos()
+        win.deiconify();win.lift();entry.focus_force()
+        for delay in (0,60,200):win.after(delay,self.update_chat_pos)
         win.after(120,lambda:self._poll_chat_outside(win))
 
     def _refocus_chat_entry(self):
@@ -357,47 +347,49 @@ class ConversationUIMixin:
             self._chat_attach_busy=False
             self._refocus_chat_entry()
 
-    def show_chat_log(self,event=None):
+    def show_chat_log(self,event=None,mode=None):
+        from glass_button import GlassButton
         old=getattr(self,'_chatlog_win',None)
-        if old is not None and old.winfo_exists():self._move_dialog(old,820,650);return
+        if old is not None and old.winfo_exists():
+            if mode:getattr(self,'_chatlog_mode').set(mode);self._chatlog_refresh()
+            self._move_dialog(old,820,650);return
         win=self._chatlog_win=tk.Toplevel(self.root);win.title('静香 · 对话');win.minsize(620,460);self._place_dialog(win,820,650)
         win.attributes('-topmost',True)
-        head=ttk.Frame(win,padding=(22,18,22,8));head.pack(fill='x')
-        ttk.Label(head,text='和静香的对话',style='Pet.Title.TLabel').pack(side='left')
-        ttk.Button(head,text='继续聊',command=self.open_chat_input).pack(side='right')
-        row=ttk.Frame(win,padding=(22,0,22,12));row.pack(fill='x')
+        head=page_header(win,'对话记录');head.pack(fill='x')
+        GlassButton(head,text='继续聊',command=self.open_chat_input,primary=True).pack(side='right')
+        row=ttk.Frame(win,padding=(18,12));row.pack(fill='x',padx=14,pady=(0,10));row._glass_panel='controls'
         query=tk.StringVar();field=ttk.Entry(row,textvariable=query);field.pack(side='left',fill='x',expand=True)
-        mode=tk.StringVar(value='对话');ttk.Combobox(row,textvariable=mode,values=('对话','全部记录'),state='readonly',width=11).pack(side='left',padx=(8,0))
-        box=ScrolledText(win,wrap='word',state='disabled',spacing1=5,spacing3=10);box.pack(fill='both',expand=True,padx=22)
-        self._chatlog_text=box;copy_bindings(box)
-        box.tag_configure('user',foreground=ACCENT,font=('Microsoft YaHei UI',10,'bold'),spacing1=14)
-        box.tag_configure('assistant',foreground=INK,font=('Microsoft YaHei UI',10,'bold'),spacing1=14)
-        box.tag_configure('meta',foreground=MUTED,font=('Microsoft YaHei UI',9))
-        box.tag_configure('body',lmargin1=8,lmargin2=8,rmargin=14)
+        mode=self._chatlog_mode=tk.StringVar(value=mode or '对话');ttk.Combobox(row,textvariable=mode,values=('对话','通知','全部记录'),state='readonly',width=11).pack(side='left',padx=(8,0))
+        from art_transcript import ArtTranscript
+        body=ttk.Frame(win,padding=(8,4));body.pack(fill='both',expand=True,padx=14);body._glass_panel='content'
+        box=ArtTranscript(body)
+        box.on_feedback=self.show_reply_feedback
+        box.on_context=lambda row:self.show_notice(row) if row.get('kind')=='notification' else self.show_chat_context(row)
+        bar=ttk.Scrollbar(body,orient='vertical',command=box.yview,style='Pet.Vertical.TScrollbar')
+        box.configure(yscrollcommand=bar.set);bar.pack(side='right',fill='y');box.pack(fill='both',expand=True)
+        self._chatlog_text=box
+        def shuffle():
+            art=getattr(win,'_art_backdrop',None)
+            if art:art.shuffle()
+        GlassButton(head,text='换张背景',command=shuffle).pack(side='right',padx=8)
+        GlassButton(head,text='反馈记录',command=self.show_feedback).pack(side='right',padx=8)
         foot=ttk.Frame(win,padding=(22,12));foot.pack(fill='x')
         status=tk.StringVar();ttk.Label(foot,textvariable=status,style='Pet.Muted.TLabel').pack(side='left')
-        ttk.Button(foot,text='复制所选',command=lambda:copy_text(box)).pack(side='right')
-        ttk.Button(foot,text='复制全部',command=lambda:copy_text(box,True)).pack(side='right',padx=8)
+        GlassButton(foot,text='复制所选',command=lambda:copy_text(box)).pack(side='right')
+        GlassButton(foot,text='复制全部',command=lambda:copy_text(box,True)).pack(side='right',padx=8)
         def refresh():
             if not win.winfo_exists():return
             with self._chat_lock:rows=list(self._chat_log)
+            if mode.get()=='通知':rows=self._workflow().notices()
+            elif mode.get()=='全部记录':rows=sorted(rows+self._workflow().notices(),key=lambda r:r.get('created',0))
             search=query.get().strip().casefold()
             if mode.get()=='对话':rows=[r for r in rows if r.get('role') in ('user','assistant') and r.get('kind')!='memory_summary']
             if search:rows=[r for r in rows if search in r.get('text','').casefold()]
             visible=rows[-500:]
-            box.configure(state='normal');box.delete('1.0','end')
-            for item in visible:
-                role=item.get('role');label='您' if role=='user' else '静香' if role=='assistant' else '记录'
-                stamp=time.strftime('%m-%d %H:%M',time.localtime(item.get('created',0)))
-                channel='微信' if str(item.get('kind','')).startswith('weixin') else '桌面'
-                box.insert('end',label+'  ',role if role in ('user','assistant') else 'meta')
-                box.insert('end',stamp+' · '+channel+'\n','meta')
-                box.insert('end',item.get('text','')+'\n\n','body')
-            if not visible:box.insert('end','这里还没有符合条件的对话。\n','meta')
-            box.configure(state='disabled');box.see('end')
-            status.set(f'{len(rows)} 条记录'+(' · 显示最近500条' if len(rows)>500 else ''))
+            box.set_rows(visible)
+            status.set(f'{len(rows)} 条记录'+(' · 显示最近500条' if len(rows)>500 else '')+' · 双击展开')
         self._chatlog_refresh=refresh
-        ttk.Button(row,text='查找 / 刷新',command=refresh).pack(side='left',padx=(8,0))
+        GlassButton(row,text='查找 / 刷新',command=refresh).pack(side='left',padx=(8,0))
         field.bind('<Return>',lambda e:refresh());mode.trace_add('write',lambda *a:refresh())
         win.protocol('WM_DELETE_WINDOW',self._close_chat_log);win.bind('<Escape>',lambda e:self._close_chat_log())
         apply(win);refresh()

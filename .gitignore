@@ -34,3 +34,22 @@ experiments/
 
 # _internal/base_library.zip 是运行必需文件，不能被上面的 *.zip 规则排除
 !_internal/*.zip
+
+# Android self-use packages and signing credentials stay local.
+*.apk
+*.jks
+*.keystore
+private-bootstrap.json
+发布包/安卓自用版/
+
+# ---- 本机发布包、研究材料与私人评测记录 ----
+/发布包/
+/测试记录/
+/旧文件归档/
+/研究/
+/聊天记录合集*.md
+/人感基准集*.md
+/tests/fixtures/
+.env
+.env.*
+android/local.properties

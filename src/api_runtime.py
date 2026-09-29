@@ -391,9 +391,10 @@ class _ResponsesStream:
     而不是从 __enter__ 抛出去让整轮对话失败。
     """
 
-    def __init__(self, create_stream, create_plain):
+    def __init__(self, create_stream, create_plain, allow_fallback=True):
         self._create_stream = create_stream
         self._create_plain = create_plain
+        self._allow_fallback = allow_fallback
         self._stream = None
 
     def __enter__(self):
@@ -427,16 +428,18 @@ class _ResponsesStream:
             if got:
                 return
         except Exception:
-            if got:
+            if got or not self._allow_fallback:
                 raise
         self.close()
+        if not self._allow_fallback:
+            return
         # 一条文本都没拿到（有的服务商不支持流式事件）→ 退回一次性请求，别让用户干等
         text = _response_text(self._create_plain())
         if text:
             yield _Chunk(text)
 
 
-def _responses_call(client, base):
+def _responses_call(client, base, allow_fallback=True):
     """返回一个「chat.completions.create 形状」的函数，内部走 responses.create。"""
     def call(*args, **kwargs):
         forwarded = dict(kwargs)
@@ -450,7 +453,7 @@ def _responses_call(client, base):
                 return client.responses.create(stream=True, **forwarded)
             def create_plain():
                 return client.responses.create(**forwarded)
-            return _ResponsesStream(create_stream, create_plain)
+            return _ResponsesStream(create_stream, create_plain, allow_fallback=allow_fallback)
         return _ChatShapedResponse(_response_text(client.responses.create(**forwarded)))
     return call
 
@@ -494,13 +497,18 @@ def _adaptive_call(original, base, args, kwargs, mode=MODE_CHAT):
     return original(*args, **_build_kwargs(kwargs, caps, mode))
 
 
-def configure_client(client, base, mode=MODE_CHAT):
+def configure_client(client, base, mode=MODE_CHAT, *, allow_retries=True):
     """包一层超时/参数自适应；mode=responses 时把 chat 形状的调用转成 responses。"""
     mode = normalize_mode(mode)
     completions = client.chat.completions
     if getattr(completions, '_shizuka_bounded', False): return client
-    original = _responses_call(client, base) if mode == MODE_RESPONSES else completions.create
+    original = _responses_call(client, base, allow_fallback=allow_retries) if mode == MODE_RESPONSES else completions.create
     def create(*args, **kwargs):
+        profile = kwargs.pop('_shizuka_profile', None)
+        if profile:
+            from provider_profile import apply_overrides, log_request
+            kwargs = apply_overrides(kwargs, profile)
+            log_request(profile, kwargs)
         budget = kwargs.pop('wait_seconds', 25)
         kwargs.setdefault('timeout', min(budget, 20))
         if urlsplit(base).hostname == 'api.deepseek.com':
@@ -518,7 +526,10 @@ def configure_client(client, base, mode=MODE_CHAT):
 
         def call():
             try:
-                out = _adaptive_call(original, base, args, kwargs, mode)
+                if allow_retries:
+                    out = _adaptive_call(original, base, args, kwargs, mode)
+                else:
+                    out = original(*args, **_build_kwargs(kwargs, _model_caps(base, model, mode), mode))
             except Exception as exc:
                 record_request(mode, model, False, time.monotonic() - started, type(exc).__name__)
                 raise
@@ -529,6 +540,9 @@ def configure_client(client, base, mode=MODE_CHAT):
         if kwargs.get('stream'):
             stream = BoundedStream(call, first_seconds=budget)
             stream._shizuka_record = lambda ok, seconds, error='': record_request(mode, model, ok, seconds, error)
+            if profile and profile.get("reasoning_isolation"):
+                from provider_profile import wrap_reasoning
+                stream = wrap_reasoning(stream)
             return stream
         return bounded_call(call, budget)
     completions.create = create

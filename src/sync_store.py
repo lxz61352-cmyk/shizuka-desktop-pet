@@ -22,7 +22,7 @@ MAX_EVENTS = 100000
 COMPACT_AFTER_EVENTS = 5000   # 热表事件超过这个数就把它们压实进快照并移入归档冷表
 FIELDS = {
     "memories": {"content", "pinned", "created", "last_used", "use_count"},
-    "chats": {"role", "text", "kind", "created", "device", "turn_id"},
+    "chats": {"role", "text", "kind", "created", "device", "turn_id", "trace_id"},
     "todos": {"text", "due", "on_boot", "done", "created"},
 }
 IDENTIFIER = re.compile(r"[a-zA-Z0-9_-]{1,96}\Z")
@@ -342,7 +342,7 @@ def validate_patch(collection, patch):
     for key, value in patch.items():
         if key in {"_deleted", "pinned", "on_boot", "done"} and type(value) is not bool:
             raise ValueError("Invalid boolean")
-        if key in {"content", "text", "role", "kind", "device", "turn_id"} and (not isinstance(value, str) or len(value) > 100000):
+        if key in {"content", "text", "role", "kind", "device", "turn_id", "trace_id"} and (not isinstance(value, str) or len(value) > 100000):
             raise ValueError("Invalid text")
         if key in {"created", "last_used", "due", "use_count"}:
             if key == "due" and value is None:
