@@ -156,7 +156,7 @@ def _run_weixin(text, arch_v2):
         def _todo_note_context(self, text, channel=None, cancel=None):
             return ""
 
-        def _get_memory_block(self, text, minimal=False):
+        def _get_memory_block(self, text, minimal=False, *, channel=None):
             return ""
 
         def _turn_context(self, text):

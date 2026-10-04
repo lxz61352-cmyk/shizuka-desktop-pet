@@ -42,6 +42,7 @@ class DesktopProfileTests(unittest.TestCase):
                 get_client=lambda:s0._Client(recorder), api_model=lambda:'fake',
                 has_api_key=lambda:True), patch('socket.socket.connect', side_effect=AssertionError('offline')):
             capture = Capture(recorder, history=[], time_block='', memory_block='')
+            capture._web_evidence = lambda *args, **kwargs: None
             capture._ask_model(text)
             wx = s1._run_weixin(text, False)
         card = compile_persona('s31-r')[0]

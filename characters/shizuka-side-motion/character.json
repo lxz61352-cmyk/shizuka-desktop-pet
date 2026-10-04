@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "shizuka-side-motion",
   "character_id": "shizuka",
-  "name": "静香 · 微动版",
+  "name": "Shizuka · 微动版",
   "description": "保留原姿势：左键摸头、打盹 zzz、连跳两次；右键提起撇嘴，松手轻微惊讶，落回任务栏。",
   "renderer": "layered",
   "portrait": "portrait.png",

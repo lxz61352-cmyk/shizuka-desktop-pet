@@ -1,8 +1,15 @@
 {
-  "version": "0.8.17",
-  "unit_tests": 619,
-  "public_test_modules": 53,
-  "frozen_gui_checks": 32,
+  "version": "0.9.0",
+  "unit_tests": 926,
+  "public_test_modules": 73,
+  "frozen_gui_checks": 96,
+  "frozen_suites": {
+    "main-legacy": 41,
+    "main-forms": 31,
+    "main-qt": 6,
+    "qt-forms": 9,
+    "qt-tools": 9
+  },
   "private_data_audit": "passed",
-  "scope": "Public offline functional regression; two outdated test adapters repaired and rerun. Not a real WeChat delivery or dialogue-quality verdict."
+  "scope": "Public offline functional regression and own-window rendering; historical private research fixtures are not included."
 }

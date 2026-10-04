@@ -5,3 +5,4 @@ pystray==0.19.5
 openai==3.13.0
 qrcode==8.2
 pypdfium2==5.13.0
+PySide6==6.11.2

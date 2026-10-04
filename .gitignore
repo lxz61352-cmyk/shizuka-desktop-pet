@@ -34,6 +34,7 @@ experiments/
 
 # _internal/base_library.zip 是运行必需文件，不能被上面的 *.zip 规则排除
 !_internal/*.zip
+!qt-windows/_internal/**/*.zip
 
 # Android self-use packages and signing credentials stay local.
 *.apk

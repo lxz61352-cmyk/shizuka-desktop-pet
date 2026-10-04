@@ -11,15 +11,18 @@ from todo_editor import TodoEditorMixin
 from todo_schedule import schedule_facts
 from art_table import ArtTable, ArtTabs
 from art_transcript import ArtTranscript
+from window_opening import dialog_window
 
 class TodoUIMixin(TodoEditorMixin):
     def show_todos(self,event=None):
         self._todo_init()
+        from qt_window_bridge import open_window
+        if open_window(self,'todos'):return
         win=getattr(self,'_todo_win',None)
         if win is not None and win.winfo_exists():self._move_dialog(win,900,690);return
-        win=self._todo_win=tk.Toplevel(self.root)
+        win=self._todo_win=dialog_window(self.root)
         win.attributes('-topmost',True)
-        win.title('静香 · 待办');win.minsize(680,500);self._place_dialog(win,900,690)
+        win.title('Shizuka · 待办');win.minsize(680,500);self._place_dialog(win,900,690)
         heading=page_header(win,'一起安排好');heading.pack(fill='x')
         self._todo_count=tk.StringVar()
         ttk.Label(heading,textvariable=self._todo_count,style='Pet.Muted.TLabel').pack(side='right')
@@ -88,6 +91,8 @@ class TodoUIMixin(TodoEditorMixin):
         box.set_rows([{'text':'\n'.join(lines)}]);box.yview('moveto',0)
 
     def _close_todo_window(self):
+        bridge=getattr(self,'_qt_windows',None)
+        if bridge and not bridge.closed:bridge.close('todos')
         win=getattr(self,'_todo_win',None);self._todo_win=None
         editor=getattr(self,'_todo_editor_win',None)
         if editor is not None and editor.winfo_exists():editor.destroy()
@@ -95,6 +100,9 @@ class TodoUIMixin(TodoEditorMixin):
         if win is not None and win.winfo_exists():win.destroy()
 
     def _todo_selected(self):
+        bridge=getattr(self,'_qt_windows',None)
+        if bridge and not bridge.closed and 'todos' in bridge.opened:
+            return next((r for r in self.todos if r['id']==bridge.selected),None)
         if not getattr(self,'_todo_win',None):return None
         names=(*CATEGORIES,'已完成')
         tree=self._todo_trees[names[self._todo_notebook.index('current')]]
@@ -117,6 +125,8 @@ class TodoUIMixin(TodoEditorMixin):
         return '待提醒' if item.get('due') or item.get('on_boot') else '未安排时间'
 
     def _refresh_todo_view(self):
+        bridge=getattr(self,'_qt_windows',None)
+        if bridge and not bridge.closed and 'todos' in bridge.opened:bridge.publish_todos()
         win=getattr(self,'_todo_win',None)
         if win is None or not win.winfo_exists() or not hasattr(self,'_todo_trees'):return
         for name,tree in self._todo_trees.items():
@@ -172,7 +182,7 @@ class TodoUIMixin(TodoEditorMixin):
     def _todo_calendar(self,parent,value):
         try:current=datetime.strptime(value.get(),'%Y-%m-%d')
         except ValueError:current=datetime.now()
-        win=tk.Toplevel(parent);win.title('选择日期');win.resizable(False,False)
+        win=dialog_window(parent);win.title('选择日期');win.resizable(False,False)
         win.transient(parent);win.attributes('-topmost',True)
         page_header(win,'选择日期').pack(fill='x')
         year=tk.IntVar(value=current.year);month=tk.IntVar(value=current.month)

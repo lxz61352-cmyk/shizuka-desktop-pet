@@ -5,10 +5,11 @@ from tkinter import ttk
 from tkinter import font as tkfont
 
 BG='#101824';CARD='#202D40';INK='#F0F5FC';MUTED='#CAD6E6';ACCENT='#79D8FA';LINE='#52667E'
-FONT=('Microsoft YaHei UI',10)
+FONT=('Microsoft YaHei UI',10,'bold')
+MENU_FONT=(FONT[0],FONT[1],'normal')
 TITLE_FONT=(FONT[0],16,'bold')
 SECTION_FONT=(FONT[0],11,'bold')
-CAPTION_FONT=(FONT[0],9)
+CAPTION_FONT=(FONT[0],9,'bold')
 PAGE_X=22
 HEADER_PADDING=(PAGE_X,18,PAGE_X,14)
 WINDOW_BORDER='#193653'
@@ -27,6 +28,8 @@ def palette(widget):
 
 def page_header(window, text):
     """Same title baseline/inset in every normal dialog; caller chooses pack/grid."""
+    from window_opening import prepare
+    prepare(window)
     head=ttk.Frame(window,padding=HEADER_PADDING,style='Pet.TFrame')
     head._glass_panel='header'
     label=ttk.Label(head,text=text,style='Pet.Title.TLabel',font=TITLE_FONT,anchor='w')
@@ -43,7 +46,7 @@ def native_chrome(window):
     DWM attributes 34/35/36 require Windows 11; older systems retain dark mode.
     https://learn.microsoft.com/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
     """
-    if sys.platform!='win32' or window.overrideredirect():return
+    if sys.platform!='win32' or window.overrideredirect() or getattr(window,'_qt_model_only',False):return
     try:
         import ctypes
         from ctypes import wintypes
@@ -52,9 +55,13 @@ def native_chrome(window):
         user32.GetAncestor.restype=wintypes.HWND
         hwnd=user32.GetAncestor(wintypes.HWND(window.winfo_id()),2)
         if not hwnd:return
+        from window_composition import restore_opaque
+        restore_opaque(window)
         if getattr(window,'_chrome_handle',None)==hwnd:return
         color=lambda value:int(value[5:7]+value[3:5]+value[1:3],16)
         results={}
+        from window_composition import disable_transitions
+        results[3]=disable_transitions(hwnd)
         for attribute,value in ((20,1),(34,color(WINDOW_BORDER)),(35,color(WINDOW_CAPTION)),(36,color(INK))):
             native=ctypes.c_uint32(value)
             results[attribute]=ctypes.windll.dwmapi.DwmSetWindowAttribute(wintypes.HWND(hwnd),attribute,
@@ -66,8 +73,12 @@ def native_chrome(window):
 
 def configure(root):
     # Widgets must measure with the final font before flow/pack/grid layout.
-    root.option_add('*Font',FONT)
     style=ttk.Style(root)
+    owner=root._root()
+    if getattr(owner,'_pet_theme_configured',False) and style.theme_use()=='clam':return
+    root.option_add('*Font',FONT)
+    root.option_add('*PetMenu*Font',MENU_FONT)
+    root.option_add('*Menu.Font',MENU_FONT)
     if style.theme_use() != 'clam':style.theme_use('clam')
     style.configure('.',font=FONT)
     for name,color in [('Pet.TFrame',BG),('Pet.Card.TFrame',CARD)]:style.configure(name,background=color)
@@ -88,6 +99,12 @@ def configure(root):
     style.configure('Pet.TLabelframe',background=BG,bordercolor=LINE)
     style.configure('Pet.TLabelframe.Label',background=BG,foreground=MUTED,font=FONT)
     style.configure('Pet.TRadiobutton',background=BG,foreground=INK,font=FONT,padding=4)
+    style.configure('Pet.Nav.TRadiobutton',background=BG,foreground=MUTED,font=FONT,padding=(12,10))
+    style.layout('Pet.Nav.TRadiobutton', [('Radiobutton.padding',{'sticky':'nswe','children':[
+        ('Radiobutton.label',{'sticky':'w'})]})])
+    style.map('Pet.Nav.TRadiobutton',foreground=[('selected',ACCENT),('active',INK)])
+    style.configure('Pet.Horizontal.TScale',background=ACCENT,troughcolor='#24394F',
+                    bordercolor='#24394F',lightcolor=ACCENT,darkcolor=ACCENT)
     for direction in ('Vertical','Horizontal'):
         style.configure(f'Pet.{direction}.TScrollbar',background=ACCENT,troughcolor=BG,borderwidth=0,arrowsize=7)
     style.configure('Pet.TCheckbutton',background=BG,foreground=INK,font=FONT,padding=5)
@@ -98,8 +115,10 @@ def configure(root):
     style.configure('Pet.Treeview.Heading',font=('Microsoft YaHei UI',10,'bold'),background=CARD,foreground=MUTED,padding=9)
     style.map('Pet.Treeview.Heading',background=[('active',DARK['button'])])
     style.map('Pet.Treeview',background=[('selected',DARK['selected'])],foreground=[('selected',INK)])
+    owner._pet_theme_configured=True
 
 def apply(window,artwork=True):
+    if getattr(window,'_qt_model_only',False):return
     configure(window);window.configure(bg=BG,bd=0,highlightthickness=0)
     native_chrome(window)
     styles={'TFrame':'Pet.TFrame','TLabel':'Pet.TLabel','TButton':'Pet.TButton',
@@ -108,6 +127,7 @@ def apply(window,artwork=True):
             'TRadiobutton':'Pet.TRadiobutton','TSpinbox':'Pet.TSpinbox'}
     def visit(widget):
         if getattr(widget,'_compact_surface',False) or getattr(widget,'_art_decoration',False) or getattr(widget,'_glass_button',False):return
+        widget._pet_themed=True
         name=widget.winfo_class()
         if name=='TScrollbar' and not str(widget.cget('style')).startswith('Pet.'):
             widget.configure(style=f"Pet.{str(widget.cget('orient')).capitalize()}.TScrollbar")
@@ -131,10 +151,9 @@ def apply(window,artwork=True):
         elif isinstance(widget,(tk.Frame,tk.LabelFrame)):
             widget.configure(bg=BG)
         elif isinstance(widget,tk.Label):
-            previous=tkfont.Font(root=window,font=widget.cget('font'))
             role=getattr(widget,'_type_role','body')
             fonts={'title':TITLE_FONT,'section':SECTION_FONT,'caption':CAPTION_FONT}
-            widget.configure(bg=BG,fg=INK,font=fonts.get(role,(FONT[0],FONT[1],previous.cget('weight'))))
+            widget.configure(bg=BG,fg=INK,font=fonts.get(role,FONT))
         elif isinstance(widget,tk.Button):
             widget.configure(bg=DARK['button'],fg=INK,activebackground='#405872',activeforeground=INK,
                              relief='flat',bd=0,cursor='hand2',font=FONT)
@@ -166,7 +185,23 @@ def install(root):
         if getattr(widget,'_art_decoration',False):return
         try:
             window=widget.winfo_toplevel()
+            if getattr(window,'_qt_model_only',False):return
             if not isinstance(window,tk.Toplevel) or window.overrideredirect() or getattr(window,'_compact_surface',False):return
+            if widget is window:native_chrome(window)
+            if getattr(widget,'_pet_themed',False) or getattr(widget,'_glass_button',False):
+                backdrop=getattr(window,'_art_backdrop',None)
+                if backdrop is None and widget is window:
+                    # Before mapping, a page with deferred content can request
+                    # a tiny size even though the dialog has explicit geometry.
+                    from window_art import attach
+                    attach(window)
+                    return
+                if backdrop and widget is not window and min(widget.winfo_width(),widget.winfo_height())>=3:
+                    x,y=widget.winfo_rootx()-window.winfo_rootx(),widget.winfo_rooty()-window.winfo_rooty()
+                    bounds=(x,y,x+widget.winfo_width(),y+widget.winfo_height())
+                    if (getattr(widget,'_backdrop_source',None) is not backdrop.image
+                            or getattr(widget,'_backdrop_bounds',None)!=bounds):backdrop.schedule(event)
+                return
             if getattr(window,'_theme_pending',False):return
             window._theme_pending=True
             def refresh():
@@ -175,6 +210,11 @@ def install(root):
             window.after_idle(refresh)
         except tk.TclError:pass
     root.bind_all('<Map>',mapped,add='+')
+    def configured(event):
+        # Tk can replace the native wrapper when alpha/frame styles change.
+        # Apply the policy to the new HWND rather than retaining a stale one.
+        if isinstance(event.widget,tk.Toplevel):native_chrome(event.widget)
+    root.bind_all('<Configure>',configured,add='+')
 
 def copy_text(widget,all_text=False):
     try:text=widget.get('1.0','end-1c') if all_text else widget.get('sel.first','sel.last')

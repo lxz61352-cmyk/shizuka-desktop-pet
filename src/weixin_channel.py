@@ -21,10 +21,32 @@ from weixin_typing import TypingState
 BASE_URL = "https://ilinkai.weixin.qq.com"
 CDN_BASE = "https://novac2c.cdn.weixin.qq.com/c2c"
 CHANNEL_VERSION = "2.4.8"
+# 引用里可能承载原消息 ID 的字段名。实测缓存里同一条消息的几种 ID 数字部分零交集，
+# 多试几个字段成本极低，比整条引用作废划算。
+QUOTE_ID_FIELDS = ('svr_id', 'svr_msg_id', 'msg_id', 'message_id', 'client_id', 'item_id', 'ref_id')
+# 让她回复时带上对用户消息的引用（发送侧实验功能，稳定前默认关闭）。
+ALWAYS_QUOTE_FLAG = 'weixin-always-quote'
 IMAGE_MAX_BYTES = 16 * 1024 * 1024
 COMMAND_RE = re.compile(r"^/(?:电脑|文件|dsh)(?=$|\s|[:：])", re.I)
-# 文字里出现这些词，说明用户在指代某张图片
-IMAGE_WORD_RE = re.compile(r"图\s*(?:\d|[一二三四五六七八九十]+)|第\s*[0-9一二三四五六七八九十]+\s*张|倒数|最新|刚才|刚刚|上一张|最后一张|这张|那张|该图|图片|照片|截图|图像", re.I)
+# 文字里出现这些词，说明用户在指代某张**具体的**图片。
+#
+# 2026-10-01：原来这里带裸词 `图片|照片|截图|图像` 和时间词 `刚才|刚刚`，于是
+# 「图片格式怎么选」「这张图挺好看的」「我刚才说的那个东西」都会被判成"在指一张图"，
+# 手头没有可对应的图时就回「好，把图片发过来，我收到就按你说的做」——用户反馈这个太粗暴。
+# 现在分两步看：**有没有在指一张具体的图**（编号 / 指示代词 / 图里），
+# 以及**有没有求解或动手的意图**。只有指示没有意图的（「这张图挺好看的」）不算。
+IMAGE_WORD_RE = re.compile(
+    r"图\s*(?:\d|[一二三四五六七八九十]+)|第\s*[0-9一二三四五六七八九十]+\s*[张幅]|"
+    r"倒数第\s*[0-9一二三四五六七八九十]*|上一张|最后一张", re.I)
+# 指着某张图：指示代词 + 图，或者「图里/图中」
+POINT_WORD_RE = re.compile(
+    r"(?:这|那|哪|上面|下面|前|后)\s*(?:一)?\s*(?:张|幅|些)?\s*(?:图|照片|截图|图像)|"
+    r"图\s*(?:里|中|上|下)|该图|本图|上一张|最后一张")
+# 问「工具/知识」而不是在指某张图。命中就说明这句不是在要一张图。
+# 只收工具与知识类名词——`怎么做`、`是什么` 这种太宽，会把「这道题怎么做」一起误伤。
+IMAGE_TOPIC_RE = re.compile(
+    r"怎么(?:选|找)|如何(?:选|找)|好用|推荐|格式|软件|工具|网站|插件|"
+    r"压缩|分辨率|像素|体积|有什么区别|哪种好")
 # 出现这些动词，说明用户是在「拿图片做事」，而不是随口提一句
 ACTION_RE = re.compile(r"做|写|生成|整理|改|转|处理|分析|识别|提取|翻译|制作|搞|弄|用|根据|基于")
 # 「第N题 / 这题 / 那道题」——用户说的是图里的题，也算在指图（实测漏掉这个就会答「图也没过来」）
@@ -39,11 +61,17 @@ LATEST_IMAGE_COUNT = 2        # 没指定图片时默认带几张：带两张，
 CURRENT_IMAGE_COUNT = 3       # 本条消息自带图片时最多带几张
 IMAGE_BLOCK_MARK = "[图片]"    # 提示块标记：上层据此判断「这条消息带了图片」
 # 像在问/看图的口吻 → 默认把最新图片带上
-IMAGE_ASK_RE = re.compile(r"[?？]|吗|呢|谁|什么|哪|怎么|为什么|为啥|是不是|多少|几|如何|怎样|认得|认得出|看得出|看看|瞧瞧|瞅瞅|解读|讲讲|讲下|讲解|说说|说一下|解释")
+IMAGE_ASK_RE = re.compile(r"[?？]|吗|呢|谁|什么|哪|怎么|为什么|为啥|是不是|多少|几|如何|怎样|认得|认得出|看得出|看看|瞧瞧|瞅瞅|解读|讲讲|讲下|讲解|说说|说一下|解释|不会|不懂|没看懂|看不明白")
 PENDING_IMAGE_SECONDS = 900   # 反问「哪一张」后等用户回答的有效时间
 PENDING_TEXT_SECONDS = 180    # 用户先说「附图…」后，等图片发过来的时间
+# 事件类型的中文说法，给 `/心情` 用（内部代号是英文，直接显示看不懂）
+_EVENT_WORDS = {
+    'pleasant_exchange': '愉快的交流', 'good_news': '好消息', 'bad_news': '坏消息',
+    'repetition': '重复没新内容', 'personal_attack': '被冒犯', 'teasing': '接梗玩笑',
+    'none': '没什么事',
+}
 # 「附图 / 见图 / 如图…」这类说法 = 图片随后就到，先说任务再等图
-ATTACH_WORD_RE = re.compile(r"附图|见图|如图|见下|见上|附上|附件|下附|图中|图里|这张图|那张图|这幅图|上面的图|下面的图")
+ATTACH_WORD_RE = re.compile(r"附图|见图|如图|见下|见上|附上|附件|下附|图中|图里")
 _CN_DIGITS = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 SEEN_TTL_SECONDS = 30 * 24 * 3600   # 已处理消息的去重记录保留多久（秒）
 SEEN_MAX = 10000                    # 去重记录的硬上限，防御短时间被灌爆
@@ -153,6 +181,58 @@ def aes_ecb_decrypt(key, data):
         if 1 <= pad <= 16 and plain.endswith(bytes([pad]) * pad):
             plain = plain[:-pad]
         return plain
+    finally:
+        if key_handle:
+            bcrypt.BCryptDestroyKey(key_handle)
+        bcrypt.BCryptCloseAlgorithmProvider(algorithm, 0)
+
+
+def aes_ecb_encrypt(key, data):
+    """AES-128-ECB + PKCS#7 加密，走 Windows CNG——与上面的解密成对，都不引入第三方依赖。
+
+    发图给微信必须先加密再上传 CDN（协议 src/cdn/upload.ts）：
+    getuploadurl → POST 密文 → 响应头 x-encrypted-param → sendmessage 的 image_item。
+    实测见 测试记录/微信发图验证-2026-10-01/。
+    """
+    import ctypes
+    from ctypes import wintypes
+    pad = 16 - (len(data) % 16)
+    data = data + bytes([pad]) * pad
+    bcrypt = ctypes.WinDLL("bcrypt", use_last_error=True)
+    ULONG, PULONG = wintypes.ULONG, ctypes.POINTER(wintypes.ULONG)
+    bcrypt.BCryptOpenAlgorithmProvider.argtypes = [ctypes.POINTER(ctypes.c_void_p), wintypes.LPCWSTR, wintypes.LPCWSTR, ULONG]
+    bcrypt.BCryptOpenAlgorithmProvider.restype = ctypes.c_long
+    bcrypt.BCryptSetProperty.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.c_char_p, ULONG, ULONG]
+    bcrypt.BCryptSetProperty.restype = ctypes.c_long
+    bcrypt.BCryptGetProperty.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR, ctypes.c_char_p, ULONG, PULONG, ULONG]
+    bcrypt.BCryptGetProperty.restype = ctypes.c_long
+    bcrypt.BCryptGenerateSymmetricKey.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p, ULONG, ctypes.c_char_p, ULONG, ULONG]
+    bcrypt.BCryptGenerateSymmetricKey.restype = ctypes.c_long
+    bcrypt.BCryptEncrypt.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ULONG, ctypes.c_void_p, ctypes.c_char_p, ULONG, ctypes.c_char_p, ULONG, PULONG, ULONG]
+    bcrypt.BCryptEncrypt.restype = ctypes.c_long
+    bcrypt.BCryptDestroyKey.argtypes = [ctypes.c_void_p]
+    bcrypt.BCryptCloseAlgorithmProvider.argtypes = [ctypes.c_void_p, ULONG]
+    algorithm = ctypes.c_void_p()
+    if bcrypt.BCryptOpenAlgorithmProvider(ctypes.byref(algorithm), "AES", None, 0) != 0:
+        raise ValueError("系统不支持 AES 加密")
+    key_handle = ctypes.c_void_p()
+    try:
+        mode = ctypes.create_unicode_buffer("ChainingModeECB")
+        bcrypt.BCryptSetProperty(algorithm, "ChainingMode", ctypes.cast(mode, ctypes.c_char_p), ctypes.sizeof(mode), 0)
+        object_length = ULONG()
+        bcrypt.BCryptGetProperty(algorithm, "ObjectLength", ctypes.cast(ctypes.byref(object_length), ctypes.c_char_p),
+                                 ctypes.sizeof(object_length), ctypes.byref(ULONG()), 0)
+        key_object = ctypes.create_string_buffer(object_length.value)
+        if bcrypt.BCryptGenerateSymmetricKey(algorithm, ctypes.byref(key_handle), key_object, object_length.value,
+                                             key, len(key), 0) != 0:
+            raise ValueError("密钥无法用于加密")
+        output = ctypes.create_string_buffer(len(data) + 16)
+        written = ULONG()
+        status = bcrypt.BCryptEncrypt(key_handle, data, len(data), None, None, 0, output, len(output),
+                                      ctypes.byref(written), 0)
+        if status != 0:
+            raise ValueError("加密失败")
+        return output.raw[:written.value]
     finally:
         if key_handle:
             bcrypt.BCryptDestroyKey(key_handle)
@@ -276,12 +356,17 @@ class ILinkClient:
     def updates(self, cursor):
         return self.call("getupdates", {"get_updates_buf": cursor}, timeout=40)
 
-    def send(self, peer, context, text, client_id):
+    def send(self, peer, context, text, client_id, quote_svr_id=None):
         if not peer or not context:
             raise ValueError("缺少微信对话信息，无法回复")
+        item = {"type": 1, "text_item": {"text": text}}
+        if quote_svr_id:
+            # 发送侧的引用字段名没有文档可依，按入站 item 的形状镜像过来试。
+            # 猜错由 WeixinChannel._send 退回不带引用的普通发送，不会影响正常回复。
+            item["ref_msg"] = {"svr_id": str(quote_svr_id)}
         return self.call("sendmessage", {"msg": {"from_user_id": "", "to_user_id": peer,
             "client_id": client_id, "message_type": 2, "message_state": 2,
-            "context_token": context, "item_list": [{"type": 1, "text_item": {"text": text}}]}})
+            "context_token": context, "item_list": [item]}})
 
     def get_config(self, peer, context):
         return self.call('getconfig', {'ilink_user_id': peer, 'context_token': context}, timeout=3)
@@ -548,15 +633,45 @@ class WeixinChannel:
         text = str(text).strip() or "本轮没有返回文字结果。"
         if len(text) > 9000:
             text = text[:9000] + "\n（内容较长，完整文件任务结果请在电脑的任务记录中查看。）"
+        quoted = self._quote_target(message)
         for index in range(0, len(text), 1500):
             if self.stopped.is_set():
                 break
             client_id = "deskpet-" + message["key"][:40] + "-" + suffix + "-" + str(index // 1500)
             with self.send_lock:
-                self._send(message["context"], text[index:index+1500], client_id)
+                # 分条时只在第一条带引用，和人在微信里的做法一致。
+                self._send(message["context"], text[index:index+1500], client_id,
+                           quote_svr_id=quoted if index == 0 else None)
 
-    def _send(self, context, text, client_id):
-        result = self.client.send(self.session['owner'], context, text, client_id)
+    def _quote_target(self, message):
+        """她这条回复要不要引用用户的消息，引用哪一条。
+
+        默认只在**用户自己引用了**的时候回敬一条引用（对等、不吵）；
+        放一个 data/weixin-always-quote 标记文件可以让每条回复都带引用，便于试用。
+        """
+        target = message.get('reply_to')
+        if not target:
+            return None
+        if message.get('quotes'):
+            return target
+        try:
+            if (Path(self.store.path.parent) / ALWAYS_QUOTE_FLAG).exists():
+                return target
+        except Exception:
+            pass
+        return None
+
+    def _send(self, context, text, client_id, quote_svr_id=None):
+        try:
+            result = self.client.send(self.session['owner'], context, text, client_id,
+                                      quote_svr_id=quote_svr_id)
+        except Exception:
+            if not quote_svr_id:
+                raise
+            # 引用是附加效果，不能因为它让正常回复发不出去。
+            self._note_quote_send_failure(quote_svr_id)
+            result = self.client.send(self.session['owner'], context, text, client_id)
+            quote_svr_id = None
         if isinstance(result, dict) and result.get('message_id'):
             try:
                 self.materials.remember([result['message_id']], text=text, role='assistant')
@@ -564,6 +679,18 @@ class WeixinChannel:
                 self.status({'status': '消息已发送，但本地引用缓存写入失败'})
         self.typing.refresh()
         return result
+
+    def _note_quote_send_failure(self, quote_svr_id):
+        """发送侧引用被服务端拒绝时留痕，便于判断这个字段名猜得对不对。"""
+        try:
+            path = Path(self.store.path.parent) / 'weixin-quote-send.jsonl'
+            with self.send_lock, path.open('a', encoding='utf-8') as handle:
+                handle.write(json.dumps({'at': time.time(), 'svr_id': str(quote_svr_id)[:60]},
+                                        ensure_ascii=False) + '\n')
+            kept = path.read_text('utf-8').splitlines()[-20:]
+            path.write_text('\n'.join(kept) + '\n', 'utf-8')
+        except Exception:
+            pass
 
     def image_index(self):
         if self._images is None:
@@ -618,6 +745,83 @@ class WeixinChannel:
             saved.append(record)
         return saved
 
+    def _quote_lookup(self, ref):
+        """按引用里所有可能的 ID 字段查本地缓存，返回命中的那一份。
+
+        两个实测教训：
+
+        1. 原来只试 `svr_id`。缓存里同一条用户消息会以三种互不相交的 ID 形态各存一份
+           （message_id / msg_id / client_id，数字部分零交集），她自己的消息只存一份。
+           只知道一个字段名就去查，很容易整条引用作废。
+        2. **ID 不一定在 `ref` 顶层**。实测引用她自己那条「哈？」时，`ref` 顶层
+           **一个非字典字段都没有**，`msg_id` 在 `ref['message_item']['msg_id']` 里；
+           而那个值在缓存里查得到。所以 `message_item` 里也要找一遍。
+
+        真实记录见 `data/weixin-quote-debug.jsonl`。
+        """
+        quoted = ref.get('message_item')
+        sources = [ref] + ([quoted] if isinstance(quoted, dict) else [])
+        for source in sources:
+            for field in QUOTE_ID_FIELDS:
+                value = source.get(field)
+                if value is None or value == '':
+                    continue
+                row = self.materials.lookup(value)
+                if row is not None:
+                    return row
+        return None
+
+    def _note_quote_miss(self, ref, quoted=None):
+        """引用没查到缓存时的诊断记录；只在失败时写，保留最近 20 条。"""
+        try:
+            record = {'at': time.time(),
+                      'ref_fields': sorted(k for k in ref if not isinstance(ref.get(k), dict)),
+                      'has_message_item': isinstance(ref.get('message_item'), dict),
+                      'has_partial_text': bool(ref.get('partial_text')),
+                      'ids': {k: (str(ref.get(k))[:60] if ref.get(k) not in (None, '') else None)
+                              for k in QUOTE_ID_FIELDS},
+                      'cached_ids': len(self.materials.data.get('messages') or {})}
+            if isinstance(quoted, dict):
+                # 用户引用一条普通对话消息时曾报"请先转成文字"——说明那条引用的 type 不是 1。
+                # 记下真实形状，下次就不用猜了。
+                record['quoted_type'] = quoted.get('type')
+                record['quoted_fields'] = sorted(quoted)
+                record['quoted_sample'] = json.dumps(quoted, ensure_ascii=False)[:600]
+            path = Path(self.store.path.parent) / 'weixin-quote-debug.jsonl'
+            with self.store.lock, path.open('a', encoding='utf-8') as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + '\n')
+            kept = path.read_text('utf-8').splitlines()[-20:]
+            path.write_text('\n'.join(kept) + '\n', 'utf-8')
+        except Exception:
+            pass
+
+    @staticmethod
+    def _quoted_text(item):
+        """从引用带的 message_item 里掏文字，**不依赖 type 取值**。
+
+        原来只认 type==1 的 text_item，其它一律报"请先转成文字或重新发附件"。
+        实测用户引用一条普通对话消息就撞上了这条——说明那个引用的 type 不是 1/2/4。
+        与其猜 type 有哪些取值，不如直接看里面有没有文字：已知的键先试，
+        都不是再扫一层嵌套字典，这样包装过多少层、换成什么形状都能掏出来。
+        """
+        fields = ('text', 'content', 'title', 'desc', 'name')
+        for key in ('text_item', 'msg_item', 'text', 'content', 'title', 'desc'):
+            value = item.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+            if isinstance(value, dict):
+                for field in fields:
+                    text = value.get(field)
+                    if isinstance(text, str) and text.strip():
+                        return text
+        for value in item.values():
+            if isinstance(value, dict):
+                for field in fields:
+                    text = value.get(field)
+                    if isinstance(text, str) and text.strip():
+                        return text
+        return ''
+
     def _references(self, items, key):
         rows = []
         for item in items:
@@ -626,14 +830,18 @@ class WeixinChannel:
                 continue
             if len(rows) >= MAX_MATERIALS:
                 raise ValueError('一次最多处理6条引用，请分开提问。')
-            row = self.materials.lookup(ref.get('svr_id')) if ref.get('svr_id') else None
+            row = self._quote_lookup(ref)
             if row is None:
                 quoted = ref.get('message_item')
                 if not isinstance(quoted, dict):
+                    self._note_quote_miss(ref)
                     raise ValueError('这条引用的原消息没有保存在本机，可能早于这次更新或已过期。请把原文或附件再发一次。')
                 if quoted.get('type') == 1:
                     body = (quoted.get('text_item') or {}).get('text')
                     if not isinstance(body, str) or not body:
+                        body = self._quoted_text(quoted)
+                    if not isinstance(body, str) or not body:
+                        self._note_quote_miss(ref, quoted)
                         raise ValueError('引用里没有带原文，请把那句话再发一次。')
                     row = dict(text=body[:20000], images=[], files=[], role='unknown')
                 elif quoted.get('type') == 2:
@@ -645,7 +853,16 @@ class WeixinChannel:
                     file = self.materials.save_file(quoted, self.client, key, 100 + len(rows))
                     row = dict(text='（附件）', images=[], files=[file], role='unknown')
                 else:
-                    raise ValueError('目前可以引用文字、图片和文件；这条引用请先转成文字或重新发附件。')
+                    # 其它类型先当文字掏一遍。用户引用一条普通对话消息时，这里原本直接报
+                    # "目前可以引用文字、图片和文件；这条引用请先转成文字或重新发附件"，
+                    # 而那条引用其实就是文字——只是它的 type 不是 1/2/4。
+                    body = self._quoted_text(quoted)
+                    if body:
+                        row = dict(text=body[:20000], images=[], files=[], role='unknown')
+                    else:
+                        self._note_quote_miss(ref, quoted)
+                        raise ValueError('这条引用里没有能用的原文（可能是语音、视频或卡片），'
+                                         '请把那句话再发一次。')
             if ref.get('partial_text'):
                 selected = partial_quote(row.get('text', ''), ref['partial_text'])
                 if selected is None:
@@ -655,6 +872,121 @@ class WeixinChannel:
                 raise ValueError('引用里的附件已移动或删除，请重新发送；我不会替换成最近的其他附件。')
             rows.append(row)
         return rows
+
+    def mood_text(self):
+        """当前心情与精力。给 `/心情` 用，只读、不写状态、不进对话历史。
+        数值来自即时情绪那套账本（`runtime_pre_reply_affect` 每轮注入的「本轮角色状态」
+        就是它）。账本文件不存在时说明还没有结算过，如实说。
+        """
+        try:
+            import pet as engine
+            import pre_reply_affect_runtime as runtime
+            import runtime_affect_event_lab as lab
+            # 命名空间要和注入时一致：weixin_ui 用的是 engine.ACTIVE_PACK.character_id
+            namespace = getattr(getattr(engine, 'ACTIVE_PACK', None), 'character_id', None) or 'shizuka'
+            path = runtime.state_path(self.store.path.parent, namespace)
+            if not path.is_file():
+                return '还没有心情记录——先聊几句，她结算过一次之后就能看了。'
+            # 文件是包装过的：真正的状态在 state 里（外层还有 schema / version）
+            blob = json.loads(path.read_text('utf-8'))
+            state = blob.get('state') if isinstance(blob, dict) else None
+            if not isinstance(state, dict):
+                return '心情文件格式不认识，读不出来。'
+            mood = float(state.get('mood') or 0)
+            energy = lab.base.energy(state.get('updated_at'), state.get('wake_hour', 8.0))
+            if mood < 30:
+                word = '挺低的'
+            elif mood < 45:
+                word = '偏低'
+            elif mood < 60:
+                word = '一般'
+            elif mood < 75:
+                word = '还不错'
+            else:
+                word = '很好'
+            lines = ['心情 %.1f/100（%s）' % (mood, word),
+                     '精力 %.1f/100' % energy]
+            events = state.get('events') or []
+            if isinstance(events, list) and events:
+                recent = [e for e in events[-3:] if isinstance(e, dict)]
+                kinds = [_EVENT_WORDS.get(str(e.get('kind')), None) for e in recent]
+                kinds = [k for k in kinds if k]
+                if kinds:
+                    lines.append('最近结算过的事：%s' % '、'.join(kinds))
+            last = state.get('settlements') or []
+            if isinstance(last, list) and last and isinstance(last[-1], dict):
+                item = last[-1]
+                if item.get('delta') is not None:
+                    lines.append('上一轮心情变化：%+.1f' % float(item.get('delta') or 0))
+            lines.append('（这条指令只看状态，不进她的对话记录，也不影响她之后说话。）')
+            return '\n'.join(lines)
+        except Exception as exc:
+            return '读心情失败：%s' % type(exc).__name__
+
+    def api_text(self):
+        """当前接口：类型、端点、模型、最近一次请求。给 `/接口` 用。
+
+        只读，不写状态、不进对话历史——和 `/心情` 一样。
+        `LAST_REQUEST` 是程序记录的真实请求（不是猜的）。
+        """
+        try:
+            import api_runtime
+            import pet as engine
+        except Exception:
+            return '暂时读不到接口信息。'
+        mode = api_runtime.normalize_mode(engine.api_mode())
+        lines = ['接口类型：%s' % api_runtime.mode_label(mode),
+                 '端点：%s' % api_runtime.endpoint_path(mode),
+                 '模型：%s' % engine.api_model(),
+                 '地址：%s' % engine.api_base()]
+        last = dict(api_runtime.LAST_REQUEST)
+        if last.get('at'):
+            lines.append('最近一次：%s，%s，%.1f 秒' % (
+                api_runtime.mode_label(last.get('mode')),
+                '成功' if last.get('ok') else '失败',
+                last.get('seconds') or 0))
+            if last.get('error'):
+                lines.append('错误：%s' % last['error'])
+        else:
+            lines.append('最近一次：还没有记录')
+        if mode == api_runtime.MODE_ANTHROPIC:
+            lines.append('（这个接口支持联网搜索，需要时她会自己去查）')
+        elif mode == api_runtime.MODE_RESPONSES:
+            lines.append('（DeepSeek 的 responses 端点不支持联网搜索，也不会更省）')
+        else:
+            lines.append('（这个接口不联网；要联网得选 anthropic）')
+        return '\n'.join(lines)
+
+    def todo_list_text(self):
+        """未完成的待办清单。给 `/待办` 用（不带内容时）。只读。"""
+        import json
+        import os
+        try:
+            import pet as engine
+            path = getattr(engine, 'TODO_FILE', '')
+        except Exception:
+            return '暂时读不到待办。'
+        if not path or not os.path.exists(path):
+            return '还没有待办。'
+        try:
+            with open(path, 'r', encoding='utf-8-sig') as handle:
+                items = json.load(handle).get('items', [])
+        except Exception:
+            return '待办文件读不出来，请在电脑端看一下。'
+        alive = [it for it in items if not it.get('done')]
+        if not alive:
+            return '没有未完成的待办（共 %d 条，都做完了）。' % len(items)
+        def when(it):
+            return (it.get('due') or it.get('time') or it.get('when') or '').strip()
+        alive.sort(key=lambda it: when(it) or '9999')
+        lines = ['未完成的待办（%d 条）：' % len(alive)]
+        for it in alive[:40]:
+            title = (it.get('title') or it.get('text') or it.get('content') or '').strip()
+            moment = when(it)
+            lines.append('· %s%s' % (title[:60], ('  —  %s' % moment) if moment else ''))
+        if len(alive) > 40:
+            lines.append('…还有 %d 条' % (len(alive) - 40))
+        return '\n'.join(lines)
 
     def attachment_list_text(self):
         rows = self.materials.recent()
@@ -696,9 +1028,25 @@ class WeixinChannel:
             return "最近没有收到编号为图%d 的图片。" % unknown[0], [], False
         # 明确在说「图/题/附图/命令」→ 给他更长的追溯时间（先发图、过一会儿再问也算数）；
         # 只是随口提问 → 仍旧只认 10 分钟内的图，免得把几小时前的无关图片塞进来。
+        # 「题词」这条路只认**求解或疑问**意图，不认动作词——
+        # 「这道题我做完了」有个「做」，但它只是陈述，不是要我讲。
+        ask_intent = bool(SOLVE_RE.search(text) or IMAGE_ASK_RE.search(text))
+        any_intent = ask_intent or bool(ACTION_RE.search(text))
         refers = bool(IMAGE_WORD_RE.search(text) or ATTACH_WORD_RE.search(text)
-                      or QUESTION_WORD_RE.search(text) or COMMAND_RE.match(text))
-        loose = bool(ACTION_RE.search(text) or IMAGE_ASK_RE.search(text) or SOLVE_RE.search(text))
+                      or COMMAND_RE.match(text)
+                      or (POINT_WORD_RE.search(text) and any_intent)
+                      or (QUESTION_WORD_RE.search(text) and ask_intent))
+        if refers and IMAGE_TOPIC_RE.search(text):
+            # 「图片格式怎么选」「有什么好用的图片软件」是在问工具或知识，不是在指某张图。
+            # 不加这道闸，句子里只要出现「图片」两个字就会触发等图（用户反馈太粗暴）。
+            refers = False
+        # 2026-10-01：`loose` 原来还包含 `IMAGE_ASK_RE`，而那个正则里是
+        # 「吗|呢|什么|哪|怎么」这类词——**等于任何疑问句**。后果是：十分钟内收到过一张图，
+        # 之后每句带疑问词的话都会把那张图塞进上下文，她就开始对着旧图说话。
+        # 用户实测：聊萨摩耶凶不凶的时候，她回「这丸子看着也挺弹」「这火腿切得挺厚」——
+        # 那两句恰好就是全文里唯二命中 `loose` 的（都是因为「怎么」）。
+        # 现在只有**确实在拿图片做事**（动作词 / 求解词）才自动带最近一张。
+        loose = bool(ACTION_RE.search(text) or SOLVE_RE.search(text))
         if refers or loose:
             hours = LATEST_IMAGE_HOURS_REF if refers else LATEST_IMAGE_HOURS
             latest = index.recent(LATEST_IMAGE_COUNT, hours=hours)
@@ -774,7 +1122,9 @@ class WeixinChannel:
         key = hashlib.sha256((self.session["owner"] + ":" + str(identity)).encode()).hexdigest()
         if not self.store.claim(key):
             return
-        message = {"key": key, "context": context, "text": text, "images": [], 'files': [], 'quotes': []}
+        message = {"key": key, "context": context, "text": text, "images": [], 'files': [],
+                   'quotes': [], 'reply_to': str(raw.get("message_id") or raw.get("msg_id")
+                                                 or raw.get("client_id") or identity)}
         self.typing.begin(key, context)
         try:
             self._receive_authorized(raw, items, message)
@@ -856,23 +1206,46 @@ class WeixinChannel:
         if message["images"] and text:
             self.store.update(pending_text=None)   # 图文同到：以本条文字为准
             pending_text = None
-        if text in ("/停止", "/stop", "停止任务", "取消任务"):
+        # 指令匹配用归一化后的文本：手机上容易打出全角 `／`，
+        # 而这里原来是精确匹配 `/xxx`，全角就一条都认不出来。
+        command = text.strip().replace("／", "/") if text else text
+        if command in ("/停止", "/stop", "停止任务", "取消任务"):
             self.store.update(pending_image=None, pending_text=None)
             self.cancel_task()
             self.reply(message, "已发出停止指令，待执行任务已取消；已经完成的文件更改会保留。", "stop")
-        elif text in ("/状态", "/status"):
+        elif command in ("/状态", "/status"):
             self.reply(message, "电脑在线。" + ("正在处理任务。" if self.active else "当前没有正在执行的任务。"), "status")
-        elif text in ("/结果", "/result"):
+        elif command in ("/结果", "/result"):
             self.reply(message, self.store.data.get("last_result") or "目前没有可查看的结果。", "last")
-        elif text in ("/图片", "/images"):
+        elif command in ("/图片", "/images"):
             self.reply(message, self.image_list_text(), "images")
-        elif text in ('/附件', '/attachments'):
+        elif command in ("/接口", "/api", "/接口类型"):
+            self.reply(message, self.api_text(), 'api')
+        elif command in ("/待办", "/todo", "/todos"):
+            self.reply(message, self.todo_list_text(), 'todos')
+        elif command in ("/心情", "/mood", "/情绪"):
+            # 只看状态，不进对话历史——reply() 本身不写记录，命令也在这里就返回，
+            # 不会走到正常回复路径。所以这条指令对她后面的说话没有任何影响。
+            self.reply(message, self.mood_text(), 'mood')
+        elif command in ('/附件', '/attachments'):
             self.reply(message, self.attachment_list_text(), 'attachments')
-        elif text in ("/帮助", "/help"):
-            self.reply(message, "可以直接聊天。/待办 加事项与时间，可以创建待办；到期可通过微信提醒。\n"
-                                "图片和文件按日期保存在电脑工作区。直接引用原消息继续问；文件也可以用“附件2”指代。\n"
-                                "文件任务：/电脑 加具体要求。\n/图片：看最近收到的图片编号\n/停止：停止任务\n"
-                                "/附件：看最近文件\n/状态：查看连接与任务状态\n/结果：查看最近结果\n/主动：主动搭话的开关、时间、频率与状态\n请保持电脑和桌宠运行。", "help")
+        elif command in ("/帮助", "/help"):
+            self.reply(message, "直接聊天就行；下面是斜杠指令（都不进对话记录，不会影响她后面说话）。\n"
+                                "\n【看状态】\n"
+                                "/接口  现在走哪个接口（chat / responses / anthropic），以及最近一次请求\n"
+                                "/心情（或 /mood、/情绪）  她现在的心情和精力\n"
+                                "/状态  电脑在线与任务状态\n"
+                                "/结果  最近一次文件任务的结果\n"
+                                "\n【看东西】\n"
+                                "/待办  未完成的待办和时间\n"
+                                "/图片  最近收到的图片编号\n"
+                                "/附件  最近收到的文件\n"
+                                "\n【干活】\n"
+                                "/电脑 加具体要求  让电脑执行文件任务\n"
+                                "/停止  取消正在等的任务\n"
+                                "/主动  主动搭话的开关、时间、频率\n"
+                                "\n待办：直接说「/待办 明天下午三点开会」就能建；到期会通过微信提醒。\n"
+                                "图片和文件按日期存在电脑工作区；引用原消息继续问，或用「附件2」指代。", "help")
         elif message['quotes'] or message['files']:
             self.store.update(pending_image=None, pending_text=None)
             if not text:
@@ -1085,9 +1458,16 @@ class WeixinChannel:
                 result = self.responder(message["text"], token, progress)
                 if token.is_set() and not isinstance(result, DeliveredReply):
                     result = "本轮任务已停止，已完成的文件更改会保留。"
+                elif progress.superseded.is_set() and not isinstance(result, DeliveredReply):
+                    # 被新消息取代：用户没喊停，是新的一条消息把这一轮挤掉了，
+                    # 新一轮马上就会回答。这时把「本轮回复已停止。」发进聊天只是噪音——
+                    # 而它原来会发出去，因为上面的判断只看 /停止 的 token，不看 supersede。
+                    # 已经送出的部分照实记下来，只是不再补一条说明。
+                    result = DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
             except Exception:
                 result = (DeliveredReply('\n\n'.join(progress.sent), 'delivery_failed')
                           if progress.attempts else "本轮未能完成，请在电脑端检查接口或电脑助手配置。")
+            delivery_ok = False
             try:
                 if isinstance(result, DeliveredReply):
                     label = {'complete': '最近一轮已返回', 'interrupted': '已收起未发送的后续回复',
@@ -1100,9 +1480,14 @@ class WeixinChannel:
                     self.store.update(last_result=result)
                     self.status({"status": "最近一轮已返回", "output": result})
                     self.reply(message, result)
+                    delivery_ok = True
             except Exception:
                 self.status({"status": "结果尚未送达，可发送 /结果 查看；文件任务不会重复执行"})
             finally:
+                try:
+                    progress.finish_delivery(delivery_ok)
+                except Exception:
+                    pass  # A state-save error must not resend an already delivered reply.
                 self.typing.finish(*message.get('typing_keys', [message['key']]))
                 with self.task_lock:
                     self.active = False

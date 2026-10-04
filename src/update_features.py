@@ -9,6 +9,7 @@ from tkinter import ttk
 from app_identity import APP_VERSION
 from updater import (check_latest_release, download_package, launch_swap, read_announcement,
                      read_pending_update, write_pending_update)
+from window_opening import dialog_window
 
 
 class UpdateFeaturesMixin:
@@ -113,7 +114,7 @@ class UpdateFeaturesMixin:
         self._update_init()
         disable = not self._update_disabled
         try:
-            win = tk.Toplevel(self.root)
+            win = dialog_window(self.root)
             win.title("停止接收更新" if disable else "重新接收更新")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
@@ -149,7 +150,7 @@ class UpdateFeaturesMixin:
     def _confirm_update(self, info):
         has, ver, url, notes = info
         try:
-            win = tk.Toplevel(self.root)
+            win = dialog_window(self.root)
             win.title("发现新版本")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
@@ -185,7 +186,7 @@ class UpdateFeaturesMixin:
         try:
             if self._update_prog_win is not None:
                 return
-            win = tk.Toplevel(self.root)
+            win = dialog_window(self.root)
             win.title("正在下载更新")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
@@ -279,7 +280,7 @@ class UpdateFeaturesMixin:
             # 优先用随包的「更新公告.md」里该版本那一节，其次用 Release 说明
             body_text = (read_announcement(ver) or read_announcement(APP_VERSION)
                          or notes or "（这个版本没有写更新公告）")
-            win = tk.Toplevel(self.root)
+            win = dialog_window(self.root)
             win.title("更新公告")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")

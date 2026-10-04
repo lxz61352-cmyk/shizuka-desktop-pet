@@ -15,6 +15,7 @@ from computer_agent import load_config
 from computer_ui import computer_command
 from weixin_channel import BASE_URL, ILinkClient, ProtectedStore, WeixinChannel, session_from_login, trusted_base, IMAGE_BLOCK_MARK
 from weixin_materials import InboundText, file_parts, reference_parts
+from window_opening import dialog_window
 
 IMAGE_BLOCK_LINE_RE = re.compile(r"^-\s*图\d+（[^）]*）=\s*(.+)$", re.M)
 
@@ -134,6 +135,7 @@ class WeixinMixin:
         import pet as engine
         self._last_proactive_check=None
         from proactive_chat import acceptable
+        from proactive_content import prior_openings
         from proactive_topics import pick_topic,context_for_topic,instruction,local_problem,AUDIT_INSTRUCTION
         if not engine.has_api_key() or not self._weixin_proactive_allowed():
             return None
@@ -149,7 +151,7 @@ class WeixinMixin:
         persona=desktop_dialogue_profile.persona_core(engine.DESKTOP_DIALOGUE_PROFILE,engine.ACTIVE_PACK) if engine.DESKTOP_DIALOGUE_PROFILE else engine.load_persona()
         material={'当前时间':time.strftime('%Y-%m-%d %A %H:%M',time.localtime(now)),
                   '取材':topic,'相关的当天原话':context_for_topic(topic,rows,now),
-                  '最近主动说过':[r['text'] for r in value['history'][-8:]]}
+                  '最近主动说过（仅用于避免重复，不作为选题来源）':prior_openings(value['history'])}
         profile=provider_profile.from_settings(engine.load_settings())
         provider_limiter.acquire(profile,cancel.is_set)
         client=engine._disable_thinking(engine.get_client().with_options(timeout=25,max_retries=0))
@@ -158,11 +160,13 @@ class WeixinMixin:
             messages=[{'role':'system','content':persona+'\n'+sensitive_topics.policy(False)+'\n'+instruction(topic['category'])},
                       {'role':'user','content':json.dumps(material,ensure_ascii=False)}])
         text=json.loads(reply.choices[0].message.content).get('text','').strip()
-        if cancel.is_set() or not acceptable(text,value['history']):return None
+        if cancel.is_set():return None
         self._last_proactive_check={'text':text,'allowed':False,'reason':'待检查','category':topic['category'],'topic':topic}
         problem=local_problem(text,topic)
         if problem:
             self._last_proactive_check['reason']=problem;return None
+        if not acceptable(text,value['history']):
+            self._last_proactive_check['reason']='内容不合适或与近期消息重复';return None
         provider_limiter.acquire(profile,cancel.is_set)
         checked=client.chat.completions.create(model=engine.api_model(),temperature=0,max_tokens=120,
             response_format={'type':'json_object'},_shizuka_profile=profile,
@@ -243,7 +247,7 @@ class WeixinMixin:
             channel=getattr(self,'_weixin_channel',None)
             def file_progress(state):
                 self._computer_receive_progress(state,cancel,origin='weixin',channel=channel)
-                progress({'status':'等待您回复静香' if state.get('waiting') else self._scene('file_running',seconds=state['elapsed'])})
+                progress({'status':'等待您回复Shizuka' if state.get('waiting') else self._scene('file_running',seconds=state['elapsed'])})
             try:
                 result=self._computer_agent.run(task,config,cancel=cancel,progress=file_progress)
             except Exception as exc:result={'status':'failed','error':str(exc),'output':''}
@@ -352,12 +356,24 @@ class WeixinMixin:
                             pass
                     threading.Thread(target=remember, daemon=True).start()
                 return local
-        memory = self._get_memory_block(visible, minimal=bool(signals.get("topic_shift")))
+        memory = self._get_memory_block(visible, minimal=bool(signals.get("topic_shift")), channel='weixin')
         if memory:
             system += "\n\n" + memory
         _, turn_context = self._turn_context(visible)
         if turn_context and not arch_v2:
             system += "\n\n" + turn_context
+        # 联网：和桌面共用一份实现（reply_turn.evidence）。
+        # **channel='weixin' 时不做桌面演出**——微信没有气泡和动作差分；
+        # 2026-10-02 把桌面那套直接搬过来，害她的差分卡在"低头看手机"上不下来。
+        # 这一步出任何问题都只返回空串，绝不影响正常回复。
+        try:
+            import reply_turn
+            evidence = reply_turn.evidence(self, visible, channel='weixin',
+                                           explicit_only=True)
+        except Exception:
+            evidence = ""
+        if evidence:
+            system += "\n\n" + evidence
         from shizuka_context_compiler import minimal_character_note
         character_bridge = minimal_character_note(
             visible, signals, situation, authority)
@@ -399,17 +415,26 @@ class WeixinMixin:
             system += "\n" + HISTORY_NOTE
         messages = [{"role": "system", "content": system}]
         messages.extend(history)
+        affect_transaction = None
+        client = None
+        reply_cleaner = None
         if getattr(engine,'DESKTOP_DIALOGUE_PROFILE',''):
-            from enhanced_dialogue import compose_messages
-            from desktop_dialogue_profile import persona_core
-            import sensitive_topics as topic_settings
-            # The shared core owns all speech rules. Tool receipts are added
-            # only when present, rather than bringing task state to every chat.
-            messages=compose_messages(persona_core(engine.DESKTOP_DIALOGUE_PROFILE,engine.ACTIVE_PACK),
-                visible,history,capabilities='当前通过微信文字交流。文件操作需使用 /电脑 指令；没有执行回执不声称已完成。',
-                context_blocks=(notes,memory),timeline=time_block,
-                sensitive_topics=topic_settings.enabled(self))[:-1]
-            system=messages[0]['content']
+            from reply_turn import prepare_profile, ReplyCleaner
+            from weixin_segments import ReplyProgress
+            import provider_profile
+            interrupted = progress.interrupted if isinstance(progress, ReplyProgress) else cancel.is_set
+            try:
+                prepared = prepare_profile(self, engine, visible, history, channel='weixin',
+                    interrupted=interrupted, notes=notes, memory=memory, timeline=time_block)
+            except provider_profile.ProfileError:
+                return '配置有误，本轮没有发出请求。'
+            if prepared is None:
+                return '本轮回复已停止。'
+            messages, client = prepared.messages, prepared.client
+            affect_transaction, affect_profile = prepared.affect, prepared.provider
+            system = messages[0]['content']
+            reply_cleaner = ReplyCleaner(engine, client, prepared.provider, interrupted,
+                visible, history, notes=notes, memory=memory, source=evidence, channel='weixin')
         else:
             import sensitive_topics
             system+='\n\n'+sensitive_topics.policy(sensitive_topics.enabled(self))
@@ -452,13 +477,17 @@ class WeixinMixin:
             system += "\n本轮用户发来的图片已经直接附在消息里，直接看图回答，不要说看不到图片。"
             messages[0] = {"role": "system", "content": system}
         messages.append({"role": "user", "content": parts if len(parts) > 1 else visible})
+        if reply_cleaner is not None:
+            reply_cleaner.include_content(messages[-1]['content'])
+        from reply_turn import append_evidence
+        append_evidence(messages,evidence)
         try:
             from dialogue_feedback import capture
             capture(self,'weixin',messages)
         except Exception:pass
         output = []
-        client = engine.get_client()
-        from weixin_segments import ReplyProgress, generate
+        client = client or engine.get_client()
+        from weixin_segments import ReplyProgress
         segmented = (bool(getattr(engine, 'DESKTOP_DIALOGUE_PROFILE', '')) and
                      isinstance(progress, ReplyProgress) and
                      getattr(getattr(self, '_weixin_store', None), 'data', {}).get('segmented_replies', True))
@@ -466,36 +495,49 @@ class WeixinMixin:
             import uuid
             import provider_limiter
             import provider_profile
-            from shizuka_admission import remove_system_visibility_meta
             try:
-                profile = provider_profile.from_settings(engine.load_settings())
+                profile = affect_profile if getattr(engine, 'DESKTOP_DIALOGUE_PROFILE', '') else provider_profile.from_settings(engine.load_settings())
             except provider_profile.ProfileError:
                 return '配置有误，本轮没有发出请求。'
             group = uuid.uuid4().hex
             def on_sent(value):
                 self._log_chat('assistant', value, kind='weixin', reply_group=group)
-            result = generate(client, dict(model=engine.api_model(), messages=messages,
-                temperature=.7, max_tokens=engine.CHAT_MAX_TOKENS, _shizuka_profile=profile),
-                progress, lambda value: remove_system_visibility_meta(engine.clean_reply_style(value)), on_sent,
-                acquire=lambda: provider_limiter.acquire(profile, progress.interrupted))
+            def clean_segment(value):
+                piece = 'tail' if progress.sent else 'first'
+                return reply_cleaner.clean(value, piece)
+            from desktop_dialogue_profile import generate
+            from reply_turn import body_kwargs, retry_body
+            result = generate(engine.DESKTOP_DIALOGUE_PROFILE, client, body_kwargs(engine, messages, profile),
+                progress, clean_segment, on_sent,
+                acquire=lambda: provider_limiter.acquire(profile, progress.interrupted),
+                retry_empty=lambda retry_client, request: retry_body(
+                    engine, retry_client, request['messages'], profile, interrupted=progress.interrupted))
+            if affect_transaction is not None:
+                affect_transaction.commit(result.status == 'complete' and bool(result.text))
             if result.text:
                 self._weixin_remember_reply(result.text)
+            # 表情包：正文成功送达之后，按这一轮判出的情绪和强度决定要不要补发一张。
+            # 挑图与发送都在 src/weixin_stickers.py；任何失败都只是"这次不发"。
+            # 注意：这里**不要往下传 message**——_weixin_reply 的签名里没有它，
+            # 传了会抛 NameError，而外层 except 会把它吞掉，表现成"表情包从来不发"。
+            # peer 与 context 都从 channel 自己取。
+            if (affect_transaction is not None and result.status == 'complete' and result.text
+                    and not progress.interrupted()):
+                self._weixin_maybe_sticker(affect_transaction)
             return result
         if enhanced:
             import provider_limiter
             import provider_profile
             try:
-                profile = provider_profile.from_settings(engine.load_settings())
+                profile = affect_profile if getattr(engine, 'DESKTOP_DIALOGUE_PROFILE', '') else provider_profile.from_settings(engine.load_settings())
             except provider_profile.ProfileError:
                 return "配置有误，本轮没有发出请求。"
             try:
                 provider_limiter.acquire(profile, cancel.is_set)
             except provider_limiter.ProviderWaitCancelled:
                 return "本轮回复已停止。"
-            stream_cm = client.chat.completions.create(
-                model=engine.api_model(), messages=messages, temperature=.7,
-                max_tokens=engine.CHAT_MAX_TOKENS, stream=True,
-                _shizuka_profile=profile)
+            from reply_turn import body_kwargs
+            stream_cm = client.chat.completions.create(**body_kwargs(engine, messages, profile))
         else:
             stream_cm = client.chat.completions.create(model=engine.api_model(), messages=messages,
                     temperature=.7, max_tokens=engine.CHAT_MAX_TOKENS, stream=True)
@@ -509,23 +551,88 @@ class WeixinMixin:
         if not reply and not cancel.is_set():
             # reasoning token 吃满上限时会只剩空正文：非流式重试一次
             try:
-                retry_kwargs = {"model": engine.api_model(), "messages": messages,
-                                "temperature": .7, "max_tokens": engine.CHAT_RETRY_MAX_TOKENS}
-                if enhanced:
-                    retry_kwargs["_shizuka_profile"] = profile
-                retry = client.chat.completions.create(**retry_kwargs)
-                reply = engine.clean_reply_style((retry.choices[0].message.content or "")).strip()
+                from reply_turn import retry_body
+                reply = engine.clean_reply_style(retry_body(engine, client, messages,
+                    profile if enhanced else None, interrupted=cancel.is_set)).strip()
             except Exception:
                 reply = ""
+        generated_ok = bool(reply)
         reply = reply or "刚才没有收到完整回复，请再试一次。"
         from shizuka_admission import enforce_turn_policy, remove_system_visibility_meta
         reply = remove_system_visibility_meta(reply)
         if not arch_v2:
             reply = enforce_turn_policy(reply, getattr(shadow_turn, "policy", None))
+        if reply_cleaner is not None:
+            try:
+                reply = reply_cleaner.clean(reply)
+            except InterruptedError:
+                return '本轮回复已停止。'
         if not cancel.is_set():
             self._log_chat("assistant", reply, kind="weixin")
             self._weixin_remember_reply(reply)
+            if affect_transaction is not None and isinstance(progress, ReplyProgress) and generated_ok:
+                # The channel confirms the single-message transport after return.
+                progress.on_complete = affect_transaction.commit
         return reply
+
+    def _weixin_maybe_sticker(self, transaction):
+        """正文成功送达后，按这一轮判出的情绪和强度决定要不要补发一张表情包。
+
+        挑图和发送都在 src/weixin_stickers.py（门槛、概率、不连发都在那里）。
+        这一段**只负责取上下文和兜底**：任何异常都吞掉，绝不影响已经发出的正文。
+        """
+        try:
+            import uuid
+            import pet as engine
+            channel = self._weixin_channel
+            instant = getattr(transaction, 'instant', None)
+            if not channel or not isinstance(instant, dict):
+                return
+            peer = (channel.session or {}).get('owner')
+            with channel.store.lock:
+                context = (channel.store.data.get('notification_context') or {}).get('context')
+            if not peer or not context:
+                return
+            import weixin_stickers
+            book = getattr(self, '_weixin_sticker_book', None)
+            if book is None:
+                book = self._weixin_sticker_book = weixin_stickers.StickerBook(
+                    Path(engine.DATA_DIR) / 'stickers')
+            row = book.pick(instant.get('emotion'), instant.get('intensity'),
+                            exclude=getattr(self, '_weixin_last_sticker', None))
+            if not row:
+                return
+            sent_id = weixin_stickers.send_image(channel.client, peer, context, book.path_of(row),
+                                                 'deskpet-sticker-' + uuid.uuid4().hex[:16])
+            if sent_id:
+                self._weixin_last_sticker = row.get('file')
+                # 表情包也要进对话记录——但**不能用模型看得见的 kind**。
+                #
+                # 走过两版弯路：
+                #   1. `[表情包] 放空` → 太像台词，模型照抄进正文，还自己编了个「嫌弃」
+                #   2. `[表情包]（她刚发了一张「放空」的表情图，没有配文字）` → 照样整段照抄
+                # 只要它在可见历史里，模型就会把它当格式示范学过去。
+                #
+                # 所以用 `weixin_sticker`——不在 CHAT_KINDS 里，
+                # 记录留在归档（用户查得到），但**模型看不到**，无从模仿。
+                mark = '[表情包]（她刚发了一张「%s」的表情图，没有配文字）' % (row.get('name') or '表情')
+                self._log_chat('assistant', mark, kind='weixin_sticker')
+                # 引用缓存照旧要写，否则用户引用这张表情包再问时查不到原文。
+                # 缓存是给查找用的，不参与模型上下文，这里不受 kind 影响。
+                try:
+                    channel.materials.remember([sent_id], text=mark, role='assistant')
+                except Exception:
+                    pass
+                try:
+                    with open(os.path.join(engine.DATA_DIR, 'weixin-sticker.log'), 'a',
+                              encoding='utf-8') as handle:
+                        handle.write('%s emotion=%s/%s send=%s msg_id=%s\n' % (
+                            time.strftime('%H:%M:%S'), instant.get('emotion'),
+                            instant.get('intensity'), row.get('file'), sent_id))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _weixin_remember_reply(self, reply):
         # Only delivered plain conversation enters memory; file results bypass this path.
@@ -613,7 +720,7 @@ class WeixinMixin:
         if existing is not None and existing.winfo_exists():
             self._move_dialog(existing, 660, 800)
             return
-        win = tk.Toplevel(self.root)
+        win = dialog_window(self.root)
         self._weixin_win = win
         win.title("微信连接 · 手机聊天与文件任务")
         import pet as engine

@@ -451,7 +451,7 @@ def self_test(report):
             next(w for w in descendants(dialog) if isinstance(w, ttk.Button) and w.cget('text') == '应用隐私词').invoke()
             with patch.object(filedialog, 'askdirectory', return_value=folder):
                 next(w for w in descendants(dialog) if isinstance(w, ttk.Button) and w.cget('text') == '已检查，保存 JSON').invoke()
-            paths = list(Path(folder).glob('静香聊天_*.json'))
+            paths = list(Path(folder).glob('Shizuka聊天_*.json'))
             content = paths[0].read_text('utf-8') if paths else ''
             checks.append({'export_button_saved': len(paths) == 1 and win.exported_count == 1})
             checks.append({'export_redacted': bool(content) and 'tester@example.invalid' not in content and '私人学校' not in content})

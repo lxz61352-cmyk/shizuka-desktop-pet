@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-01",
+  "reason": "这些 persona 候选卡已被后续版本取代；当前线上用的是 persona.daily-examples.v1.json。",
+  "moved_from": "characters/shizuka-side-motion/",
+  "moved_to": "characters/_archive-2026-10-01/persona-candidates/",
+  "files": [
+    "persona.s21.candidate.json",
+    "persona.s22.candidate.json",
+    "persona.s23.candidate.json",
+    "persona.s24.candidate.json",
+    "persona.s25.candidate.json",
+    "persona.s26.candidate.json",
+    "persona.s27.candidate.json",
+    "persona.s28.candidate.json",
+    "persona.s29.candidate.json",
+    "persona.s30-C.candidate.json",
+    "persona.s30-CD.candidate.json",
+    "persona.s30-D.candidate.json",
+    "persona.s31.candidate.json",
+    "persona.s31-p.candidate.json"
+  ],
+  "kept_on_purpose": {
+    "persona.s31-r.candidate.json": "desktop_dialogue_profile.py:55 仍在使用",
+    "persona.daily-examples.v1.json": "**当前线上角色卡**（LATEST_CARD）",
+    "persona.enhanced.json": "enhanced_dialogue.py 的 ENHANCED_CARD",
+    "persona.json": "pet.py 的 CHARACTER_CARD / ACTIVE_PACK.persona",
+    "其余资源（portrait/layers/activity/source/behavior/reaction/character*.json）": "**按约定动态加载，不能搬**"
+  },
+  "restore": "把这些文件从 _archive-2026-10-01/persona-candidates/ 移回 characters/shizuka-side-motion/ 即可；没有改任何代码里的路径。"
+}

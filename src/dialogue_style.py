@@ -167,21 +167,21 @@ def hold_milliseconds(text):return int(min(45000,max(7000,len(text)/12*1000)))
 DEFAULT_LINES={
     'todo_created':'我记下了。',
     'todo_created_multiple':'我记下了这{count}件事。\n{items_text}',
-    'todo_due':'您安排的“{task}”到时间了。',
-    'todo_note':'您之前提到：{note}',
-    'todo_notimed':'这件事我先记着，等您方便时再定提醒时间。',
+    'todo_due':'你安排的“{task}”到时间了。',
+    'todo_note':'你之前提到：{note}',
+    'todo_notimed':'这件事我先记着，等你方便时再定提醒时间。',
     'todo_saved_note':'我把这点补在“{task}”的备注里了。',
-    'todo_waiting':'微信还没连通，提醒我先留着。您连接后给我发条消息就好。',
-    'todo_failed':'这次没能把待办保存完整，我把情况留在列表里，请您核对一下。',
-    'connection_failed':'刚才没能连上，您稍后再试一次好吗？',
+    'todo_waiting':'微信还没连通，提醒我先留着。你连接后给我发条消息就好。',
+    'todo_failed':'这次没能把待办保存完整，我把情况留在列表里，请你核对一下。',
+    'connection_failed':'刚才没能连上，你稍后再试一次好吗？',
     # 天气取不到时按原因分开说：不猜同名城市、也不含糊其辞
     'weather_no_location':'抱歉呀，我这边没认出你在哪个城市，定位没取到。你说一下城市名，我再查一次。',
     'weather_no_match':'抱歉呀，我没能确认你所在城市的天气站点——地名可能有多个同名的。你说一下具体城市，我再查一次。',
     'weather_no_network':'抱歉呀，我这边暂时没取到天气数据呢……可能是网络不通，等会儿再问我一次吧。',
-    'file_start':'我来处理，弄好后再告诉您。',
+    'file_start':'我来处理，弄好后再告诉你。',
     'file_running':'我还在处理，已经过了 {seconds} 秒。',
     'file_completed':'这次处理已经返回，具体结果如下。',
-    'file_empty':'执行已经结束，但没有返回文字结果。请您和我一起核对任务记录。',
+    'file_empty':'执行已经结束，但没有返回文字结果。请你和我一起核对任务记录。',
     'file_cancelled':'已经停下了。停下前完成的修改仍会保留，具体情况在任务记录里。',
     'file_timeout':'这次处理超过了时限，我已停止继续执行。可能完成了一部分，请先核对任务记录。',
     'file_failed':'这次没能处理完成。下面是返回的情况。',
@@ -218,10 +218,10 @@ def file_result(result,style=None,limit=6000):
 # "proactive_directions" 里即可（代码会优先用角色包里的）。
 PROACTIVE_DIRECTIONS = [
     {'id': 'observe', 'weight': 30, 'label': '具体观察',
-     'prompt': '就当前窗口说一句具体的观察或判断（他在做什么、可能卡在哪一步、这软件大概在干什么），'
+     'prompt': '就当前程序名或窗口标题说一句有依据的反应；不推测进度、困难或用户状态，'
                '用陈述句，不要提问。'},
     {'id': 'remind', 'weight': 20, 'label': '实用提醒',
-     'prompt': '结合当前程序和时间给一条具体、简短的提醒（先存盘、备份、歇一会儿、喝口水、护眼），'
+     'prompt': '有明确依据时，给一条与当前任务相关的简短提醒；不推测未保存或未提交，不劝喝水、护眼或休息，'
                '只说这一次，不啰嗦、不说教。'},
     {'id': 'tip', 'weight': 15, 'label': '相关小知识',
      'prompt': '围绕当前这个程序给一条确实有用的小技巧或冷知识（快捷键、省事的做法、常见的坑）。'

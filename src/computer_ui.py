@@ -8,6 +8,8 @@ from tkinter import filedialog, messagebox,ttk
 from tkinter.scrolledtext import ScrolledText
 from computer_agent import ComputerAgent, DshInstallation, load_config, save_config, MODEL_CHOICES, resolved_task_model
 from computer_progress import ComputerProgressMixin,PendingQuestions
+from window_opening import dialog_window
+from text_output import adaptive_label,update_output
 
 
 def computer_command(text):
@@ -121,7 +123,7 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         except Exception as exc:
             messagebox.showerror("电脑助手配置", str(exc), parent=self.pet)
             return
-        win = tk.Toplevel(self.root)
+        win = dialog_window(self.root)
         self._computer_win = win
         win.title("电脑助手 · 本机文件任务")
         win.minsize(540, 500)
@@ -134,7 +136,7 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         heading=page_header(top,'电脑助手');heading.pack(fill='x');win._page_header=heading
         enabled = tk.BooleanVar(value=config.get("enabled", True))
         tk.Checkbutton(heading, text="启用文件任务", variable=enabled).pack(side='right')
-        tk.Label(top, text="由本机 dsh 执行。选择工作文件夹后，可以读取、创建、编辑和整理文件。", anchor="w", wraplength=640).pack(fill='x',padx=PAGE_X,pady=(0,10))
+        adaptive_label(top, text="由本机 dsh 执行。选择工作文件夹后，可以读取、创建、编辑和整理文件。", anchor="w").pack(fill='x',padx=PAGE_X,pady=(0,10))
         paths = tk.Frame(win, padx=16)
         paths.grid(row=1, column=0, sticky="ew")
         paths.columnconfigure(1, weight=1)
@@ -158,17 +160,21 @@ class ComputerAssistantMixin(ComputerProgressMixin):
             tk.Label(paths, text=title, anchor="w").grid(row=row, column=0, sticky="w", pady=4)
             value = tk.StringVar(value=config.get(key, ""))
             variables[key] = value
-            tk.Entry(paths, textvariable=value).grid(row=row, column=1, sticky="ew", padx=8, pady=4)
+            ttk.Entry(paths, textvariable=value).grid(row=row, column=1, sticky="ew", padx=8, pady=4)
         def browse():
             folder = filedialog.askdirectory(parent=win, title="选择本轮文件任务的工作文件夹", initialdir=variables["workspace"].get())
             if folder:
                 variables["workspace"].set(folder)
         tk.Button(paths, text="选择…", command=browse).grid(row=0, column=2)
         connection = tk.StringVar(value="")
+        opacity_choices={'通透':.55,'均衡':.70,'清晰':.85,'不透明':1.0}
+        configured_opacity=config.get('text_opacity',.70)
+        opacity=tk.StringVar(value=next((name for name,value in opacity_choices.items() if value==configured_opacity),'均衡'))
         def save():
             value=next((k for k,v in model_labels.items() if v==model.get()),'follow-chat')
             updated = {**config, **{k: v.get().strip() for k, v in variables.items()}, "enabled": enabled.get(),
-                       'permission_mode':scopes[scope.get()], 'model':value}
+                       'permission_mode':scopes[scope.get()], 'model':value,
+                       'text_opacity':opacity_choices[opacity.get()]}
             try:
                 saved = save_config(self._computer_data_dir(), updated)
                 installation = DshInstallation.discover(saved)
@@ -179,7 +185,7 @@ class ComputerAssistantMixin(ComputerProgressMixin):
                 connection.set(str(exc))
                 return None
         tk.Button(paths, text="保存设置", command=save).grid(row=5, column=0, sticky="w", pady=8)
-        tk.Label(paths, textvariable=connection, anchor="w", wraplength=480).grid(row=5, column=1, columnspan=2, sticky="w")
+        adaptive_label(paths, textvariable=connection, anchor="w").grid(row=5, column=1, columnspan=2, sticky="ew")
         tk.Label(paths, textvariable=resolved, anchor="w", fg="#7a7a7a").grid(row=6, column=1, columnspan=2, sticky="w")
         try:
             DshInstallation.discover(config)
@@ -189,9 +195,14 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         input_frame = tk.Frame(win, padx=16, pady=10)
         input_frame.grid(row=2, column=0, sticky="ew")
         tk.Label(input_frame, text="文件任务", anchor="w").pack(fill="x")
+        reading=tk.Frame(input_frame);reading.pack(fill='x')
+        tk.Label(reading,text='文本清晰度').pack(side='left')
+        opacity_box=ttk.Combobox(reading,textvariable=opacity,values=tuple(opacity_choices),state='readonly',width=9)
+        opacity_box.pack(side='left',padx=8)
         task_box = tk.Text(input_frame, height=4, wrap="word")
+        task_box._glass_text_opacity=opacity_choices[opacity.get()]
         task_box.pack(fill="x", pady=6)
-        tk.Label(input_frame, text="例如：列出文件夹中的文件；把笔记整理为 Markdown。也可在聊天中输入 /电脑 加任务内容。", anchor="w", wraplength=640).pack(fill="x")
+        adaptive_label(input_frame, text="例如：列出文件夹中的文件；把笔记整理为 Markdown。也可在聊天中输入 /电脑 加任务内容。", anchor="w").pack(fill="x")
         controls = tk.Frame(win, padx=16)
         controls.grid(row=3, column=0, sticky="ew")
         def execute():
@@ -209,25 +220,32 @@ class ComputerAssistantMixin(ComputerProgressMixin):
         tk.Button(controls, text="打开工作文件夹", command=open_folder).pack(side="left", padx=4)
         tk.Button(controls, text="打开任务记录", command=lambda: open_folder(True)).pack(side="left", padx=4)
         status_text = tk.StringVar()
-        tk.Label(win, textvariable=status_text, anchor="w", padx=16, pady=10).grid(row=4, column=0, sticky="ew")
+        adaptive_label(win, textvariable=status_text, anchor="w", padx=16, pady=10).grid(row=4, column=0, sticky="ew")
         output_box = ScrolledText(win, wrap="word", state="disabled", height=12)
+        output_box._glass_text_opacity=opacity_choices[opacity.get()]
         output_box.grid(row=5, column=0, sticky="nsew", padx=16, pady=(0, 16))
+        def change_opacity(_event=None):
+            from backdrop_widgets import translucent_text
+            for editor in (task_box,output_box):
+                editor._glass_text_opacity=opacity_choices[opacity.get()];translucent_text(editor)
+        opacity_box.bind('<<ComboboxSelected>>',change_opacity)
         previous = [None]
+        previous_busy=[None]
         def refresh():
             if not win.winfo_exists():
                 return
             state = self._computer_state
-            status_text.set(state.get("status", "就绪"))
-            start.configure(state="disabled" if state.get("busy") else "normal")
-            stop.configure(state="normal" if state.get("busy") else "disabled")
+            status=state.get("status", "就绪")
+            if status_text.get()!=status:status_text.set(status)
+            busy=bool(state.get('busy'))
+            if previous_busy[0]!=busy:
+                start.configure(state="disabled" if busy else "normal")
+                stop.configure(state="normal" if busy else "disabled");previous_busy[0]=busy
             output = state.get("output", "")
             if state.get("error"):
                 output += "\n\n执行信息：\n" + state["error"]
             if previous[0] != output:
-                output_box.configure(state="normal")
-                output_box.delete("1.0", "end")
-                output_box.insert("1.0", output)
-                output_box.configure(state="disabled")
+                update_output(output_box,previous[0],output)
                 previous[0] = output
             win.after(500, refresh)
         refresh()

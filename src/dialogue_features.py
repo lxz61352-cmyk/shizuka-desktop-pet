@@ -28,14 +28,24 @@ def topic_overlap(a, b):
 def topic_key(fact):
     return re.sub(r'\s+', '', fact or '')[:40]
 
+def current_persona():
+    """当前角色设定——**所有功能共用这一份**。
+
+    用户 2026-10-01（GPT 第 1 点）：聊天走新角色卡，而问候、文献讲解、结果汇报
+    仍调旧的 `load_persona()`，于是"聊天调整好了，其他功能还是另一种腔调"。
+    这里统一来源，功能各自只补自己必要的要求。
+    """
+    import pet as engine
+    if engine.DESKTOP_DIALOGUE_PROFILE:
+        from desktop_dialogue_profile import persona_core
+        return persona_core(engine.DESKTOP_DIALOGUE_PROFILE, engine.ACTIVE_PACK)
+    return engine.load_persona()
+
+
 class DialogueFeaturesMixin(GroundingMixin):
     def _casual_persona(self):
-        import pet as engine
         from sensitive_topics import policy
-        if engine.DESKTOP_DIALOGUE_PROFILE:
-            from desktop_dialogue_profile import persona_core
-            return persona_core(engine.DESKTOP_DIALOGUE_PROFILE,engine.ACTIVE_PACK)+'\n'+policy(False)
-        return engine.load_persona()+'\n'+policy(False)
+        return current_persona()+'\n'+policy(False)
 
     def _dialogue_style(self):
         import pet as engine
@@ -89,6 +99,8 @@ class DialogueFeaturesMixin(GroundingMixin):
     def _proactive_text_ok(self, text, direction=None):
         """本地闸门：陪伴方向允许这类句子；其它方向若只是「我就在这儿/你忙你的」这种
         没有具体内容的空话，就丢掉、不说。"""
+        from proactive_content import unsuitable
+        if unsuitable(text):return False
         if (direction or {}).get('id') == 'company':
             return True
         return not PROACTIVE_FILLER_RE.search(text or '')
@@ -108,8 +120,11 @@ class DialogueFeaturesMixin(GroundingMixin):
         return ("下面这段内容不是中文（源语言可能是英语、日语、韩语等）。\n"
                 "1) 先自行识别源语言，翻译成**自然流畅、口语化**的简体中文："
                 "读起来要像中文母语者平时会说的话，保留原意和语气，不要生硬直译、不要翻译腔、不要照抄汉字。\n"
-                "2) 再针对这段内容，用你自己的口吻补一句**简短**自然的反应/点评"
-                "（一句话即可，可以关心、调侃或感慨，**不要复述译文**）；"
+                # 2026-10-03 按用户反馈改：原来是「**再**补一句点评」，等于强制。
+                # 现在可选——翻译可以只翻译，有具体感想再补。
+                "2) 如果对这段内容**确实有想说的**，再用自己的口吻补一句简短的反应"
+                "（一句话即可，可以调侃、感慨或吐槽，**不要复述译文**）；"
+                "**没有具体感想就把 comment 留空**——只给译文完全可以，不必每次都补点评。"
                 "**别用「哦，这是xxx吧」这种鉴定/旁白腔**，直接说你会说的话。\n"
                 "不要用「发我看看」「我陪你一起弄」这类空话收尾，内容本身就在眼前。\n"
                 "只输出 JSON：{\"translation\": \"译文\", \"comment\": \"你的那句话\"}。\n"
@@ -123,30 +138,39 @@ class DialogueFeaturesMixin(GroundingMixin):
             return ""
 
     def _greeting_prompt(self, direction, weather=None):
-        """启动问候的提示词（正式程序和离线预演脚本共用一套，别各写一份）。"""
-        tail=self._voice_lang_tail()
-        turn_rule=('本轮方向（'+str((direction or {}).get('label') or '')+'）：'
-                   +str((direction or {}).get('prompt') or '')
-                   +'。先自然打个招呼（一句），再按这个方向说一句具体的话，两句以内。'
-                   '不要每次都用同一句开场白，示例只参考风格，不复述固定台词。')
+        """启动问候的提示词（正式程序和离线预演脚本共用一套，别各写一份）。
+
+        **2026-10-03 按用户反馈改**：
+          · 原来强制「招呼 + 方向池里的一句话」，而**方向池是针对当前窗口的**
+            （observe 那条会说"就当前窗口说一句"）——**启动时根本没有窗口信息**，
+            等于逼她编。→ 启动问候**不再复用窗口方向池**（`direction` 仍接收以兼容调用方，
+            但不再进提示词）。
+          · 原来强制「顺带一句贴心提醒（带伞、添衣、防晒、温差）」→ 每次都在劝人。
+            → 天气降为**可选话题**：想提就顺口一句，不想提就只说招呼。
+          · 风格对齐：**意思到了就停，不必硬凑第二句**。
+        """
+        tail = self._voice_lang_tail()
+        rule = ('自然打个招呼就行，一两句，**意思到了就停**。'
+                '不必硬凑第二句，也不必每次都用同一句开场白；'
+                '示例只参考风格，不复述固定台词。')
+        guard = ('只作启动招呼：不提醒待办、不报具体时刻，'
+                 '不编造用户所在地、天气、新闻、桌面物品、饮水或工作/疲惫状态。'
+                 '不要用「用久了」「这么晚还在」这类从时间推断用户状态的说法。'
+                 '启动时看不到用户的窗口和屏幕内容，不要提及任何窗口、页面、程序或桌面上的东西，'
+                 '也不要推测用户正在做什么。')
         if weather:
-            return ("当前时间 "+time.strftime("%Y-%m-%d %H:%M")+
-                    "。用户所在地与实时天气："+weather+
-                    "。请以静香的口吻结合上面这份真实天气说一句简短启动问候，顺带一句贴心提醒"
-                    "（带伞、添衣、防晒、温差之类）。"+turn_rule+
-                    "只作启动招呼，不提醒待办、不报具体时刻，不编造用户所在地、新闻、桌面物品、饮水或工作/疲惫状态。"
+            return ("当前时间 " + time.strftime("%Y-%m-%d %H:%M") +
+                    "。用户所在地与实时天气：" + weather +
+                    "。天气**只是可选话题**——想提就顺口说一句，不想提就只说招呼，"
+                    "**不必每次都劝带伞、添衣、防晒或注意温差**。" + rule + guard +
                     "只准使用上面给出的天气信息，不要补充数据里没有的下雨、降温、风力、湿度；"
-                    "给出的是当下实况，不要改写成未来的预报。"
-                    "不要用「用久了」「这么晚还在」这类从时间推断用户状态的说法。"
-                    "启动时看不到用户的窗口和屏幕内容，不要提及任何窗口、页面、程序或桌面上的东西，也不要推测用户正在做什么。"+tail)
-        return ("当前时间 "+time.strftime("%Y-%m-%d %H:%M")+
-                "。依照角色卡和当前场景自然生成一句简短启动问候。"+turn_rule+
-                "只作启动招呼，不提醒待办、不报具体时刻，不编造用户所在地、天气、新闻、桌面物品、饮水或工作/疲惫状态。"
-                "不要用「用久了」「这么晚还在」这类从时间推断用户状态的说法。"
-                "启动时看不到用户的窗口和屏幕内容，不要提及任何窗口、页面、程序或桌面上的东西，也不要推测用户正在做什么。")+tail
+                    "给出的是当下实况，不要改写成未来的预报。" + tail)
+        return ("当前时间 " + time.strftime("%Y-%m-%d %H:%M") +
+                "。依照角色卡和当前场景自然打个招呼。" + rule + guard) + tail
 
     def _proactive_prompt(self,kind,facts,direction=None):
-        parts=[self._dialogue_style().get('proactive_instruction',''),
+        from proactive_content import INSTRUCTION
+        parts=[self._dialogue_style().get('proactive_instruction',''),INSTRUCTION,
                '现在是 '+time.strftime('%Y-%m-%d %H:%M:%S')+'。触发场景：'+kind+'。',
                '以下是程序确实获得的有限信息：'+json.dumps(facts,ensure_ascii=False)+'。',
                '当前待办状态：'+json.dumps(self._todo_state_context(),ensure_ascii=False)+'。已完成事项不再提醒，过时活动不主动提。']
@@ -208,7 +232,7 @@ class DialogueFeaturesMixin(GroundingMixin):
                     '普通任务一至三段就好，需要解释时可以更长。返回 JSON {"reply":"要说的话"}。\n'+
                     json.dumps({'status':result['status'],'result':output[:16000]},ensure_ascii=False))
             response=client.chat.completions.create(model=engine.api_model(),temperature=.3,max_tokens=1800,
-                response_format={'type':'json_object'},messages=[{'role':'system','content':engine.load_persona()},
+                response_format={'type':'json_object'},messages=[{'role':'system','content':current_persona()},
                                                                {'role':'user','content':prompt}])
             reply=json.loads(response.choices[0].message.content).get('reply')
             if isinstance(reply,str) and reply.strip():return clean_text(reply.strip())

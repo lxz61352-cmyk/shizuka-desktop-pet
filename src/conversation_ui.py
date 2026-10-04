@@ -70,7 +70,7 @@ def chat_visible_rect():
 
 def _pil_font(size=15):
     from PIL import ImageFont
-    for name in ("msyh.ttc", "msyhbd.ttc", "simhei.ttf"):
+    for name in ("msyhbd.ttc", "msyh.ttc", "simhei.ttf"):
         try:
             return ImageFont.truetype("C:/Windows/Fonts/" + name, size)
         except Exception:
@@ -171,11 +171,11 @@ class ConversationUIMixin:
         if interrupt:self._cancel_reply()
         self.close_popup()
         width=min(460,max(320,self.root.winfo_screenwidth()-40))
-        win,canvas,resize=surface(self.root,width,280,'发消息给静香')
+        win,canvas,resize=surface(self.root,width,280,'发消息给Shizuka')
         entry=Composer(win,height=4,width=38,wrap='word',bg=SURFACE,fg=INK,
                        insertbackground=INK,relief='flat',bd=0,padx=12,pady=10,
                        highlightthickness=0,
-                       font=('Microsoft YaHei UI',11),spacing3=4)
+                       font=('Microsoft YaHei UI',11,'bold'),spacing3=4)
         entry.place(x=44,y=72,width=width-88,height=106)
         entry.frame.configure(bg=SURFACE)
         entry.vbar.configure(bg=SURFACE,troughcolor=SURFACE,bd=0,highlightthickness=0,width=9)
@@ -207,7 +207,7 @@ class ConversationUIMixin:
             for index,att in enumerate(atts[:2]):
                 label=str(index+1)+'. '+att.get('name','图片')[:10]
                 chip=tk.Button(previews,text=label,command=lambda:self.manage_attachments(atts,refresh),
-                               bg=SURFACE,fg=INK,relief='flat',bd=0,font=('Microsoft YaHei UI',9),cursor='hand2')
+                               bg=SURFACE,fg=INK,relief='flat',bd=0,font=('Microsoft YaHei UI',9,'bold'),cursor='hand2')
                 if att.get('image') is not None:
                     photo=ImageTk.PhotoImage(_thumb(att['image'],34,26),master=win);photos.append(photo)
                     chip.configure(image=photo,compound='left',padx=4,pady=1)
@@ -230,25 +230,29 @@ class ConversationUIMixin:
         button(tools,'发送',send,primary=True).pack(side='right',padx=(10,4))
         task=tk.StringVar(value='选择材料操作…')
         choose=ttk.Combobox(actions,textvariable=task,state='readonly',values=('看看这些材料','讲解题目','提取文字','翻译内容','总结要点','比较所选图片'),width=18)
-        choose.pack(side='left');ttk.Label(actions,text='可继续补充问题',font=('Microsoft YaHei UI',8)).pack(side='left',padx=6)
+        choose.pack(side='left');ttk.Label(actions,text='可继续补充问题',font=('Microsoft YaHei UI',8,'bold')).pack(side='left',padx=6)
         def task_selected(event=None):
             existing=entry.get().strip()
             entry.insert('end',('\n' if existing else '')+task.get());self._refocus_chat_entry()
         choose.bind('<<ComboboxSelected>>',task_selected)
-        hint=ttk.Label(win,text='Ctrl+V 可粘贴图片 · Shift+Enter 换行',foreground=MUTED,font=('Microsoft YaHei UI',8))
+        hint=ttk.Label(win,text='Ctrl+V 可粘贴图片 · Shift+Enter 换行',foreground=MUTED,font=('Microsoft YaHei UI',8,'bold'))
         hint.place(x=48,y=245)
         close_btn=button(win,'×',close);close_btn.place(x=width-63,y=26,width=27,height=27)
         entry.bind('<Return>',send)
-        entry.bind('<Control-v>',lambda e:self.paste_attachment(atts,refresh))
-        entry.bind('<Control-V>',lambda e:self.paste_attachment(atts,refresh))
+        entry.bind('<Control-v>',lambda e=None:self.paste_attachment(atts,refresh))
+        entry.bind('<Control-V>',lambda e=None:self.paste_attachment(atts,refresh))
         draft_timer=[None]
         def save_draft(event=None):
             if draft_timer[0] is not None:win.after_cancel(draft_timer[0])
             draft_timer[0]=win.after(500,lambda:self._save_chat_draft(entry.get()))
         entry.bind('<KeyRelease>',save_draft,add='+')
-        win.bind('<Destroy>',lambda e:win.after_cancel(draft_timer[0]) if e.widget is win and draft_timer[0] is not None else None,add='+')
-        entry.bind('<Shift-Return>',lambda e:(entry.insert('insert','\n'),'break')[-1])
-        win.bind('<Escape>',lambda e:close())
+        def cancel_draft(event=None):
+            if event is not None and event.widget is not win:return
+            if draft_timer[0] is not None:
+                win.after_cancel(draft_timer[0]);draft_timer[0]=None
+        win.bind('<Destroy>',cancel_draft,add='+')
+        entry.bind('<Shift-Return>',lambda e=None:(entry.insert('insert','\n'),'break')[-1])
+        win.bind('<Escape>',lambda e=None:close())
         self._chat_win=win;self._chat_entry=entry;self._chat_canvas=canvas
         refresh();win.update_idletasks();self.update_chat_pos()
         win.deiconify();win.lift();entry.focus_force()
@@ -321,7 +325,7 @@ class ConversationUIMixin:
             self.say("一次最多带 %d 个附件哦。" % CHAT_ATTACH_MAX);return
         self._chat_attach_busy=True          # 选文件期间别让"点外面"把输入框关掉
         try:
-            path=filedialog.askopenfilename(parent=self.pet,title="选一个文件给静香看",
+            path=filedialog.askopenfilename(parent=self.pet,title="选一个文件给Shizuka看",
                 filetypes=[("图片","*.png *.jpg *.jpeg *.gif *.bmp *.webp"),
                            ("文本/代码","*.txt *.md *.py *.json *.csv *.log *.yaml *.yml *.ini *.bat *.ps1"),
                            ("所有文件","*.*")])
@@ -348,12 +352,15 @@ class ConversationUIMixin:
             self._refocus_chat_entry()
 
     def show_chat_log(self,event=None,mode=None):
+        from qt_window_bridge import open_window
+        if open_window(self,'history',mode=mode):return
+        from window_opening import dialog_window
         from glass_button import GlassButton
         old=getattr(self,'_chatlog_win',None)
         if old is not None and old.winfo_exists():
             if mode:getattr(self,'_chatlog_mode').set(mode);self._chatlog_refresh()
             self._move_dialog(old,820,650);return
-        win=self._chatlog_win=tk.Toplevel(self.root);win.title('静香 · 对话');win.minsize(620,460);self._place_dialog(win,820,650)
+        win=self._chatlog_win=dialog_window(self.root);win.title('Shizuka · 对话');win.minsize(620,460);self._place_dialog(win,820,650)
         win.attributes('-topmost',True)
         head=page_header(win,'对话记录');head.pack(fill='x')
         GlassButton(head,text='继续聊',command=self.open_chat_input,primary=True).pack(side='right')

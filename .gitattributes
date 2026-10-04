@@ -13,6 +13,8 @@ voice_model/*.pth filter=lfs diff=lfs merge=lfs -text
 *.cmd text eol=lf
 *.lock text eol=lf
 /_internal/** -text
+/qt-windows/_internal/** -text
+/qt-windows/_internal/PySide6/Qt6WebEngineCore.dll filter=lfs diff=lfs merge=lfs -text
 /LICENSES/** -text
 /BUILD-INFO.json -text
 /MANIFEST.json -text

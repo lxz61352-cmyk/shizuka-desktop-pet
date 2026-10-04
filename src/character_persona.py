@@ -14,7 +14,7 @@ def read_card(path):
 def character_name(path,pack):
     value=read_card(path).get('name')
     if isinstance(value,str) and value.strip():return value.strip()
-    return pack.manifest.get('display_name',pack.name) if pack else '静香'
+    return pack.manifest.get('display_name',pack.name) if pack else 'Shizuka'
 
 
 def dialogue_option(path,pack,key,_unused=None):
@@ -35,13 +35,22 @@ def dialogue_option(path,pack,key,_unused=None):
 
 def load_character_persona(path,pack,*_unused):
     data=read_card(path);parts=[]
+    extensions=data.get('extensions',{})
+    options=extensions.get('deskpet',{}) if isinstance(extensions,dict) else {}
     keys=('description','personality','scenario','system_prompt')
     for key in keys:
         value=data.get(key)
         if isinstance(value,str) and value.strip():
+            if key=='system_prompt' and isinstance(options,dict) and options.get('spoken_contract_tail'):
+                from conversation_voice import START,END
+                value=START+value+END
             parts.append(value.replace('<character>','').replace('</character>','').strip())
     example=data.get('mes_example')
-    if isinstance(example,str) and example.strip():
+    # Explicit, character-owned opt-out: keep source examples in the card for
+    # reference without making every chat imitate their events. Unknown values
+    # retain the existing behavior for imported/older cards.
+    reference_only=isinstance(options,dict) and options.get('example_injection')=='reference_only'
+    if not reference_only and isinstance(example,str) and example.strip():
         heading='以下是口吻示例；示例情境不是用户的真实记忆：\n'
         parts.append(heading+example.replace('<START>','').replace('{{char}}',character_name(path,pack)).replace('{{user}}','用户'))
     if parts:

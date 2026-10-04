@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import ttk, font as tkfont
 from PIL import Image, ImageDraw, ImageTk
 from ui_theme import FONT, palette
+from backdrop_frame import fit_image
 
 
 class ArtTabs(ttk.Frame):
@@ -37,7 +38,9 @@ class ArtTable(tk.Canvas):
         self.bind('<MouseWheel>',self.wheel)
         self.bind('<Destroy>',self.dispose)
     def dispose(self,event):
-        if event.widget is self and self.pending:self.after_cancel(self.pending);self.pending=None
+        if event.widget is self:
+            if self.pending:self.after_cancel(self.pending);self.pending=None
+            if self.photo:self.photo.__del__();self.photo=None
     def queue(self):
         if self.pending is None:self.pending=self.after_idle(self.render)
     def heading(self,key,text):self.headings[key]=text;self.queue()
@@ -100,16 +103,19 @@ class ArtTable(tk.Canvas):
         self.content_height=y+8;self.configure(scrollregion=(0,0,width,self.content_height));self.paint()
     def paint(self):
         if not self.winfo_exists():return
-        super().delete('art')
         size=(max(1,self.winfo_width()),max(1,self.winfo_height()))
-        image=self.art.resize(size).convert('RGBA') if self.art is not None else Image.new('RGBA',size,palette(self)['bg'])
+        image=fit_image(self.art,size).convert('RGBA') if self.art is not None else Image.new('RGBA',size,palette(self)['bg'])
         top=self.canvasy(0)
         if self.selected and self.selected[0] in self.bounds:
             a,b=self.bounds[self.selected[0]];layer=Image.new('RGBA',size)
             ImageDraw.Draw(layer).rounded_rectangle((8,a-top,size[0]-8,b-top),radius=8,fill=(115,178,220,55))
             image=Image.alpha_composite(image,layer)
-        self.photo=ImageTk.PhotoImage(image,master=self)
-        self.create_image(0,top,anchor='nw',image=self.photo,tags='art');self.tag_lower('art')
+        if self.photo and (self.photo.width(),self.photo.height())==size:self.photo.paste(image)
+        else:self.photo=ImageTk.PhotoImage(image,master=self)
+        if self.find_withtag('art'):
+            self.coords('art',0,top);self.itemconfigure('art',image=self.photo)
+        else:self.create_image(0,top,anchor='nw',image=self.photo,tags='art')
+        self.tag_lower('art')
     def yview(self,*args):
         result=super().yview(*args)
         if args:self.paint()

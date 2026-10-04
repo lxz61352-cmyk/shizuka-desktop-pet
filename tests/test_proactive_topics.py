@@ -56,7 +56,7 @@ class TopicsTests(unittest.TestCase):
     def test_no_memory_still_has_daily_topics_not_fiction(self):
         self.assertEqual(self.pick(.1,memories=[],rows=[])['category'],'daily')
         choices=topics.daily_candidates([],[],[],self.now)
-        self.assertEqual({r['focus'] for r in choices},{'plans','leisure','meal-evening'})
+        self.assertEqual({r['focus'] for r in choices},{'open-chat','opinion','plans','leisure','meal-evening'})
 
     def test_identity_and_meal_time_are_not_guessed(self):
         noon=self.now-6*3600
@@ -131,9 +131,16 @@ class NewsTests(unittest.TestCase):
             self.assertEqual(news.fresh_items(self.now,cancelled=lambda:True),[])
             self.assertEqual(news.fresh_items(self.now+37*3600),[])
 
+    def test_consumer_product_news_is_excluded_at_the_source(self):
+        for fields in (dict(title='某品牌发布全新耳机，渐变面板'),
+                       dict(title='科学科技进展',description='新品相机采用新传感器。'),
+                       dict(title='智能手机发布，外观更新')):
+            self.assertEqual(self.parse(self.feed(**fields)),[],fields)
+        self.assertEqual(len(self.parse(self.feed(title='航天科普展介绍月球探索'))),1)
+
 
 class GenerationTests(unittest.TestCase):
-    def run_generation(self,topic,text,verdict=True):
+    def run_generation(self,topic,text,verdict=True,history=None):
         from test_weixin_prompt_offline import _WeixinCapture,pet
         app=_WeixinCapture([]);app._last_user_dialogue_at=time.monotonic()-7200
         app._chat_lock=threading.RLock();app._chat_log=[]
@@ -143,7 +150,8 @@ class GenerationTests(unittest.TestCase):
         with patch.multiple(pet,has_api_key=lambda:True,get_memory=lambda:NS(snapshot=lambda:[]),
                             get_client=lambda:client,_disable_thinking=lambda x:x,load_settings=lambda:{},
                             api_model=lambda:'synthetic'),patch('provider_limiter.acquire'),patch.object(topics,'pick_topic',return_value=topic):
-            result=app._weixin_proactive_generate(pro.state({}),threading.Event())
+            value=pro.state({});value['history']=history or []
+            result=app._weixin_proactive_generate(value,threading.Event())
         return result,client
 
     def test_news_source_is_appended_by_code_not_model(self):
@@ -160,6 +168,28 @@ class GenerationTests(unittest.TestCase):
         self.assertEqual(result['text'],'晚上吃什么呀？')
         rejected,client=self.run_generation(topic,'晚上吃什么呀？我这边刚忙完一段。')
         self.assertIsNone(rejected);self.assertEqual(client.chat.completions.create.call_count,1)
+
+    def test_daily_cannot_reopen_a_product_from_yesterdays_news(self):
+        topic=dict(category='daily',focus='leisure',topic='daily:leisure',text='聊空闲时的轻松话题')
+        history=[dict(at=time.time()-86400,topic='news:old',category='news',text='某品牌出了新品耳机，渐变配色。')]
+        result,client=self.run_generation(topic,'你平时会看这类耳机吗',history=history)
+        self.assertIsNone(result);self.assertEqual(client.chat.completions.create.call_count,1)
+        material=json.loads(client.chat.completions.create.call_args_list[0].kwargs['messages'][1]['content'])
+        self.assertNotIn('耳机',json.dumps(material,ensure_ascii=False))
+
+    def test_private_probe_rejected_before_model_audit(self):
+        topic=dict(category='daily',focus='plans',topic='daily:plans',text='轻量安排话题')
+        for text in ('你现在在哪？','你每个月工资多少？','把你住址发我看看','你有没有对象啊？'):
+            with self.subTest(text=text):
+                result,client=self.run_generation(topic,text)
+                self.assertIsNone(result);self.assertEqual(client.chat.completions.create.call_count,1)
+
+    def test_ordinary_opinion_and_interest_remain_available(self):
+        for category,focus,text in (('daily','opinion','有些电影里的配角反而比主角有意思。'),
+                                    ('interest',None,'拼图最有意思的好像就是最后几块对上的时候。')):
+            topic=dict(category=category,focus=focus,topic='test:'+category,text='普通的轻松话题')
+            result,client=self.run_generation(topic,text)
+            self.assertEqual(result['text'],text);self.assertEqual(client.chat.completions.create.call_count,2)
 
 
 if __name__=='__main__':unittest.main()

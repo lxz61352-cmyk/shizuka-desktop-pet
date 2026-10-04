@@ -80,6 +80,7 @@ def run(app,pet):
 
     app.restore();app.open_chat_input(prefill='Keep my question');app.root.update()
     atts=app._chat_attachment_draft
+    atts.clear()  # Start this fixture independently of earlier composer checks.
     with patch('attachment_ui.ImageGrab.grabclipboard',return_value=Image.new('RGB',(120,160),'blue')):
         app.paste_attachment(atts,lambda:None)
     assert len(atts)==1;app._remember_attachments(atts)

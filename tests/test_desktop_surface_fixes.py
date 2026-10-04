@@ -73,6 +73,10 @@ class LayoutTests(unittest.TestCase):
                         dict(id='2',text='整理实验记录',created=1,done=True,due=None,options={'category':'研究'})]
         self.app.show_todos();self.pump()
         win=self.app._todo_win;table=self.app._todo_trees['生活']
+        # Background decoding now runs asynchronously; wait for readiness, not
+        # for an arbitrary sleep that used to block inside the UI draw itself.
+        deadline=time.monotonic()+2
+        while table.art is None and time.monotonic()<deadline:self.pump(.02)
         self.assertIsInstance(table,ArtTable);self.assertEqual(table.get_children(),('1',))
         self.assertIsNotNone(table.art)
         self.assertEqual(table.art.tobytes(),win._art_backdrop.crop(table).tobytes())

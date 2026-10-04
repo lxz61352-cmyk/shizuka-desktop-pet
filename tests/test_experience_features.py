@@ -90,7 +90,7 @@ class ProactiveTests(unittest.TestCase):
         self.client.send.assert_not_called()
 
     def test_preference_changed_during_send_is_not_overwritten(self):
-        def changed(*args):
+        def changed(*args,**kwargs):
             value=pro.state(self.store.data);value['enabled']=False
             self.store.update(proactive_chat=value)
         self.client.send.side_effect=changed

@@ -312,7 +312,9 @@ class ApiWindowTests(unittest.TestCase):
         shim = self._shim()
         shim._prompt_api_key()
         values = shim._api_controls["mode_box"].cget("values")
-        self.assertEqual(list(values), ["chat", "response"])
+        # 2026-10-02 加了 anthropic（原生 web_search 那条路），所以是三个。
+        # 这个断言原来写死两个，加模式之后就过期了。
+        self.assertEqual(list(values), ["chat", "response", "anthropic"])
 
     def test_real_save_settings_persists_api_mode(self):
         # 用真的 _save_settings 落盘：这里踩过坑——原先写的是 api_mode()（缓存值），

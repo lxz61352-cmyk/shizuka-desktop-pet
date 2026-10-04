@@ -5,9 +5,13 @@ import json,sys,time,traceback
 
 def run(pet):
     import tkinter as tk
+    import ctypes
     checks=[];errors=[]
     report=Path(sys.argv[sys.argv.index('--report')+1])
-    with patch.object(pet,'read_api_key',return_value=''),patch.object(pet,'_embed_texts',return_value=None),patch.object(pet.DeskPet,'_migrate_api_key'):
+    # The user can keep using their desktop while these synthetic dialogs run.
+    # Physical clicks must not dismiss a test composer halfway through a check;
+    # outside-click dismissal has dedicated tests in test_desktop_surface_fixes.
+    with patch.object(pet,'read_api_key',return_value=''),patch.object(pet,'_embed_texts',return_value=None),patch.object(pet.DeskPet,'_migrate_api_key'),patch.object(ctypes.windll.user32,'GetAsyncKeyState',return_value=0):
         app=pet.DeskPet()
         # 记完整调用栈：只记 str(exc) 时出问题根本查不出是哪个回调炸的。
         app.root.report_callback_exception=lambda *args:errors.append(
@@ -44,7 +48,19 @@ def run(pet):
                 from dialogue_architecture_v2 import persona_core as compile_card
                 assert pet.ENHANCED_MODE and not pet.TONE_MODE and not pet.DIALOGUE_V2
                 card = Path(pet.CHARACTERS_DIR) / 'shizuka-side-motion/persona.s31-r.candidate.json'
-                assert persona_core(pet.DESKTOP_DIALOGUE_PROFILE, pet.ACTIVE_PACK) == compile_card(card)
+                from desktop_dialogue_profile import LATEST_PROFILE, LATEST_CARD, metadata, compose_messages
+                if pet.DESKTOP_DIALOGUE_PROFILE == LATEST_PROFILE:
+                    from persona_relaxed_trial import persona_core as compile_candidate
+                    from pre_reply_affect_runtime import prepare_reply
+                    card = Path(pet.ROOT_DIR) / LATEST_CARD
+                    assert persona_core(pet.DESKTOP_DIALOGUE_PROFILE, pet.ACTIVE_PACK) == compile_candidate(card)
+                    assert len(metadata(pet.DESKTOP_DIALOGUE_PROFILE)['persona_sha256']) == 64
+                    prompt = compose_messages(pet.DESKTOP_DIALOGUE_PROFILE,
+                        persona_core(pet.DESKTOP_DIALOGUE_PROFILE, pet.ACTIVE_PACK), '好开心啊', [])
+                    assert '单次重要表达本身就可以支撑明显情绪' in prompt[0]['content']
+                    checks.append('Packaged daily example card, relaxed composer and pre-reply affect runtime')
+                else:
+                    assert persona_core(pet.DESKTOP_DIALOGUE_PROFILE, pet.ACTIVE_PACK) == compile_card(card)
                 blocks, _ = output_blocks(pet.DESKTOP_DIALOGUE_PROFILE, '今天吃什么啊', history)
                 assert '【本轮交互事实】' not in blocks and '【交互语义】' in blocks
                 checks.append('S3.1-R / O1-B shared profile, packaged card and timeline')
@@ -129,18 +145,18 @@ def run(pet):
             app._close_memory_window();app._close_usage_window();app._pomo_settings_win.destroy()
             checks.append('Seven dialogs share title position/size after repaint and accept native dark-blue chrome')
             import tkinter as tk
-            menu=tk.Toplevel(app.root);app._menu_marks={};app._submenus=[];app._submenu=None
-            app._build_more_settings(menu,1);app.root.update()
+            app.show_settings_center('聊天与角色');app.root.update()
+            menu=app._settings_center
             from sensitive_topics import ATTRIBUTE, enabled, policy
-            assert not enabled(app) and ATTRIBUTE in app._menu_marks
-            toggle=app._menu_marks[ATTRIBUTE]
-            toggle.event_generate('<Button-1>',when='now');app.root.update()
+            assert not enabled(app) and ATTRIBUTE in menu._settings_controls
+            toggle=menu._settings_controls[ATTRIBUTE]
+            toggle.invoke();app.root.update()
             assert enabled(app) and pet.load_settings()['sensitive_topics'] is True
-            assert toggle.cget('text')=='✓' and '模式：开启' in policy(enabled(app))
-            toggle.event_generate('<Button-1>',when='now');app.root.update()
+            assert toggle.instate(('selected',)) and '模式：开启' in policy(enabled(app))
+            toggle.invoke();app.root.update()
             assert not enabled(app) and pet.load_settings()['sensitive_topics'] is False
-            assert toggle.cget('text')==''
-            checks.append('Sensitive-topic submenu toggle persists both states, default off')
+            assert not toggle.instate(('selected',))
+            checks.append('Settings-center sensitive-topic toggle persists both states, default off')
             assert app._idle_minutes==5 and app._sound_mode=='todo-files'
             # 免打扰开关与语音新选项：默认「全屏/游戏时安静」，英文音素默认关闭
             import quiet_mode
@@ -159,7 +175,7 @@ def run(pet):
             segments=pet._tts_segments('第一段够长的一句话。\n第二段也够长的一句话。')
             assert [block for _piece,block in segments]==[True,False]
             menu.destroy()
-            checks.append('Compact settings, five-minute default and notification sound policy')
+            checks.append('Consolidated settings, five-minute default and notification sound policy')
             app.show_research();app.root.update()
             app._research_init()
             import assistant_features

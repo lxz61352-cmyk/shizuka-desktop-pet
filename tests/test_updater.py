@@ -80,7 +80,7 @@ class CheckReleaseTests(unittest.TestCase):
             "assets": [{"name": "Shizuka-0.9.0-update.zip",
                         "browser_download_url": "https://github.com/x/y/releases/download/v0.9.0/a.zip"}],
         }).encode()
-        with patch.object(updater.urllib.request, "urlopen", return_value=_Resp(payload)):
+        with patch.object(updater, "APP_VERSION", "0.8.23"), patch.object(updater.urllib.request, "urlopen", return_value=_Resp(payload)):
             self.assertEqual(updater.check_latest_release(),
                              (True, "0.9.0", "https://github.com/x/y/releases/download/v0.9.0/a.zip", "notes"))
 

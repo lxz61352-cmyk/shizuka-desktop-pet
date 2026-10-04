@@ -8,6 +8,7 @@ import threading
 import time
 from urllib.parse import urlparse
 from xml.etree import ElementTree as ET
+from proactive_content import product_topic
 
 FEEDS = (('IT之家', 'https://www.ithome.com/rss/', 'www.ithome.com'),
          ('中国新闻网', 'https://www.chinanews.com.cn/rss/scroll-news.xml', 'www.chinanews.com.cn'))
@@ -40,7 +41,7 @@ def parse_feed(body, source, host, now):
         if (parsed.scheme != 'https' or parsed.hostname != host or parsed.username or port not in (None, 443)
                 or not 0 <= now-at <= 36*3600 or not LIGHT.search(title) or HEAVY.search(title)): continue
         description = _text(item.findtext('description'))[:400]
-        if HEAVY.search(description): continue
+        if HEAVY.search(description) or product_topic(title+' '+description): continue
         result.append(dict(topic='news:'+hashlib.sha256(url.encode()).hexdigest()[:20],
                            title=title[:180], text=description or title[:180], url=url, source=source,
                            published_at=at, published=datetime.fromtimestamp(at).astimezone().isoformat(timespec='minutes'),

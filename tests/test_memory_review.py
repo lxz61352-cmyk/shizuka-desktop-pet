@@ -17,17 +17,17 @@ def rows():
 
 class GroundedFactsTests(unittest.TestCase):
     def test_uses_rewritten_fact_as_content(self):
-        payload = {"memories": [{"source_id": "u1", "quote": "我准备考研，还有90天就要初试了",
-                                 "fact": "用户准备考研，距初试约 90 天", "stable": True}]}
+        payload = {"memories": [{"source_id": "u1", "quote": "我准备考研",
+                                 "fact": "用户准备考研", "stable": True}]}
         out = mm.grounded_facts(payload, rows())
         self.assertEqual(len(out), 1)
-        self.assertEqual(out[0]["content"], "用户准备考研，距初试约 90 天")
-        self.assertEqual(out[0]["quote"], "我准备考研，还有90天就要初试了")
+        self.assertEqual(out[0]["content"], "用户准备考研")
+        self.assertEqual(out[0]["quote"], "我准备考研")
         self.assertEqual(out[0]["source_id"], "u1")
 
-    def test_falls_back_to_quote_without_fact(self):
+    def test_missing_fact_is_not_promoted_to_memory(self):
         payload = {"memories": [{"source_id": "u1", "quote": "最近在补数学基础", "stable": True}]}
-        self.assertEqual(mm.grounded_facts(payload, rows())[0]["content"], "最近在补数学基础")
+        self.assertEqual(mm.grounded_facts(payload, rows()), [])
 
     def test_rejects_quote_not_in_user_message(self):
         payload = {"memories": [{"source_id": "u1", "quote": "用户是研究生",
@@ -40,10 +40,10 @@ class GroundedFactsTests(unittest.TestCase):
         self.assertEqual(mm.grounded_facts({"memories": [{"source_id": "u1", "quote": "最近在补数学基础",
                                                           "stable": False}]}, rows()), [])
 
-    def test_overlong_fact_falls_back_to_quote(self):
+    def test_overlong_fact_is_rejected(self):
         payload = {"memories": [{"source_id": "u1", "quote": "最近在补数学基础",
                                  "fact": "x" * 200, "stable": True}]}
-        self.assertEqual(mm.grounded_facts(payload, rows())[0]["content"], "最近在补数学基础")
+        self.assertEqual(mm.grounded_facts(payload, rows()), [])
 
 
 class RewriteTests(unittest.TestCase):
@@ -81,18 +81,17 @@ class FactGuardTests(unittest.TestCase):
         self.assertEqual(mm.fact_guard("用户就读于东京大学", "我准备考研"), "low_overlap")
 
     def test_clean_fact_passes(self):
-        self.assertIsNone(mm.fact_guard("用户准备考研，距初试约 90 天", "我准备考研，还有90天就要初试了"))
+        self.assertIsNone(mm.fact_guard("用户准备考研", "我准备考研"))
 
-    def test_guard_failure_falls_back_to_quote(self):
+    def test_guard_failure_does_not_store_quote_as_permanent_fact(self):
         payload = {"memories": [{"source_id": "u1", "quote": "最近在补数学基础",
                                  "fact": "用户长期在补数学基础", "stable": True}]}
         out = mm.grounded_facts(payload, rows())
-        self.assertEqual(out[0]["content"], "最近在补数学基础")
-        self.assertEqual(out[0]["guard"], "scope_upgraded")
+        self.assertEqual(out, [])
 
     def test_replaces_passed_through(self):
         payload = {"memories": [{"source_id": "u1", "quote": "最近在补数学基础",
-                                 "fact": "用户正在补数学基础", "stable": True, "replaces": ["m1", 7, ""]}]}
+                                 "fact": "用户最近在补数学基础", "stable": True, "replaces": ["m1", 7, ""]}]}
         self.assertEqual(mm.grounded_facts(payload, rows())[0]["replaces"], ["m1"])
 
 

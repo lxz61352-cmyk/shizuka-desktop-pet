@@ -73,7 +73,7 @@ OP_CASES = [
 ]
 
 PROACTIVE_CASES = [
-    ("前台程序变化", {"窗口标题": "build_windows.py — Shizuka — Visual Studio Code", "程序": "VS Code",
+    ("前台程序变化", {"窗口标题": "build_windows.py — 静香 — Visual Studio Code", "程序": "VS Code",
                  "进程名": "code.exe", "当前时间": "21:10", "上一个程序": "浏览器 Edge"}, None),
     ("前台程序变化", {"窗口标题": "哔哩哔哩 (゜-゜)つロ 干杯~-bilibili", "程序": "浏览器 Edge",
                  "进程名": "msedge.exe", "当前时间": "21:14", "上一个程序": "VS Code"}, None),

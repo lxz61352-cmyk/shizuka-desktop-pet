@@ -65,7 +65,7 @@ class QueryTests(unittest.TestCase):
 
     def test_cache_ttl_is_shorter_for_timely_questions(self):
         self.assertEqual(web_search.cache_ttl_for("时事"), web_search.CACHE_TTL_FAST)
-        self.assertEqual(web_search.cache_ttl_for("你让我查的"), web_search.CACHE_TTL)
+        self.assertEqual(web_search.cache_ttl_for("你让我查的"), web_search.CACHE_TTL_EXPLICIT)
 
 
 class ParseTests(unittest.TestCase):

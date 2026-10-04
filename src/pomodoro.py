@@ -225,9 +225,10 @@ class PomodoroMixin:
 
     # ---------------- 设置窗口 ----------------
     def show_pomodoro_settings(self, event=None):
+        from window_opening import dialog_window
         existing=getattr(self,'_pomo_settings_win',None)
         if existing is not None and existing.winfo_exists():existing.lift();return existing
-        win = tk.Toplevel(self.root)
+        win = dialog_window(self.root)
         self._pomo_settings_win=win
         win.title("番茄钟设置")
         win.attributes("-topmost", True)
@@ -381,7 +382,7 @@ class PomodoroMixin:
         else:
             self._pomo_phase = None
             self._pomo_cancel_tick()
-            self._pomo_return_to_pet("休息结束，继续加油。")
+            self._pomo_return_to_pet("休息结束了。要继续的话，我们再开一轮。")
             return
         self._pomo_refresh_text()
         self._pomo_schedule()

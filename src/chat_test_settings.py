@@ -11,7 +11,11 @@ from chat_test_core import DEFAULT_CONFIG, validate_config
 
 def data_directory():
     override = os.environ.get('SHIZUKA_CHAT_TEST_DATA_DIR')
-    return Path(override) if override else Path(os.environ.get('LOCALAPPDATA', Path.home())) / 'ShizukaChatTest'
+    if override:
+        return Path(override)
+    base = Path(os.environ.get('LOCALAPPDATA', Path.home()))
+    current, legacy = base / 'ShizukaChatTest', base / '静香ChatTest'
+    return legacy if not current.exists() and legacy.exists() else current
 
 
 def load_config(directory):
@@ -62,6 +66,10 @@ class KeyStore:
     def target(self, base):
         return 'ShizukaChatTest/' + hashlib.sha256(base.encode('utf-8')).hexdigest()[:20]
 
+    def targets(self, base):
+        current = self.target(base)
+        return (current, current.replace('ShizukaChatTest/', '静香ChatTest/', 1))
+
     def _api(self):
         if os.name != 'nt':
             raise OSError('此平台不支持 Windows 凭据管理器。')
@@ -79,16 +87,18 @@ class KeyStore:
 
     def read(self, base):
         api = self._api()
-        pointer = ctypes.POINTER(Credential)()
-        if not api.CredReadW(self.target(base), 1, 0, ctypes.byref(pointer)):
-            if ctypes.get_last_error() == 1168:
-                return ''
-            raise OSError('无法读取本机测试凭据。')
-        try:
-            cred = pointer.contents
-            return ctypes.string_at(cred.CredentialBlob, cred.CredentialBlobSize).decode('utf-8')
-        finally:
-            api.CredFree(pointer)
+        for target in self.targets(base):
+            pointer = ctypes.POINTER(Credential)()
+            if not api.CredReadW(target, 1, 0, ctypes.byref(pointer)):
+                if ctypes.get_last_error() == 1168:
+                    continue
+                raise OSError('无法读取本机测试凭据。')
+            try:
+                cred = pointer.contents
+                return ctypes.string_at(cred.CredentialBlob, cred.CredentialBlobSize).decode('utf-8')
+            finally:
+                api.CredFree(pointer)
+        return ''
 
     def write(self, base, key):
         blob = key.encode('utf-8')
@@ -101,5 +111,7 @@ class KeyStore:
             raise OSError('无法保存测试凭据；可以取消记住 key，仅本次使用。')
 
     def delete(self, base):
-        if not self._api().CredDeleteW(self.target(base), 1, 0) and ctypes.get_last_error() != 1168:
-            raise OSError('无法删除已存测试凭据。')
+        api = self._api()
+        for target in self.targets(base):
+            if not api.CredDeleteW(target, 1, 0) and ctypes.get_last_error() != 1168:
+                raise OSError('无法删除已存测试凭据。')

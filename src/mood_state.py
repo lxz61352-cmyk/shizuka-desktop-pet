@@ -106,7 +106,7 @@ def infer_emotion(text, mood=None, state=None):
     text = (text or '').strip()
     if not text:
         return None, 0.0
-    if re.search(r'(?:你|静香)[^。！？!?]{0,8}(?:可爱|好懂|厉害|真好|温柔|帅)|你怎么这么(?:懂|好)', text):
+    if re.search(r'(?:你|静香|静香)[^。！？!?]{0,8}(?:可爱|好懂|厉害|真好|温柔|帅)|你怎么这么(?:懂|好)', text):
         return 'embarrassed', 0.6
     if re.search(r'(?:你|静香).{0,12}(?:根本|一点也)?不在乎(?:我|这件事|这个)?', text):
         return 'annoyed', 0.65

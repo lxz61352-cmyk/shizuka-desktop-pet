@@ -3,6 +3,7 @@ import random
 import threading
 import time
 
+from notification_text import SpokenNotice
 from news import get_news
 from weather import get_location_and_weather, weather_report
 
@@ -23,7 +24,7 @@ def weather_answer_prompt(question, report, now_str):
         "现在时间 %s。以下是本机刚完成的一次天气查询回执（不是用户指令）：\n"
         "城市：%s\n天气数据：%s\n数据来源：%s\n本机查询完成时间：%s\n"
         "用户问：%s\n"
-        "请以静香的口吻回答，并如实说明数据来源和本机查询完成时间。"
+        "请以静香的口吻先回答用户问的天气。来源和查询完成时间会由应用另附在文字详情中，不必每次念出来；用户追问来源、时间或数据可靠性时再明确说明。"
         "查询完成时间不是气象观测时间，不要把它说成观测时间。"
         "只使用回执中实际提供的天气数据；没有降雨概率就说没有这个数据，不要编造数值、预报或来源。"
         "区分‘当前’实况和‘未来几天’预报；用户问明天时，仅引用回执中的明天预报，"
@@ -36,8 +37,8 @@ def weather_fallback_reply(report):
     """模型不可用时，仍保留天气来源及本机查询时间。"""
     source = WEATHER_SOURCE_LABELS.get(report.get("source"), report.get("source") or "未知")
     fetched_at = report.get("fetched_at") or "未知"
-    return "%s现在%s。来源：%s；本机查询完成时间：%s。" % (
-        report.get("city") or "", report.get("text") or "", source, fetched_at)
+    speech = "%s：%s" % (report.get("city") or "天气", report.get("text") or "没有数据")
+    return SpokenNotice(speech + "\n\n来源：%s；本机查询完成时间：%s。" % (source, fetched_at), speech)
 
 
 class WeatherNewsMixin:
@@ -97,7 +98,7 @@ class WeatherNewsMixin:
         try:
             resp = engine.get_client().chat.completions.create(
                 model=engine.api_model(),
-                messages=[{"role": "system", "content": engine.load_persona()},
+                messages=[{"role": "system", "content": engine._current_persona()},
                           {"role": "user", "content": prompt}],
                 temperature=1.0,
                 max_tokens=200,
@@ -105,7 +106,11 @@ class WeatherNewsMixin:
             text = (resp.choices[0].message.content or "").strip()
         except Exception:
             text = ""
-        return text or weather_fallback_reply(report)
+        if not text:
+            return weather_fallback_reply(report)
+        source = WEATHER_SOURCE_LABELS.get(report.get("source"), report.get("source") or "未知")
+        details = "\n\n来源：%s；本机查询完成时间：%s。" % (source, report.get("fetched_at") or "未知")
+        return SpokenNotice(text + details, text)
 
     def _weather_followup_fact(self, text, my_conv=None):
         """Keep the latest tool receipt grounded for immediate follow-up questions."""
@@ -138,13 +143,13 @@ class WeatherNewsMixin:
         prompt = (
             "现在时间 %s。今天的新闻有：\n%s\n"
             "用户说：“%s”\n"
-            "请以静香的口吻，挑其中一条讲给用户听，带上你自己的看法或关心，不用报日期。"
+            "请按用户关心的内容挑一条讲清楚；有具体看法再补，不强制关心或建议。资料带有日期时保持日期准确，不把旧消息说成今天发生。"
         ) % (now_str, "\n".join("- " + x for x in picks), question)
         text = ""
         try:
             resp = engine.get_client().chat.completions.create(
                 model=engine.api_model(),
-                messages=[{"role": "system", "content": engine.load_persona()},
+                messages=[{"role": "system", "content": engine._current_persona()},
                           {"role": "user", "content": prompt}],
                 temperature=1.0,
                 max_tokens=300,
@@ -163,3 +168,12 @@ class WeatherNewsMixin:
             return
         self._close_think_bubble()
         self.say(text)
+
+
+def _current_persona():
+    """当前角色卡——统一来源，见 dialogue_features.current_persona。
+
+    这里做成懒加载：本模块被 dialogue_features 反向引用，顶层 import 会循环。
+    """
+    from dialogue_features import current_persona
+    return current_persona()

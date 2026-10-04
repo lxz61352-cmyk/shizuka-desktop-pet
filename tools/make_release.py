@@ -27,16 +27,16 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 from app_identity import APP_VERSION  # noqa: E402
 from updater import read_announcement  # noqa: E402
 
-DIRS = ("_internal", "src", "LICENSES", "characters", "assets", "tests", "tools")
+DIRS = ("_internal", "qt-windows", "src", "LICENSES", "characters", "assets", "tests", "tools")
 FILES = ("AI-DEVELOPMENT.md", "README.md", "Shizuka.exe", "VERIFICATION.json", "verify_package.py",
-         "version.json", "更新公告.md", "启动桌宠.bat", "源码启动.bat", "预览动作.bat")
+         "version.json", "desktop-dialogue.json", "更新公告.md", "启动桌宠.bat", "源码启动.bat", "预览动作.bat")
 
 
 def package_paths():
     out = []
     for d in DIRS:
         for folder, dirs, names in os.walk(os.path.join(ROOT, d)):
-            dirs[:] = [x for x in dirs if x != "__pycache__"]
+            dirs[:] = [x for x in dirs if x not in ("__pycache__", "fixtures")]
             for n in sorted(names):
                 if n.endswith((".pyc", ".pyo")):
                     continue

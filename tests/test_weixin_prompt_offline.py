@@ -129,14 +129,14 @@ class _DesktopCapture(pet.DeskPet):
     def _weather_followup_fact(self, text, my_conv):
         return ""
 
-    def _get_memory_block(self, text, minimal=False):
+    def _get_memory_block(self, text, minimal=False, *, channel=None):
         self._plan_seen_by_memory = getattr(self._conv_state, "last_shadow_turn", None)
         return ""
 
     def _todo_note_context(self, text, cancel=None):
         return ""
 
-    def _web_evidence(self, text, my_conv):
+    def _web_evidence(self, text, my_conv, explicit_only=True):
         return ""
 
     def _capability_context(self):
@@ -177,7 +177,7 @@ class _WeixinCapture(weixin_ui.WeixinMixin):
     def _todo_note_context(self, text, channel=None, cancel=None):
         return ""
 
-    def _get_memory_block(self, text, minimal=False):
+    def _get_memory_block(self, text, minimal=False, *, channel=None):
         self._plan_seen_by_memory = getattr(self._conv_state, "last_shadow_turn", None)
         return ""
 
@@ -225,10 +225,16 @@ class SharedBridgeCaptureTests(unittest.TestCase):
             character_option=lambda key, default: "STYLE-MARKER",
             has_api_key=lambda: True,
             get_memory=lambda: type("Mem", (), {"save": lambda self: None})(),
+            # This suite covers the legacy character bridge. Daily-profile
+            # composition and delivery run separately in its integration suite.
+            DESKTOP_DIALOGUE_PROFILE='',ENHANCED_MODE=False,DIALOGUE_V2=False,TONE_MODE=0,
             DATA_DIR=self.tmp.name)
         self.patcher.start()
         self.addCleanup(self.patcher.stop)
         self.weixin_patches = [
+            patch('reply_turn.evidence',return_value=''),
+            patch('socket.create_connection',side_effect=AssertionError('Network forbidden')),
+            patch('socket.socket.connect',side_effect=AssertionError('Network forbidden')),
             patch.object(weixin_ui, "computer_command", lambda text: None),
             patch.object(todo_model, "command", lambda text: None),
             patch.object(weixin_ui, "weixin_image_paths", lambda text: []),

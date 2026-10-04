@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import font as tkfont
 from PIL import Image,ImageDraw,ImageTk
 from ui_theme import FONT,palette
+from backdrop_frame import fit_image
 
 
 def button_bitmap(image,primary=False,hover=False,focus=False,dark=False):
@@ -25,7 +26,7 @@ class GlassButton(tk.Button):
         self.primary=primary;self.hover=False;self.art=None;self.pending=None
         self._glass_button=True
         colors=palette(parent)
-        font=tkfont.Font(root=parent,family=FONT[0],size=10)
+        font=tkfont.Font(root=parent,family=FONT[0],size=10,weight=FONT[2])
         width=font.measure(text)+30;height=font.metrics('linespace')+16
         ink=colors['primary_ink'] if primary else colors['ink']
         super().__init__(parent,text=text,command=command,font=font,fg=ink,bg=colors['bg'],
@@ -47,7 +48,10 @@ class GlassButton(tk.Button):
         if not self.winfo_exists():return
         if self.pending is None:self.pending=self.after_idle(self.draw)
 
-    def set_backdrop(self,image):self.art=image;self.queue()
+    def set_backdrop(self,image):
+        self.art=image
+        if self.pending:self.after_cancel(self.pending);self.pending=None
+        self.draw()
 
     def draw(self):
         self.pending=None
@@ -58,12 +62,15 @@ class GlassButton(tk.Button):
         if source is not None:
             x=self.winfo_rootx()-top.winfo_rootx();y=self.winfo_rooty()-top.winfo_rooty()
             art=source.crop((x,y,x+width,y+height))
-        elif self.art is not None:art=self.art.resize((width,height))
+        elif self.art is not None:art=fit_image(self.art,(width,height))
         else:art=Image.new('RGB',(width,height),palette(self)['bg'])
         art=button_bitmap(art,self.primary,self.hover,self.focus_get() is self,dark=palette(self)['dark'])
-        self._photo=ImageTk.PhotoImage(art,master=self)
-        super().configure(image=self._photo)
+        if (self._photo.width(),self._photo.height())==art.size:self._photo.paste(art)
+        else:
+            self._photo=ImageTk.PhotoImage(art,master=self)
+            super().configure(image=self._photo)
 
     def destroy_timer(self,event):
-        if event.widget is self and self.pending:
-            self.after_cancel(self.pending);self.pending=None
+        if event.widget is self:
+            if self.pending:self.after_cancel(self.pending);self.pending=None
+            self._photo.__del__()

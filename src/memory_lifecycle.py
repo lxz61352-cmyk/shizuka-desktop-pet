@@ -24,6 +24,7 @@ def active(row,now=None):
 def label(row,now=None):
     if row.get('status')=='completed':return '已结束'
     if row.get('status')=='superseded':return '已取代'
+    if row.get('status')=='archived':return '已归档'
     if not active(row,now):return '已过期'
     return '临时' if expiry(row) else '长期'
 

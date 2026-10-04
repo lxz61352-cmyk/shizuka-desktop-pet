@@ -131,7 +131,7 @@ class SingleInstanceError(Exception):
 
 # 命名互斥体句柄（进程结束内核自动释放，不会像锁文件那样残留导致"一直闪退"）
 _mutex_handle = None
-_MUTEX_NAME = "Local\\ShizukaAssistant_SingleInstance"
+_MUTEX_NAME = "Local\\静香Assistant_SingleInstance"
 
 
 def acquire_single_instance():
@@ -215,6 +215,7 @@ CHARACTER_DATA_DIR = str(ACTIVE_PACK.data_directory(DATA_DIR)) if ACTIVE_PACK el
 # ---------------- 开机自启动（注册表 Run 键） ----------------
 AUTOSTART_REG = r"Software\Microsoft\Windows\CurrentVersion\Run"
 AUTOSTART_NAME = "ShizukaDeskPet"
+_AUTOSTART_NAMES = (AUTOSTART_NAME, "静香DeskPet")
 
 
 def autostart_command():
@@ -228,8 +229,14 @@ def is_autostart_on():
     try:
         import winreg
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG) as k:
-            val, _ = winreg.QueryValueEx(k, AUTOSTART_NAME)
-            return bool(val)
+            for name in _AUTOSTART_NAMES:
+                try:
+                    val, _ = winreg.QueryValueEx(k, name)
+                    if val:
+                        return True
+                except FileNotFoundError:
+                    continue
+            return False
     except Exception:
         return False
 
@@ -241,9 +248,11 @@ def set_autostart(on):
         with winreg.CreateKey(winreg.HKEY_CURRENT_USER, AUTOSTART_REG) as k:
             if on:
                 winreg.SetValueEx(k, AUTOSTART_NAME, 0, winreg.REG_SZ, autostart_command())
-            else:
+            for name in _AUTOSTART_NAMES:
+                if on and name == AUTOSTART_NAME:
+                    continue
                 try:
-                    winreg.DeleteValue(k, AUTOSTART_NAME)
+                    winreg.DeleteValue(k, name)
                 except FileNotFoundError:
                     pass
         return True
@@ -593,6 +602,7 @@ CHARACTER_CARD = os.path.join(CHARACTERS_DIR, "shizuka-side-motion", "persona.js
 if ACTIVE_PACK:
     CHARACTER_CARD = str(ACTIVE_PACK.persona)
 CHARACTER_NAME = character_name(CHARACTER_CARD, ACTIVE_PACK)
+DISPLAY_CHARACTER_NAME = 'Shizuka' if getattr(ACTIVE_PACK, 'character_id', 'shizuka') == 'shizuka' else CHARACTER_NAME
 SWAY_DIZZY_LINE = dialogue_option(CHARACTER_CARD, ACTIVE_PACK, "dizzy_line", SWAY_DIZZY_LINE)
 
 CHAT_STYLE_HINT = ""
@@ -786,6 +796,7 @@ _CRED_PERSIST_LOCAL_MACHINE = 2
 # 0.7.6 原版用的 ShizukaAssistant/api_key 读的时候一并兜底。
 _CRED_TARGET = "ShizukaDeskPet/api_key"
 _CRED_TARGET_ALT = "ShizukaAssistant/api_key"
+_CRED_TARGETS = (_CRED_TARGET, _CRED_TARGET_ALT, "静香DeskPet/api_key", "静香Assistant/api_key")
 
 
 class _FILETIME(ctypes.Structure):
@@ -830,7 +841,7 @@ def _cred_read():
     advapi.CredReadW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD,
                                  ctypes.POINTER(ctypes.POINTER(_CREDENTIAL))]
     advapi.CredReadW.restype = wintypes.BOOL
-    for target in (_CRED_TARGET, _CRED_TARGET_ALT):
+    for target in _CRED_TARGETS:
         p = ctypes.POINTER(_CREDENTIAL)()
         if not advapi.CredReadW(target, _CRED_TYPE_GENERIC, 0, ctypes.byref(p)):
             continue
@@ -846,7 +857,8 @@ def _cred_delete():
     advapi = ctypes.windll.advapi32
     advapi.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
     advapi.CredDeleteW.restype = wintypes.BOOL
-    advapi.CredDeleteW(_CRED_TARGET, _CRED_TYPE_GENERIC, 0)
+    for target in _CRED_TARGETS:
+        advapi.CredDeleteW(target, _CRED_TYPE_GENERIC, 0)
 
 
 def _read_legacy_key_file():
@@ -986,9 +998,14 @@ def is_first_run():
         return False
     try:
         import winreg
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, REG_PATH) as k:
-            winreg.QueryValueEx(k, REG_VALUE)
-        return False
+        for path in (REG_PATH, r"Software\静香Assistant"):
+            try:
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, path) as k:
+                    winreg.QueryValueEx(k, REG_VALUE)
+                return False
+            except FileNotFoundError:
+                continue
+        return True
     except FileNotFoundError:
         return True
     except Exception:
@@ -1053,8 +1070,8 @@ def create_shortcut():
         desktop = os.path.join(os.path.expanduser("~"), "Desktop")
         targets = []
         if os.path.isdir(desktop):
-            targets.append(os.path.join(desktop, "静香.lnk"))
-        targets.append(os.path.join(ROOT_DIR, "静香.lnk"))
+            targets.append(os.path.join(desktop, "Shizuka.lnk"))
+        targets.append(os.path.join(ROOT_DIR, "Shizuka.lnk"))
         icon = os.path.join(ASSETS_DIR, "pet_icon.ico")
         ps = (
             "$W=New-Object -ComObject WScript.Shell;"
@@ -1490,14 +1507,91 @@ def render_display(pm_full, target_h):
     return Image.frombytes("RGBA", (new_w, target_h), bytes(data))
 
 
-def bind_wheel_scroll(win, canvas):
+# 记忆列表的固定行高。行是画在 canvas 上的图形项，靠这个算每行的 y 坐标。
+# （2026-10-01，见 _mem_draw）
+MEM_ROW_HEIGHT = 30
+
+
+
+
+class MemoryCanvas(tk.Canvas):
+    """记忆列表的画布：**滚动后同步**把背景图挪回原位。
+
+    照对话记录窗口（`src/art_transcript.py` 的 `ArtTranscript`）的做法——
+
+        def scroll(self, amount, units='units'):
+            super().yview_scroll(amount, units)
+            self.paint()                      # 同一次调用里对齐
+
+        def paint(self):
+            x, top = self.canvasx(0), self.canvasy(0)
+            self.coords('art', x, top)        # 只挪位置，不重裁不重算
+
+    那个窗口同样挂模糊背景、同样用原生滚动，却不晃——差别就在对齐是
+    **同步**做的，不是窗口背景系统那种 `after(24, draw)` 重算。
+
+    这里把对齐做进 `yview_scroll` 和 `yview`：滚轮、滚动条、键盘翻页
+    **三条路径全盖住**，一处就够。
+    """
+
+    def yview_scroll(self, *args):
+        super().yview_scroll(*args)
+        self.align_backdrop()
+
+    def yview(self, *args):
+        value = super().yview(*args)
+        if args:
+            self.align_backdrop()
+        return value
+
+    def align_backdrop(self):
+        """把窗口背景图挪到「窗口坐标不变」的位置——画布一滚，子项就会跟着走。"""
+        if not self.winfo_exists():
+            return
+        try:
+            self.coords('window-backdrop', self.canvasx(0), self.canvasy(0))
+        except Exception:
+            pass
+
+
+def bind_wheel_scroll(win, canvas, units=3, unit_pixels=20):
     """给 Canvas + inner Frame 的列表/记录窗口加鼠标滚轮上下滑动。
-    绑在 Toplevel 上即可覆盖其子控件（Tk 的 bindtags 含 toplevel）。"""
+
+    绑在 Toplevel 上即可覆盖其子控件（Tk 的 bindtags 含 toplevel）。
+
+    2026-10-01：用户反馈长期记忆列表「上下滑动时特别卡」。实测根因有两条——
+
+    1. **每格只滚 3 像素**（`yview_scroll(..., 'units')` 的 1 unit 默认就是 1 像素），
+       翻完一个列表要两百多次滚轮事件；
+    2. Canvas 里塞的是**真控件**：89 条记忆 × 每行 7 个（Frame + 2 Label + Entry + 3 Button）
+       = **623 个控件**，而 Tk 每处理一次滚动都要重画可见的那些。
+       两件事叠起来就是"事件多 × 单次重"。
+
+    所以这里改两处：
+      · `yscrollincrement` 设成 `unit_pixels`，每格滚 `units × unit_pixels` 像素（默认 60）；
+      · 每次滚轮**即时**生效，不做合并。
+
+    关于合并：中途试过用 `after_idle` 把连续事件攒起来一起滚，想减少重绘。
+    但用户反馈「不怎么卡了，但是一抖一抖的」——事件密集时 idle 很稀少，
+    攒下的量会一次性跳出去。**渲染那边改便宜之后，合并就是多余且有害的。**
+
+    真正解决卡顿的是记忆列表改成**图形项**（见 `_mem_draw`）：
+    89 行 × 4 个 item，滚动时一个 item 都不用动。
+    """
+    if unit_pixels:
+        try:
+            canvas.configure(yscrollincrement=unit_pixels)
+        except Exception:
+            pass
     def _on_wheel(event):
+        # 不做合并。第一版用 after_idle 攒着一起滚，事件密集时 idle 很稀少，
+        # 攒下的量会一次性跳出去——用户反馈「不怎么卡了，但是一抖一抖的」。
+        # 去掉合并后每格即时生效；渲染那边已经便宜到可以直接跟。
         delta = event.delta or 0
         if delta:
-            canvas.yview_scroll(int(-delta / 120) * 3, "units")
+            canvas.yview_scroll(-units if delta > 0 else units, "units")
         return "break"
+
     win.bind("<MouseWheel>", _on_wheel)
     canvas.bind("<MouseWheel>", _on_wheel)
     return _on_wheel
@@ -2389,7 +2483,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         except tk.TclError:
             self._window_icon = ImageTk.PhotoImage(file=APP_ICON_PNG, master=self.root)
             self.root.iconphoto(True, self._window_icon)
-        self.root.title(APP_NAME + " " + APP_VERSION + " · " + CHARACTER_NAME)
+        self.root.title(APP_NAME + " " + APP_VERSION + " · " + DISPLAY_CHARACTER_NAME)
         self.root.protocol("WM_DELETE_WINDOW",self.quit)
         self.root.report_callback_exception = self._report_callback_exception
         # 线程安全 UI 派发：后台线程只往队列塞任务，主线程轮询执行，避免跨线程调 Tk
@@ -2406,7 +2500,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
 
         # 显示窗口：色键透明
         self.pet = tk.Toplevel(self.root)
-        self.pet.title(APP_NAME + " " + APP_VERSION + " · " + CHARACTER_NAME)
+        self.pet.title(APP_NAME + " " + APP_VERSION + " · " + DISPLAY_CHARACTER_NAME)
         self.pet.overrideredirect(True)
         self.pet.attributes("-topmost", True)
         self.set_window_transparent(self.pet)
@@ -2644,7 +2738,6 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._todo_rows = []
         self._todo_focus_id = None
         self._mem_win = None
-        self._mem_inner = None
         self._mem_rows = []
         self._chatlog_win = None
         self._chat_log = load_chatlog()
@@ -3716,6 +3809,20 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._last_user_dialogue_at=time.monotonic()
         self._proactive_streak = 0   # 用户开口 → 主动发言的退避重置
         self._pending_attachments=list(attachments or [])
+        # 斜杠指令：本地处理，**不交给模型**（所以不进对话记录，
+        # 也不影响她之后说话）。指令原本只写在微信里，桌面发 /接口
+        # 会被当成普通聊天——她只能反问"为什么要发指令"。
+        if not attachments:
+            try:
+                from slash_commands import run as run_command
+                command_reply = run_command(text)
+            except Exception:
+                command_reply = None
+            if command_reply:
+                self._log_chat('user', text, kind='command')
+                self._cancel_reply()
+                self.say(command_reply, source='指令')
+                return
         if self._answer_computer_question(text):return
         quick=None if attachments else self._todo_quick_from_chat(text)
         if quick is not None:
@@ -3805,6 +3912,24 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._dot_set_text = None
         self._dot_state = 0
         self._show_think_bubble()
+        # 明确要求联网的（"帮我搜""查一下""搜一下"…）**直接走聊天路径**。
+        # 意图分类会把这类话判成 task 送去电脑执行器，那样走不到 _ask_model、
+        # 也就永远走不到 _web_evidence（搜索机械在 _ask_model 里面，4817 行）。
+        # 2026-10-02 实测定位：真正需要搜的话反而是唯一搜不到的一类。
+        try:
+            import web_search as _ws
+            if _ws.EXPLICIT_RE.search(str(text or "")):
+                self._search_probe("入口放行（明确请求，跳过意图分类）| %r"
+                                   % str(text or "")[:34])
+                self._dot_win = None
+                self._dot_set_text = None
+                self._dot_state = 0
+                self._show_think_bubble()
+                threading.Thread(target=self._ask_model, args=(text, my_conv),
+                                 daemon=True).start()
+                return
+        except Exception:
+            pass          # 判定失败就照常走分类，不能因为这条影响正常聊天
         threading.Thread(target=self._classify_and_route, args=(text, my_conv), daemon=True).start()
 
     # ---------- 意图判断（由模型决定：加待办 / 查待办 / 普通聊天） ----------
@@ -3966,7 +4091,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         untimed = sorted([it for it in pending if not it.get("due")], key=lambda x: x.get("created", 0))
         ordered = timed + untimed
         if not ordered:
-            self.say("现在没有未完成的待办，您可以慢慢安排。")
+            self.say("现在没有未完成的待办。")
             return
         top = ordered[:3]
         parts = []
@@ -3978,7 +4103,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             else:
                 when = "没定时间"
             parts.append("%d. %s（%s）" % (i, it["text"], when))
-        msg = "您最近安排了这几件事：\n" + "\n".join(parts)
+        msg = "你最近安排了这几件事：\n" + "\n".join(parts)
         self.say(msg,source='待办操作')
 
     # ---------- 记忆查询 ----------
@@ -4310,20 +4435,24 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
     def _voice_ui(self,conv,callback):
         self._ui(lambda:callback() if conv==self._conv_id and not getattr(self,'_quitting',False) else None)
 
-    def _get_memory_block(self, query="", minimal=False):
+    def _get_memory_block(self, query="", minimal=False, *, channel=None):
         """minimal=True（话题切换轮）：不带查询地注入稳定事实，历史摘要与主题索引不注入——
         旧话题的素材不因检索重新进入本轮上下文。"""
         mem=get_memory()
         if DESKTOP_DIALOGUE_PROFILE:
             from dialogue_context import memory_block, select_rows
             with self._chat_lock:rows=list(self._chat_log)
-            current=next((r for r in reversed(rows) if r.get('role')=='user' and r.get('text')==query),None)
-            channel='weixin' if current and current.get('kind','').startswith('weixin') else 'desktop'
+            current=next((r for r in reversed(rows) if r.get('role')=='user' and r.get('text')==query
+                          and (channel is None or r.get('kind','').startswith('weixin')==(channel=='weixin'))),None)
+            if channel is None:
+                channel='weixin' if current and current.get('kind','').startswith('weixin') else 'desktop'
             selected=select_rows(rows,query,channel,current.get('id') if current else None)
             items=mem.injectable(query,relevant_only=True)
             excerpts=conversation_memory.recall(rows,query,recent_count=0,exclude_ids=[r.get('id') for r in selected])
+            self._memories_in_context=[it.get('id') for it in items if it.get('id')]
             return memory_block(items,excerpts)
         items=mem.injectable("" if minimal else query)
+        self._memories_in_context=[it.get('id') for it in items if it.get('id')]
         with self._chat_lock:rows=list(self._chat_log)
         excerpts=[] if minimal else conversation_memory.recall(rows,query,self._recall_exclude_turns)
         index=[] if minimal else self._memory_index_context(query)
@@ -4359,18 +4488,21 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
     # grounded 审阅（source_id + 逐字 quote + stable），不要再把这条宽松路径接回来。
 
     def _refresh_memories(self, reply):
-        """根据回复内容，匹配被引用的记忆并刷新时间"""
-        if not reply:
-            return
-        mem = get_memory()
-        used = []
-        for it in mem.snapshot():
-            # 若回复中出现了记忆内容的关键片段，视为被引用
-            core = it["content"].strip()
-            if len(core) >= 6 and core in reply:
-                used.append(it["id"])
-        if used:
-            mem.mark_used(used)
+        """把**本轮真正被选入请求**的记忆标记为已用。
+
+        原实现是拿每条记忆的完整内容在回复里逐字查找（`core in reply`）。静香是转述记忆的，
+        不会把「用户已联系上毕设导师，导师让其关注选题方向」整句写进回复——在实际的 78 条上
+        一次都没命中过，于是 `last_used` / `use_count` 从来没更新，
+        `injectable()` 里所有「按 last_used 降序」的排序都退化成了按创建时间排序。
+
+        现在改成：`_get_memory_block` 记下本轮选入上下文的记忆 id（那是筛选过的集合，
+        不是全部条目），回复收尾时统一标记并清空，保证一次注入只计一次。
+        `reply` 参数保留只是为了不动调用点。
+        """
+        ids = list(getattr(self, '_memories_in_context', None) or ())
+        self._memories_in_context = []
+        if ids:
+            get_memory().mark_used(ids)
 
     def _announce_search(self, reason=""):
         """要联网查的时候先说一句缓冲话：有语音就念出来（顺便盖住搜索耗时），
@@ -4404,41 +4536,37 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._researching_until = max(self._researching_until,
                                       time.monotonic() + RESEARCH_ART_TAIL_SEC)
 
-    def _web_evidence(self, text, my_conv=None):
-        """该联网就搜一次，把摘要交回给模型；不搜 / 搜不到分别返回不同说明。"""
-        if not getattr(self, "_web_search_on", True):
-            return ""
+    def _search_probe(self, note):
+        """把联网判定的每一步写进 data/search-probe.log。
+
+        **直接写文件**，不用 _sound_log：后者在 try/except 里失败就完全静默，
+        会让人分不清"没走到"还是"日志写不出去"（2026-10-02 踩过）。
+        """
         try:
-            import web_search
+            import datetime
+            from pathlib import Path as _Path
+            path = _Path(__file__).resolve().parent.parent / 'data' / 'search-probe.log'
+            with path.open('a', encoding='utf-8') as handle:
+                handle.write('%s %s\n'
+                             % (datetime.datetime.now().strftime('%m-%d %H:%M:%S'), note))
         except Exception:
-            return ""
+            pass
+
+    def _web_evidence(self, text, my_conv=None, *, explicit_only=False):
+        """该联网就搜一次，把摘要交回给模型。
+
+        **实现已经搬到 `reply_turn.evidence`**（桌面和微信共用一份）——
+        以前两边各写一遍，结果联网只接在桌面上，微信完全没有；
+        而且改一遍不算数（2026-10-03 抽出来的）。
+        这里保留原签名当薄包装，桌面的演出（气泡/动作差分）由 reply_turn 按
+        `channel='desktop'` 触发，行为和以前完全一致。
+        """
         try:
-            want, reason = web_search.needs_search(text)
+            import reply_turn
+            return reply_turn.evidence(self, text, channel='desktop', my_conv=my_conv,
+                                       explicit_only=explicit_only)
         except Exception:
-            return ""
-        if not want:
-            return ""
-        self._announce_search(reason)
-        try:
-            query = web_search.search_query(text, reason)
-            found = web_search.search_cached(query, SEARCH_CACHE_FILE,
-                                             ttl=web_search.cache_ttl_for(reason))
-        except Exception as exc:
-            _err_log("web_search")
-            found = {"query": "", "results": [], "error": type(exc).__name__}
-        self._search_done()          # 搜完了：差分再留一小会儿
-        if not self._voice_on:
-            self._ui(self._close_loading_bubble)
-        if my_conv is not None and my_conv != self._conv_id:
-            return ""
-        try:
-            if found.get("results"):
-                _sound_log("search: %s 用 %s 拿到 %d 条（%.2fs%s）"
-                           % (found.get("query"), found.get("source"), len(found["results"]),
-                              found.get("seconds") or 0, "，缓存" if found.get("cached") else ""))
-                return web_search.format_evidence(found, found.get("query") or "")
-            return web_search.format_failure(found)
-        except Exception:
+            _err_log("web_evidence")
             return ""
 
     def _voice_lang_hint(self):
@@ -4604,11 +4732,13 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         return str(Path(CHARACTER_CARD).with_name("behavior-examples.json"))
 
     def _retry_chat_reply(self, messages):
-        """空正文兜底：非流式重试一次（上限更高）。失败返回 ''。"""
+        """空正文兜底：共享的受控非流式重试。失败返回 ''。"""
         try:
-            response=get_client().chat.completions.create(
-                model=api_model(),messages=messages,temperature=.7,max_tokens=CHAT_RETRY_MAX_TOKENS)
-            text=(response.choices[0].message.content or "").strip()
+            import pet as engine
+            from reply_turn import retry_body
+            from provider_profile import from_settings
+            profile=from_settings(load_settings()) if ENHANCED_MODE or DESKTOP_DIALOGUE_PROFILE else None
+            text=retry_body(engine, get_client(), messages, profile)
             if text:
                 try:
                     with open(os.path.join(DATA_DIR,"error.log"),"a",encoding="utf-8") as handle:
@@ -4652,7 +4782,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                                     guard_has_assistant)
             if local:
                 return self._deliver_local_reply(text, local, my_conv)
-        enhanced = ENHANCED_MODE
+        enhanced = ENHANCED_MODE or bool(DESKTOP_DIALOGUE_PROFILE)
         arch_v2 = DIALOGUE_V2 or enhanced
         if arch_v2:
             if enhanced:
@@ -4681,13 +4811,21 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         if my_conv is not None and my_conv!=self._conv_id:return
         system+='\n本轮只有应用明确回传保存成功时，才能说已增加待办备注；否则不声称已经写入。'
         if notes:system+='\n'+notes
-        block=self._get_memory_block(text, minimal=bool(planned_signals.get("topic_shift")))
+        block=self._get_memory_block(text, minimal=bool(planned_signals.get("topic_shift")), channel='desktop')
         selected_memory_block=block
         if block:system+="\n\n"+block
         if turn_context and not arch_v2:system+="\n\n"+turn_context
         # 该联网查的（明确要求 / 时事 / 版本 / 数字 / 日期）先搜一次，把摘要当资料给她
-        evidence = "" if enhanced else self._web_evidence(text,my_conv)
+        # 原来这里是 `"" if enhanced else ...`——增强模式下从来不搜。
+        # 第 1 步：两种模式都走，但**只认明确请求**（帮我搜/搜一下）；
+        # 模型判断那条路是第 2 步，单独验。
+        evidence = self._web_evidence(text,my_conv,explicit_only=True)
         if evidence:system+="\n\n"+evidence
+        # 注入检查：一次分清"她没看到"和"看到了没用"（2026-10-02 她就是看到了却说没联网）
+        if evidence:
+            self._search_probe("注入 | 证据 %d 字 | system %d 字 | 含标记=%s"
+                               % (len(evidence), len(system),
+                                  '【联网查到的资料】' in system))
         messages=[{"role":"system","content":system}]
         capability = "" if enhanced else self._capability_context_for(text)
         if capability:
@@ -4839,15 +4977,28 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             log_diagnostics(record)
         if time_block:
             messages[0]["content"]+="\n\n"+time_block
+        affect_transaction = None
+        reply_cleaner = None
         if DESKTOP_DIALOGUE_PROFILE:
-            from enhanced_dialogue import compose_messages as compose_profile_messages
-            import sensitive_topics as topic_settings
-            voice_format=(lang_hint+'\n正文写完后，另起一行输出 '+VOICE_JA_MARK+'，紧接着写同一段内容的日语口语版（只用于朗读）。') if lang_hint else ''
-            messages[0]=compose_profile_messages(
-                desktop_dialogue_profile.persona_core(DESKTOP_DIALOGUE_PROFILE,ACTIVE_PACK),text,history,
-                capabilities='当前在桌面应用中交流；现实操作和待办保存以应用回执为准。',
-                context_blocks=(notes,selected_memory_block,voice_format,EMOTION_FORMAT if EMOTION_TAGS_ENABLED else ''),
-                timeline=time_block,sensitive_topics=topic_settings.enabled(self))[0]
+            import pet as engine
+            from reply_turn import prepare_profile, ReplyCleaner
+            import provider_limiter, provider_profile
+            interrupted = lambda: my_conv is not None and my_conv != self._conv_id
+            voice_format=(lang_hint+'\n正文写完后，另起一行输出 '+VOICE_JA_MARK+
+                          '，紧接着写同一段内容的日语口语版（只用于朗读）。') if lang_hint else ''
+            try:
+                prepared = prepare_profile(self, engine, text, history, channel='desktop',
+                    interrupted=interrupted, notes=notes, memory=selected_memory_block,
+                    timeline=time_block, extra_blocks=(voice_format, EMOTION_FORMAT if EMOTION_TAGS_ENABLED else ''))
+            except provider_profile.ProfileError:
+                _err_log('dialogue_profile')
+                return
+            if prepared is None:
+                return
+            affect_transaction, affect_profile = prepared.affect, prepared.provider
+            messages[0] = prepared.messages[0]
+            reply_cleaner = ReplyCleaner(engine, prepared.client, prepared.provider, interrupted,
+                text, history, notes=notes, memory=selected_memory_block, source=evidence, channel='desktop')
         else:
             import sensitive_topics
             messages[0]['content']+='\n\n'+sensitive_topics.policy(sensitive_topics.enabled(self))
@@ -4876,6 +5027,10 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             messages.append({"role":"user","content":content})
         else:
             messages.append({"role":"user","content":text})
+        if reply_cleaner is not None:
+            reply_cleaner.include_content(messages[-1]['content'])
+        from reply_turn import append_evidence
+        append_evidence(messages,evidence)
         try:
             from dialogue_feedback import capture
             capture(self,'desktop',messages)
@@ -4889,7 +5044,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             import provider_limiter
             import provider_profile
             try:
-                profile = provider_profile.from_settings(load_settings())
+                profile = affect_profile if DESKTOP_DIALOGUE_PROFILE else provider_profile.from_settings(load_settings())
             except provider_profile.ProfileError:
                 _err_log("enhanced_profile")
                 return
@@ -4898,13 +5053,14 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 provider_limiter.acquire(profile, cancel)
             except provider_limiter.ProviderWaitCancelled:
                 return
-            enhanced_request_kwargs = {"model": api_model(), "messages": messages,
-                                       "temperature": .7, "max_tokens": CHAT_MAX_TOKENS,
-                                       "stream": True, "_shizuka_profile": profile}
+            from reply_turn import body_kwargs
+            import pet as engine
+            enhanced_request_kwargs = body_kwargs(engine, messages, profile)
+        generation_ok = False
         try:
             last=0.0
             if enhanced:
-                stream_cm = get_client().chat.completions.create(**enhanced_request_kwargs)
+                stream_cm = (prepared.client if DESKTOP_DIALOGUE_PROFILE else get_client()).chat.completions.create(**enhanced_request_kwargs)
             else:
                 stream_cm = get_client().chat.completions.create(model=api_model(),messages=messages,
                     temperature=.7,max_tokens=CHAT_MAX_TOKENS,stream=True)
@@ -4919,6 +5075,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                         last=time.time()
                         shown=_split_voice_lang(clean_reply_style(acc),ja)[0]
                         self._ui(lambda t=shown:self._stream_update(t,my_conv))
+            generation_ok = bool(acc.strip())
             cleaned=clean_reply_style(acc)
             if CHARACTER_LAYER_ENABLED and not arch_v2:
                 from shizuka_antiai import anti_ai_clean
@@ -4973,6 +5130,8 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 from shizuka_admission import enforce_turn_policy
                 cleaned = enforce_turn_policy(
                     cleaned, getattr(getattr(self._conv_state, "last_shadow_turn", None), "policy", None))
+            if reply_cleaner is not None:
+                cleaned = reply_cleaner.clean(cleaned)
             if ja:
                 # 日语那份只留给语音：正文走文字气泡，合成在最后一次性排进去
                 reply,ja_text=_split_voice_lang(cleaned,True)
@@ -4984,17 +5143,31 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 if voice:
                     self._speak_stream(clean_reply_style(acc),spoken,final=True)
         except Exception:
+            generation_ok = False
             reply=self._scene("connection_failed")
         if my_conv is not None and my_conv!=self._conv_id:return
         if not acc.strip() and not ja:
             # reasoning token 吃满上限时会只剩空正文：非流式重试一次，拿到就补显示/补朗读
-            retried=self._retry_chat_reply(messages)
+            if reply_cleaner is not None:
+                from reply_turn import retry_body
+                retried=retry_body(engine, prepared.client, messages, prepared.provider,
+                                   interrupted=reply_cleaner.interrupted)
+            else:
+                retried=self._retry_chat_reply(messages)
             if retried:
                 acc=retried
+                generation_ok = bool(retried.strip())
                 reply=clean_reply_style(retried).strip()
+                if reply_cleaner is not None:
+                    try:
+                        reply=reply_cleaner.clean(reply)
+                    except InterruptedError:
+                        return
                 if voice:
                     self._speak_stream(reply,0,final=True)
         reply=reply or "刚才没有收到完整回复，请再试一次。"
+        if affect_transaction is not None:
+            affect_transaction.commit(generation_ok and bool(reply.strip()))
         if voice and not ja:
             if not acc.strip():
                 self._tts_enqueue(reply)   # 出错兜底：把兜底文字也念出来
@@ -5194,7 +5367,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             with _FILE_LOCK:
                 with open(path, "a", encoding="utf-8") as f:
                     ts = time.strftime("%H:%M:%S")
-                    f.write("**你**（%s）：%s\n\n**%s**：%s\n\n" % (ts, user_text, CHARACTER_NAME, reply))
+                    f.write("**你**（%s）：%s\n\n**%s**：%s\n\n" % (ts, user_text, DISPLAY_CHARACTER_NAME, reply))
         except Exception:
             pass
 
@@ -6334,15 +6507,16 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         return "%dx%d+%d+%d" % (w, h, x, y)
 
     def _place_dialog(self, win, width=None, height=None, top_ratio=0.5):
-        """新建对话框：在它第一次显示之前就把位置定好。
-        没传尺寸时必须先 update_idletasks 才能拿到真实请求尺寸（新窗口默认 200x200），
-        而那一步会让窗口先在默认位置映射一下 → 先藏起来再做，避免闪一下。
-        传了尺寸的（窗口刚建、控件还没填）直接设 geometry，等它自己按正确位置映射。"""
+        """Set final position while the first themed frame is still invisible."""
         try:
+            from window_opening import prepare
+            prepare(win)
             if width and height:
                 win.geometry(self._dialog_geometry(win, width, height, top_ratio))
                 return
             win.withdraw()
+            from ui_theme import apply
+            apply(win, artwork=False)
             win.update_idletasks()
             win.geometry(self._dialog_geometry(win, width, height, top_ratio))
             win.deiconify()
@@ -6474,10 +6648,11 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         threading.Thread(target=work, daemon=True).start()
 
     def _prompt_api_key(self, event=None):
+        from window_opening import dialog_window
         """选择服务商并加密保存 Key，只验证用户选择的接口。"""
         try:
-            win = tk.Toplevel(self.root)
-            win.title("静香 · 模型与接口")
+            win = dialog_window(self.root)
+            win.title("Shizuka · 模型与接口")
             from ui_theme import page_header
             page_header(win,'模型与接口').pack(fill='x')
             win.attributes("-topmost", True)
@@ -6637,6 +6812,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
 
     # ---------- 查看记忆 ----------
     def show_memory(self, event=None):
+        from window_opening import dialog_window
         """长期记忆管理：可编辑、置顶和手动删除；不自动遗忘。"""
         if getattr(self, "_mem_win", None) is not None:
             try:
@@ -6646,11 +6822,21 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             self._mem_win = None
         try:
             W, H = 660, 420
-            win = tk.Toplevel(self.root)
+            win = dialog_window(self.root)
             win.withdraw()
-            win.title(CHARACTER_NAME + " · 记忆")
+            win.title(DISPLAY_CHARACTER_NAME + " · 记忆")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
+            # 模糊背景**保留**（不加 _compact_surface）。
+            #
+            # 中途为了治滚动掉帧曾把它关掉：WindowBackdrop 的缓存键里**故意带了
+            # Canvas 的滚动偏移** `(widget.canvasx(0), widget.canvasy(0))`，
+            # 所以每滚一下背景都要按新偏移重新裁切、重画整窗子控件——
+            # 那时有八十来个真控件要一起重贴，很贵。
+            #
+            # 现在行改成 **Canvas 图形项**了（见 _mem_draw），窗口里只剩 header 和
+            # canvas 两个部件，重贴的代价小得多，所以把背景加回来。
+            # 如果滚动又变卡，第一件事是把这行加回 `win._compact_surface = True`。
             self._mem_win = win
 
             from ui_theme import page_header
@@ -6666,17 +6852,22 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
 
             body = tk.Frame(win)
             body.pack(fill='both',expand=True,padx=22)
-            canvas = tk.Canvas(body, bg="#2b2b3a", highlightthickness=0,height=1)
+            # 参与窗口背景系统，但用 MemoryCanvas 做**同步对齐**——
+            # 这正是对话记录窗口（ArtTranscript）的做法，见那个类的说明。
+            canvas = MemoryCanvas(body, bg="#2b2b3a", highlightthickness=0, height=1)
             vsb = ttk.Scrollbar(body, orient="vertical", command=canvas.yview)
-            inner = tk.Frame(canvas, bg="#2b2b3a")
-            inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-            content = canvas.create_window((0, 0), window=inner, anchor="nw")
-            canvas.bind('<Configure>',lambda e:canvas.itemconfigure(content,width=max(1,e.width)))
+            # 行是直接画在 canvas 上的**图形项**（见 _mem_draw），没有内外两层。
+            # 所以滚动交给 Tk 原生：**不拦 yscrollcommand，滚动时也不重画任何东西**。
+            # 之前用"虚拟滚动 + 每次重摆位置"，那本身就表现为"每一条都上下滑动一下"。
+            canvas.bind('<Configure>', lambda e: (self._mem_set_scrollregion(),
+                                                  self._mem_draw()))
+            canvas.bind('<Button-1>', self._mem_on_click)
             canvas.configure(yscrollcommand=vsb.set)
             vsb.pack(side="right", fill="y")
             canvas.pack(side="top", fill="both", expand=True)
             bind_wheel_scroll(win, canvas)
-            self._mem_inner = inner
+            self._mem_canvas = canvas
+
 
             bar = tk.Frame(win, bg="#2b2b3a")
             bar.pack(fill="x", padx=22, pady=10)
@@ -6708,8 +6899,10 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
     def _close_memory_window(self):
         win = getattr(self, "_mem_win", None)
         self._mem_win = None
-        self._mem_inner = None
         self._mem_rows = []
+        self._mem_edits = {}
+        self._mem_items = []
+        self._mem_close_editor()
         if win is not None:
             try:
                 win.destroy()
@@ -6717,51 +6910,167 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 pass
 
     def _build_memory_rows(self):
-        inner = getattr(self, "_mem_inner", None)
-        if inner is None:
-            return
-        for w in inner.winfo_children():
-            w.destroy()
-        self._mem_rows = []
+        """取数据、撑出滚动区域、把行画成图形项。"""
+        if not isinstance(getattr(self, "_mem_edits", None), dict):
+            self._mem_edits = {}
         mem = get_memory()
         with mem._lock:
-            items = mem.snapshot()   # 已按 永久在前、last_used 降序（线程安全快照）
+            self._mem_items = mem.snapshot()   # 已按 永久在前、last_used 降序（线程安全快照）
             if mem._sync:
                 self._mem_form_base = deepcopy(mem._sync_base)
-        if not items:
-            tk.Label(inner, text="还没有记忆哦", bg="#2b2b3a", fg="#9a9ab0").pack(pady=12)
+        self._mem_close_editor()
+        self._mem_set_scrollregion()
+        self._mem_draw()
+
+    def _mem_set_scrollregion(self):
+        """滚动区域按"总行数 × 行高"显式设定。"""
+        canvas = getattr(self, "_mem_canvas", None)
+        items = getattr(self, "_mem_items", None) or []
+        if canvas is None:
             return
-        for i, it in enumerate(items, 1):
-            from memory_lifecycle import active,label
-            dead = not active(it)
-            row = tk.Frame(inner, bg="#2b2b3a")
-            row.pack(fill="x", padx=4, pady=2)
-            tk.Label(row, text=str(i), width=3, bg="#2b2b3a", fg="#9a9ab0", anchor="w").pack(side="left")
-            cv = tk.StringVar(value=it.get("content", ""))
-            ce = tk.Entry(row, textvariable=cv, bg="#3a3a4e", fg=("#8a8a9a" if dead else "#e8e8f0"),
-                          insertbackground="#ffffff", relief="flat")
-            ce.pack(side="left", fill="x", expand=True, padx=2, ipady=2)
+        try:
+            width = max(1, canvas.winfo_width())
+        except Exception:
+            width = 1
+        canvas.configure(scrollregion=(0, 0, width, max(1, len(items)) * MEM_ROW_HEIGHT))
+
+    def _mem_draw(self):
+        """把所有记忆画成 Canvas 图形项——**滚动时一个 item 都不用动**。
+
+        用户实测聊天记录窗口不卡，因为它里面是 `create_text` 这类图形项，
+        Tk 用 C 代码绘制，滚动只是移动视口；而这里原来是**真控件**，
+        滚动时每个都要重新布局绘制。之前用虚拟滚动绕，但"每次滚动重摆位置"
+        本身就表现为「每一条都上下滑动一下」。
+
+        现在照聊天记录的做法：89 行 × 4 个 item ≈ 356 个，一次画完，
+        之后滚动**完全不碰它们**，也就没有虚拟滚动那套区间/池子/重排了。
+        """
+        canvas = getattr(self, "_mem_canvas", None)
+        if canvas is None:
+            return
+        canvas.delete('mem')
+        canvas.delete('memedit')
+        self._mem_rows = []
+        items = getattr(self, "_mem_items", None) or []
+        if not items:
+            canvas.create_text(20, 20, text="还没有记忆哦", anchor='nw', fill="#9a9ab0", tags='mem')
+            return
+        from memory_lifecycle import active, label
+        try:
+            width = max(200, canvas.winfo_width())
+        except Exception:
+            width = 660
+        field_x0, field_x1 = 44, max(60, width - 200)
+        for index, item in enumerate(items):
+            dead = not active(item)
+            y = index * MEM_ROW_HEIGHT + MEM_ROW_HEIGHT // 2
+            canvas.create_text(14, y, text=str(index + 1), anchor='w', fill="#9a9ab0",
+                               tags=('mem', 'memnum:%d' % index))
+            # 不填色：文字直接落在窗口背景图上（用户要的"文字背景透明"）。
+            # 只留一个很淡的描边，提示这里可以双击编辑。
+            canvas.create_rectangle(field_x0, y - 10, field_x1, y + 10, fill='',
+                                    outline='#4a4a60', tags=('mem', 'memfield:%d' % index))
+            cv = self._mem_edits.get(item["id"])
+            if cv is None:
+                cv = self._mem_edits[item["id"]] = tk.StringVar(value=item.get("content", ""))
+            self._mem_rows.append((item["id"], cv))
+            self._mem_text(canvas, index, y, field_x0, field_x1, cv.get(), dead)
             if dead:
-                tk.Label(row, text=label(it), width=8, bg="#2b2b3a", fg="#b08a4a", anchor="w").pack(side="left", padx=2)
+                canvas.create_text(field_x1 + 12, y, text=label(item), anchor='w',
+                                   fill="#b08a4a", tags=('mem', 'memmeta:%d' % index))
             else:
-                ts = time.strftime("%Y-%m-%d %H:%M", time.localtime(it.get("created", time.time())))
-                tk.Label(row, text=ts, width=16, bg="#2b2b3a", fg="#7fd6a8", anchor="w").pack(side="left", padx=2)
-            self._mem_rows.append((it["id"], cv))
-            tk.Button(row,text='详情',width=4,command=lambda mid=it['id']:self.show_memory_details(mid)).pack(side='left',padx=1)
-            tk.Button(row, text=("✓置顶" if it.get("pinned") else "置顶"), width=6,
-                      command=lambda mid=it["id"]: self._mem_toggle_pin(mid)).pack(side="left", padx=1)
-            tk.Button(row, text="删除", width=5,
-                      command=lambda mid=it["id"]: self._mem_delete(mid)).pack(side="left", padx=1)
+                stamp = time.strftime("%Y-%m-%d %H:%M",
+                                      time.localtime(item.get("created", time.time())))
+                canvas.create_text(field_x1 + 12, y, text=stamp, anchor='w', fill="#7fd6a8",
+                                   tags=('mem', 'memmeta:%d' % index))
+            canvas.create_text(width - 26, y, text='删除', anchor='e', fill="#d98a8a",
+                               tags=('mem', 'memdel:%d' % index))
+            canvas.tag_bind('memfield:%d' % index, '<Double-Button-1>',
+                            lambda e, i=index: self._mem_edit_row(i))
+            canvas.tag_bind('memtext:%d' % index, '<Double-Button-1>',
+                            lambda e, i=index: self._mem_edit_row(i))
+            canvas.tag_bind('memdel:%d' % index, '<Button-1>',
+                            lambda e, mid=item["id"]: self._mem_delete(mid))
+
+    def _mem_text(self, canvas, index, y, x0, x1, content, dead):
+        """画一行的正文。太长就截断——图形项不会自动换行裁切。"""
+        text = str(content or '')
+        room = max(4, int((x1 - x0 - 12) / 7.2))     # 中文约 7.2px 一个字
+        shown = text if len(text) <= room else text[:max(1, room - 1)] + '…'
+        canvas.create_text(x0 + 6, y, text=shown, anchor='w',
+                           fill=("#8a8a9a" if dead else "#e8e8f0"),
+                           tags=('mem', 'memtext:%d' % index))
+
+    def _mem_edit_row(self, index):
+        """双击某一行 → 就地弹一个输入框。**同时只存在一个**，改完即销毁。"""
+        canvas = getattr(self, "_mem_canvas", None)
+        items = getattr(self, "_mem_items", None) or []
+        if canvas is None or index >= len(items):
+            return
+        self._mem_close_editor()
+        item = items[index]
+        cv = self._mem_edits.get(item["id"])
+        if cv is None:
+            cv = self._mem_edits[item["id"]] = tk.StringVar(value=item.get("content", ""))
+        try:
+            width = max(200, canvas.winfo_width())
+        except Exception:
+            width = 660
+        y = index * MEM_ROW_HEIGHT + MEM_ROW_HEIGHT // 2
+        box = tk.Entry(canvas, textvariable=cv, bg="#4a4a60", fg="#ffffff",
+                       insertbackground="#ffffff", relief="flat")
+        canvas.create_window(44, y, window=box, anchor='w', width=max(60, width - 244),
+                             height=MEM_ROW_HEIGHT - 8, tags='memedit')
+        box.focus_set()
+        box.select_range(0, 'end')
+        box.bind('<Return>', lambda e: (self._mem_commit_row(index), 'break')[1])
+        box.bind('<Escape>', lambda e: (self._mem_close_editor(), 'break')[1])
+        box.bind('<FocusOut>', lambda e: self._mem_commit_row(index))
+        self._mem_editor = (index, box, cv)
+
+    def _mem_commit_row(self, index):
+        """把输入框里的内容写回 _mem_edits，然后重画这一行。"""
+        editor = getattr(self, "_mem_editor", None)
+        if not editor:
+            return
+        _, box, cv = editor
+        self._mem_editor = None
+        try:
+            box.destroy()
+        except Exception:
+            pass
+        items = getattr(self, "_mem_items", None) or []
+        if index < len(items):
+            # 图形项挡在输入框下面，改完要重画才能看到新内容
+            self._mem_draw()
+
+    def _mem_close_editor(self):
+        editor = getattr(self, "_mem_editor", None)
+        self._mem_editor = None
+        if editor:
+            try:
+                editor[1].destroy()
+            except Exception:
+                pass
+
+    def _mem_on_click(self, event):
+        """点空白处收起输入框。"""
+        if getattr(self, "_mem_editor", None):
+            canvas = getattr(self, "_mem_canvas", None)
+            if canvas is not None and not canvas.find_withtag('current'):
+                self._mem_close_editor()
 
     def _save_memory_rows(self):
         mem = get_memory()
+        # 用 _mem_edits 而不是 _mem_rows：后者只装可见的那几行，
+        # 滚出去的编辑会在里面缺席，保存时就被丢掉。
+        edits = {mid: cv.get().strip() for mid, cv in getattr(self, "_mem_edits", {}).items()}
         with mem._lock:
             self._remember_memory_undo(mem.items)
             if mem._sync and hasattr(self, "_mem_form_base"):
                 # A form's original view stays fixed while remote updates arrive.
                 mem.save()
                 desired = deepcopy(list(self._mem_form_base))
-                edits = {mid: cv.get().strip() for mid, cv in getattr(self, "_mem_rows", [])}
                 for item in desired:
                     if edits.get(item["id"]):
                         item["content"] = edits[item["id"]]
@@ -6769,12 +7078,10 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 mem.items = deepcopy(list(mem._sync_base))
                 self._build_memory_rows()
                 return
-            for mid, cv in getattr(self, "_mem_rows", []):
-                for it in mem.items:
-                    if it["id"] == mid:
-                        txt = cv.get().strip()
-                        if txt:
-                            it["content"] = txt
+            for it in mem.items:
+                txt = edits.get(it["id"])
+                if txt:
+                    it["content"] = txt
             mem.save()
             self._finish_memory_undo(mem.items)
 
@@ -6871,6 +7178,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             self.root.after(5000, self._refresh_sync_views)
 
     def show_sync(self):
+        from window_opening import dialog_window
         self.close_popup()
         if not SYNC_ENABLED:
             # 双端共享还没做好：和后端一起收起来，点了只说明情况（代码都还在）。
@@ -6891,7 +7199,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         from tkinter import filedialog, messagebox
         from sync_transport import validate_config
         from sync_bridge import atomic_json
-        win = tk.Toplevel(self.root)
+        win = dialog_window(self.root)
         win.title("双端同步")
         from ui_theme import page_header
         page_header(win,'双端同步').pack(fill='x')
@@ -6918,7 +7226,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._wake_pet()
         self.close_popup()
         self._menu_opened_at = time.time()
-        win = tk.Toplevel(self.root)
+        win = tk.Toplevel(self.root, class_='PetMenu')
         win.overrideredirect(True)
         win.attributes("-topmost", True)
         win.configure(bg="#f0f0f0", bd=1, relief="solid")
@@ -6929,9 +7237,8 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         # ① 音乐栏（单独一栏、放最顶上：播放 i wanna / 暂停 / 继续 / 结束）
         self._add_menu_music(win)
         self._menu_separator(win)
-        # ② 日常：待办 + 所有设置开关（收进「更多设置 ›」二级菜单）
+        # ② 日常与统一设置入口
         self._add_menu_item(win, "待办", self.show_todos)
-        self._add_menu_submenu(win, "更多设置", self._build_more_settings)
         self._add_menu_item(win, '设置中心', self.show_settings_center)
         self._menu_separator(win)
         # ③ 助手能力
@@ -7151,9 +7458,9 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 self._save_settings()
                 if startup:
                     self._gsv_prompted = True
-                    self.say("已检测到gpt-sovits并自动进行配置，请在「更多设置」里手动开启语音朗读")
+                    self.say("已检测到gpt-sovits并自动进行配置，请在「设置中心 → 声音与提醒」里手动开启语音朗读")
                 else:
-                    self.say("已完成配置，请在「更多设置」里打开语音朗读")
+                    self.say("已完成配置，请在「设置中心 → 声音与提醒」里打开语音朗读")
             self._ui(done)
         except Exception:
             _err_log("install_gsv")
@@ -7171,7 +7478,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             if not self._voice_on and not getattr(self, "_gsv_prompted", False):
                 self._gsv_prompted = True
                 self._ui(lambda: self.say(
-                    "已检测到gpt-sovits并自动进行配置，请在「更多设置」里手动开启语音朗读"))
+                    "已检测到gpt-sovits并自动进行配置，请在「设置中心 → 声音与提醒」里手动开启语音朗读"))
         except Exception:
             _err_log("gsv_startup_check")
 
@@ -7191,11 +7498,8 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         """背景音乐控制：随播放状态显示 播放 / 暂停 / 继续 / 结束；在放的时候最上面还有音量。"""
         st = getattr(self, "_music_state", "stopped")
         if st in ("playing", "paused"):
-            mark = self._add_menu_submenu(win, self._volume_menu_text(), self._build_volume_menu, width=12)
-            try:
-                self._volume_menu_label = mark.master.winfo_children()[0]
-            except Exception:
-                self._volume_menu_label = None
+            self._add_menu_item(win, self._volume_menu_text(), lambda:self.show_settings_center('声音与提醒'))
+            self._volume_menu_label = None
         if st == "playing":
             self._add_menu_item(win, "暂停播放", self._music_pause)
             self._add_menu_item(win, "结束播放", self._music_stop)
@@ -7282,7 +7586,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._close_submenus_from(level)
         try:
             anchor.update_idletasks()
-            sub = tk.Toplevel(self.root)
+            sub = tk.Toplevel(self.root, class_='PetMenu')
             sub.overrideredirect(True)
             sub.attributes("-topmost", True)
             sub.configure(bg="#f0f0f0", bd=1, relief="solid")
@@ -8024,6 +8328,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         source 非空表示这不是用户聊天触发（如「粘贴板」「截图」），会记一条来源说明。
         提示音只由待办提醒或文件完成事件触发。"""
         if getattr(self,'_quitting',False) or valid_if is not None and not valid_if():return False
+        speech_text = getattr(text, "speech_text", None)
         from dialogue_grounding import PASSIVE_SOURCES
         if source in PASSIVE_SOURCES and not self._claim_passive(text,source):return False
         try:
@@ -8053,17 +8358,22 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                     if ja:
                         # 日语语音：屏幕显示中文那份，语音念日语那份（固定中文台词就照中文念）
                         show,spoken_text=_split_voice_lang(text,True)
+                        if speech_text is not None:
+                            spoken_text = ""  # 摘要另行翻译，不朗读整份详情。
                         base=show or text
                         self._play_reply(base,is_reminder,activity=activity)
                         if spoken_text:
                             self._speak(spoken_text)
                         else:
                             # 模型没给日语版：后台补翻一次，别在 UI 线程里等
-                            def work(base=base):
-                                self._speak(self._translate_for_voice(base) or base)
+                            def work(base=speech_text if speech_text is not None else base, conv=self._conv_id):
+                                translated = self._translate_for_voice(base) or base
+                                if conv == self._conv_id and not getattr(self, "_quitting", False):
+                                    self._speak(translated)
                             threading.Thread(target=work,daemon=True).start()
                     else:
-                        self._speak(text)   # 语音驱动显示（文字跟着语音出）
+                        # 摘要随语音显示；完整文字已归档，研究详情仍在研究窗口。
+                        self._speak(speech_text if speech_text is not None else text)
                 else:
                     self._play_reply(text,is_reminder,activity=activity)
                 if source=='待办提醒':self._todo_notice_win=self._reply_win
@@ -8403,12 +8713,12 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         turn=self._conv_id if turn is None else turn
         snapshot=self._passive_snapshot()
         weather=self._greeting_weather()
-        direction=self._pick_proactive_direction()
+        direction=None
         prompt=self._greeting_prompt(direction, weather)
         try:
             client=_disable_thinking(get_client().with_options(timeout=20,max_retries=0))
             response=client.chat.completions.create(model=api_model(),
-                messages=[{"role":"system","content":load_persona()},
+                messages=[{"role":"system","content":_current_persona()},
                           {"role":"user","content":prompt}],temperature=.8,max_tokens=120)
             text=(response.choices[0].message.content or "").strip()
         except Exception:
@@ -8464,7 +8774,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             resp = client.chat.completions.create(
                 model=api_model(),
                 messages=[
-                    {"role": "system", "content": load_persona()},
+                    {"role": "system", "content": _current_persona()},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=1.0,
@@ -8587,7 +8897,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 resp = client.chat.completions.create(
                     model=api_model(),
                     messages=[
-                        {"role": "system", "content": load_persona()},
+                        {"role": "system", "content": _current_persona()},
                         {"role": "user", "content": prompt},
                     ],
                     temperature=1.0,
@@ -8612,7 +8922,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 client = get_client()
                 resp = client.chat.completions.create(
                     model=api_model(),
-                    messages=[{"role": "system", "content": load_persona()},
+                    messages=[{"role": "system", "content": _current_persona()},
                               {"role": "user", "content": prompt}],
                     temperature=0.5,
                     max_tokens=800,
@@ -8701,7 +9011,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 resp = client.chat.completions.create(
                     model=api_model(),
                     messages=[
-                        {"role": "system", "content": load_persona()},
+                        {"role": "system", "content": _current_persona()},
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.8,
@@ -8761,7 +9071,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 client = get_client()
                 resp = client.chat.completions.create(
                     model=api_model(),
-                    messages=[{"role": "system", "content": load_persona()}, {
+                    messages=[{"role": "system", "content": _current_persona()}, {
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
@@ -8953,16 +9263,20 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         top = sorted(apps.items(), key=lambda x: -x[1])[:6]
         lines = ["%s：%s" % (self._app_display_name(k), self._fmt_dur(v)) for k, v in top]
         total = sum(apps.values())
+        # 2026-10-03 按用户反馈改：原来要「今天你都在忙什么」的 2~3 段总结，
+        # 容易**从窗口时长推断努力、疲惫或摸鱼**（时长只说明窗口在前台多久）。
         prompt = (
-            "用户今天在电脑上的使用时长（按应用）：\n%s\n总计约 %s。\n"
-            "请以轻松的口吻，做个「今天你都在忙什么」的小总结，分成 2~3 个小段，"
-            "每段一两句、简短口语，段与段之间空一行。"
+            "用户今天在这台电脑上的**窗口使用时长**（按应用，只统计前台窗口；"
+            "它说明不了他在忙什么、也说明不了他累不累）：\n%s\n总计约 %s。\n"
+            "先把实际数字说清楚（总共多久、哪个最多），最多再补一句自然的反应；"
+            "**不要从时长推断他努力、疲惫还是在摸鱼**，也不必把排行念一遍——"
+            "完整排行在统计窗口里。"
         ) % ("\n".join(lines), self._fmt_dur(total))
         try:
             client = get_client()
             resp = client.chat.completions.create(
                 model=api_model(),
-                messages=[{"role": "system", "content": load_persona()},
+                messages=[{"role": "system", "content": _current_persona()},
                           {"role": "user", "content": prompt}],
                 temperature=1.0, max_tokens=400)
             text = clean_text((resp.choices[0].message.content or "").strip())
@@ -8972,6 +9286,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             pass
 
     def show_usage(self, event=None):
+        from window_opening import dialog_window
         if getattr(self, "_usage_win", None) is not None:
             try:
                 self._usage_win.destroy()
@@ -8980,9 +9295,9 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             self._usage_win = None
         try:
             W, H = round(780*DPI_SCALE), round(540*DPI_SCALE)
-            win = tk.Toplevel(self.root)
+            win = dialog_window(self.root)
             win.withdraw()
-            win.title("静香 · 今日使用时长")
+            win.title("Shizuka · 今日使用时长")
             win.attributes("-topmost", True)
             win.configure(bg="#2b2b3a")
             win.minsize(round(620*DPI_SCALE),round(430*DPI_SCALE))
@@ -9358,7 +9673,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             self._quiet_apps.append(name)
             self._save_settings()
             self._quiet_checked_at = 0.0     # 让下一次判断立刻生效
-        self.say("%s 以后不会被静香打扰了。" % name)
+        self.say("%s 以后不会被Shizuka打扰了。" % name)
 
     def _clear_quiet_apps(self):
         self._quiet_apps = []
@@ -9670,7 +9985,16 @@ if __name__ == "__main__":
             ctypes.windll.user32.MessageBoxW(
                 None,
                 "桌宠启动失败。\n详情见 data\\startup_error.log（把里面的内容发给开发者）。",
-                "静香助手", 0x10)
+                "Shizuka助手", 0x10)
         except Exception:
             pass
         raise
+
+
+def _current_persona():
+    """当前角色卡——统一来源，见 dialogue_features.current_persona。
+
+    这里做成懒加载：本模块被 dialogue_features 反向引用，顶层 import 会循环。
+    """
+    from dialogue_features import current_persona
+    return current_persona()

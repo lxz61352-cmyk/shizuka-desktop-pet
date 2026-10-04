@@ -104,7 +104,7 @@ def save_export(directory, payload, now=None):
     stamp = moment.strftime('%Y%m%d_%H%M%S_%f')[:-3]
     payload = dict(payload, exported_at=moment.isoformat())
     for suffix in range(1000):
-        character = '心菜' if payload.get('metadata', {}).get('character_id') == 'kokona' else '静香'
+        character = '心菜' if payload.get('metadata', {}).get('character_id') == 'kokona' else 'Shizuka'
         name = character + '聊天_' + stamp + (f'_{suffix:02d}' if suffix else '') + '.json'
         path = directory / name
         try:

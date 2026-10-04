@@ -1,4 +1,6 @@
 """Small controls and background research checks for the personal assistant."""
+from dialogue_features import current_persona
+from notification_text import SpokenNotice, spoken_excerpt
 import json, re, threading, time, webbrowser
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -6,6 +8,7 @@ from tkinter.scrolledtext import ScrolledText
 from research_watch import ResearchWatch
 from sync_bridge import atomic_json
 from sync_runtime import SYNC_ENABLED
+from window_opening import dialog_window
 
 # 研究进展：按用户自己填的关注方向筛最新文献。方向由「研究进展」窗口里输入（回车确认），
 # 存在 data/research-profile.json 的 topics/queries；没有方向时不会检索、也不会打扰用户。
@@ -33,34 +36,6 @@ SYNC_WIP_REPLY = "双端共享记忆这块还在开发中，暂时先没开哦�
 
 
 class AssistantFeaturesMixin:
-    def _build_more_settings(self, sub, level):
-        """「更多设置 ›」二级菜单：声音、语音与各项功能开关。"""
-        W = 20
-        self._add_menu_sound(sub, W, level)
-        self._add_menu_item(sub, "测试提示音", self.play_sound, W)
-        self._add_menu_speed(sub, W, level)
-        self._menu_separator(sub)
-        self._add_menu_voice(sub, W)
-        self._add_menu_tts_lang(sub, W, level)
-        self._add_menu_en_phonemes(sub, W)
-        self._add_menu_item(sub, "配置语音（GPT-SoVITS）…", self._pick_gsv_dir, W)
-        if self._voice_on:
-            self._add_menu_tts_release(sub, W, level)
-        self._add_idle_interval(sub)
-        self._menu_separator(sub)
-        self._add_menu_quiet(sub, W, level)
-        from sensitive_topics import LABEL, ATTRIBUTE
-        self._add_menu_toggle(sub, LABEL, ATTRIBUTE)
-        self._add_menu_item(sub, '敏感话题说明…', self._show_sensitive_topic_help, W)
-        self._add_menu_item(sub, '运行状态与恢复…', self.show_runtime_status, W)
-        for text, attr in [('检测剪贴板', '_clip_on'), ('翻译剪贴板', '_translate_on'),
-                           ('不确定的消息联网查证', '_web_search_on'),
-                           ('开机问候', '_greeting_on'), ('开机待办提醒', '_summary_on'), ('记录窗口使用时长', '_usage_on'),
-                           ('角色动态', '_animation_on'), ('自动小动作', '_ambient_actions_on'),
-                           ('落在窗口上', '_land_on_windows')]:
-            self._add_menu_toggle(sub, text, attr)
-        self._add_menu_autostart(sub)
-
     def _show_sensitive_topic_help(self):
         from sensitive_topics import LABEL, HELP
         messagebox.showinfo(LABEL, HELP, parent=self.pet)
@@ -81,20 +56,6 @@ class AssistantFeaturesMixin:
             else:text="本次记忆同步已完成。" if state.get("confirmed") else "已交换资料，等待对端确认。"
             self._ui(lambda:messagebox.showinfo("立即同步记忆",text,parent=self.pet))
         threading.Thread(target=work,daemon=True).start()
-
-    def _add_idle_interval(self, win):
-        row=tk.Frame(win,bg="#f0f0f0");row.pack(fill="x")
-        tk.Label(row,text="主动搭话间隔（分钟）",bg="#f0f0f0").pack(side="left",padx=18)
-        value=tk.StringVar(value=str(self._idle_minutes))
-        entry=ttk.Spinbox(row,from_=1,to=1440,textvariable=value,width=6)
-        entry.pack(side="left",padx=4)
-        def save():
-            try:minutes=int(value.get())
-            except ValueError:return messagebox.showerror("间隔","请输入 1–1440 的整数分钟。",parent=win)
-            if not 1<=minutes<=1440:return messagebox.showerror("间隔","请输入 1–1440 的整数分钟。",parent=win)
-            self._idle_minutes=minutes;self._idle_chat_count=0;self._last_idle_alert=time.time()
-            self._save_settings()
-        ttk.Button(row,text="保存",command=save).pack(side="right",padx=8)
 
     def _research_init(self):
         if not hasattr(self,"_research"):
@@ -120,7 +81,8 @@ class AssistantFeaturesMixin:
                 and self.visible and not self._actions_busy(time.monotonic())):
             alert=next((r for r in self._research.state["alerts"] if not r.get("notified")),None)
             if alert:
-                if self.say(self._research_notice(alert),source='研究进展'):
+                notice = SpokenNotice(self._research_notice(alert), self._research_speech(alert))
+                if self.say(notice,source='研究进展'):
                     self._research.mark_notified(alert['doi'])
 
     def _research_notice(self,alert):
@@ -129,15 +91,22 @@ class AssistantFeaturesMixin:
         citation=alert['title']+'\n'+publication
         if alert.get('evidence_basis')=='title':
             comment=alert.get('comment') or alert['reason']
-            return ('我看到一条与您课题相关的新文献。\n'+citation+
+            return ('我看到一条与你课题相关的新文献。\n'+citation+
                     '\n\n目前拿到的是题名信息，公开摘要还没有找到。'+comment+
                     '\n\n'+alert['url'])
         if alert.get('comment'):
             return ('这篇研究可以留意一下。\n'+citation+'\n\n'+alert['comment']+
                     '\n\n这是根据公开摘要作的判断，具体方法还要结合全文核对。\n'+alert['url'])
-        return ('这篇研究与您关注的方向相关，可以留意一下。\n'+citation+
+        return ('这篇研究与你关注的方向相关，可以留意一下。\n'+citation+
                 '\n\n从摘要看，'+alert['summary'].lstrip()+'\n\n'+alert['reason']+
                 '\n\n具体方法和结论还需要结合全文核对。\n'+alert['url'])
+
+    def _research_speech(self, alert):
+        """只播关键内容；题名、期刊和链接保留在通知与研究窗口。"""
+        if alert.get('evidence_basis') == 'title':
+            return '找到一篇跟你关注的方向有关的文献，目前只有题名，还不能判断结论。详情在研究进展里。'
+        note = spoken_excerpt(alert.get('comment') or alert.get('summary') or '')
+        return '找到一篇跟你关注的方向有关的文献。' + note + '这是根据摘要看的，还需要核对全文。'
 
     def _research_check(self, force=False, notify="auto"):
         if not RESEARCH_ENABLED:return
@@ -217,14 +186,14 @@ class AssistantFeaturesMixin:
             "这类只是相关文献线索，不声称已证实性能提升或突破；summary只解释题名所指的研究主题。"
             "不以期刊名、标题夸张用语或纯仿真数字认定突破。不推断未提供全文内容。"
             "每个候选输出 doi、important 布尔值、中文 summary、中文 reason、evidence（有摘要时取摘要原文；缺摘要时取题名原文，最多35个英文词）。"
-            "不确定就 important=false。最多标记三篇。summary客观解释摘要研究内容，reason自然解释与您课题的关联；如直接称呼只用您。"
-            "每个papers候选对象还必须含中文comment字段：作为静香自然地聊这篇文献，结合研究内容、与您课题的关系和自己想进一步核对的点，不罗列字段。"
+            "不确定就 important=false。最多标记三篇。summary客观解释摘要研究内容，reason自然解释与你课题的关联；如直接称呼只用你。"
+            "每个papers候选对象还必须含中文comment字段：作为静香自然地聊这篇文献，结合研究内容、与你课题的关系和自己想进一步核对的点，不罗列字段。"
             "缺摘要时评论只基于题名，设想使用想核对、可能值得看等表述，不能把猜测当作者结论。"
-            "评论不用另写开场称呼；不加系统回执、推荐理由等字段式开头，不加动作旁白，不反复用问句催您回应。"
+            "评论不用另写开场称呼；不加系统回执、推荐理由等字段式开头，不加动作旁白，不反复用问句催你回应。"
             '只输出 JSON 对象，完整结构为 {"papers":[{"doi":"...","important":true,"summary":"...","reason":"...","evidence":"...","comment":"..."}]}。\n'+
             json.dumps(works,ensure_ascii=False))
         response=engine.get_client().chat.completions.create(model=engine.api_model(),
-            messages=[{'role':'system','content':engine.load_persona()},{"role":"user","content":prompt}],temperature=0,max_tokens=2600,
+            messages=[{'role':'system','content':current_persona()},{"role":"user","content":prompt}],temperature=0,max_tokens=2600,
             response_format={"type":"json_object"})
         return json.loads(response.choices[0].message.content)["papers"]
 
@@ -235,11 +204,11 @@ class AssistantFeaturesMixin:
         self._research_init()
         if self._research_win and self._research_win.winfo_exists():
             self._move_dialog(self._research_win,780,680);return
-        win=self._research_win=tk.Toplevel(self.root)
+        win=self._research_win=dialog_window(self.root)
         def closed(event):
             if event.widget is win:self._research_win=None
         win.bind("<Destroy>",closed)
-        win.title("静香 · 研究进展");self._place_dialog(win,780,680)
+        win.title("Shizuka · 研究进展");self._place_dialog(win,780,680)
         from ui_theme import page_header
         page_header(win,'研究进展').pack(fill='x')
         tk.Label(win,text="写下你关注的研究方向，按回车确认；每加一个就立刻检索一次最新文献，之后按下面的间隔自动看一遍。",
@@ -443,7 +412,7 @@ class AssistantFeaturesMixin:
             text=""
             try:
                 response=engine.get_client().chat.completions.create(model=engine.api_model(),
-                    messages=[{"role":"system","content":engine.load_persona()},
+                    messages=[{"role":"system","content":current_persona()},
                               {"role":"user","content":prompt}],temperature=.3,max_tokens=900)
                 text=(response.choices[0].message.content or "").strip()
             except Exception as exc:
@@ -454,8 +423,8 @@ class AssistantFeaturesMixin:
         threading.Thread(target=worker,daemon=True).start()
 
     def _research_read(self,work,auto_explain=False,speak=False):
-        win=tk.Toplevel(self.root)
-        win.title("静香 · 文献");self._place_dialog(win,760,620)
+        win=dialog_window(self.root)
+        win.title("Shizuka · 文献");self._place_dialog(win,760,620)
         from ui_theme import page_header
         page_header(win,'文献阅读').pack(fill='x')
         ttk.Label(win,text=work.get("title") or "（没有题名）",style='Pet.Section.TLabel',
@@ -469,7 +438,7 @@ class AssistantFeaturesMixin:
         box=ScrolledText(win,wrap="word",font=("Microsoft YaHei UI",10))
         box.pack(fill="both",expand=True,padx=18)
         box.insert("end","公开摘要：\n"+(work.get("abstract") or "（这篇暂时没有公开摘要，只能凭题名判断。）")+"\n\n")
-        if work.get("comment"):box.insert("end","静香的判断：\n"+work["comment"]+"\n\n")
+        if work.get("comment"):box.insert("end","Shizuka 的判断：\n"+work["comment"]+"\n\n")
         if work.get("text"):
             box.insert("end","正文摘录（%d 字）：\n%s\n\n" % (len(work["text"]),work["text"][:6000]))
         box.configure(state="disabled")
@@ -477,9 +446,9 @@ class AssistantFeaturesMixin:
             if not win.winfo_exists():return
             box.configure(state="normal");box.insert("end",text);box.see("end");box.configure(state="disabled")
         def explain():
-            append("静香：我看一下…\n\n")
+            append("Shizuka：我看一下…\n\n")
             self._explain_paper(work,append=append,speak=speak,parent=win)
-        ttk.Button(win,text="让静香讲讲这篇",command=explain).pack(pady=10)
+        ttk.Button(win,text="让Shizuka讲讲这篇",command=explain).pack(pady=10)
         if auto_explain:explain()
 
     # ---------- 剪贴板里的论文：读正文再讲 ----------
@@ -529,7 +498,7 @@ class AssistantFeaturesMixin:
             self._research_text.tag_config(tag,foreground="#326da8",underline=True)
             self._research_text.tag_bind(tag,"<Button-1>",lambda e,url=alert["url"]:webbrowser.open(url))
             read_tag="read"+str(index)
-            self._research_text.insert("end","让静香讲讲这篇\n\n",read_tag)
+            self._research_text.insert("end","让 Shizuka 讲讲这篇\n\n",read_tag)
             self._research_text.tag_config(read_tag,foreground="#0a7a5a",underline=True)
             self._research_text.tag_bind(read_tag,"<Button-1>",lambda e,work=alert:self._research_read(work))
         if not state["alerts"]:self._research_text.insert("end","暂无通过证据筛选的进展；没发现时她会保持安静。\n")

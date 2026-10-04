@@ -4,6 +4,7 @@ from tkinter import ttk,filedialog,messagebox
 from PIL import Image,ImageTk,ImageGrab
 from attachment_files import (MAX_ATTACH,load_material,image_attachment,pdf_count,pdf_page,page_numbers,AttachmentShelf)
 from ui_theme import apply,PAGE_X
+from window_opening import dialog_window
 
 
 class AttachmentMixin:
@@ -50,7 +51,7 @@ class AttachmentMixin:
     def _pick_pdf_pages(self,path,atts,on_change,after_close=None):
         if getattr(self,'_pdf_picker',None):return
         self._chat_attach_busy=True
-        win=tk.Toplevel(self.root);self._pdf_picker=win;win.title('PDF预览与选页');self._place_dialog(win,760,720)
+        win=dialog_window(self.root);self._pdf_picker=win;win.title('PDF预览与选页');self._place_dialog(win,760,720)
         from ui_theme import page_header
         page_header(win,'PDF · 选择发送的页面').pack(fill='x')
         status=tk.StringVar(value='正在读取页数…');ttk.Label(win,textvariable=status,wraplength=700).pack(fill='x',padx=PAGE_X)

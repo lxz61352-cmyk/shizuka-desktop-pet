@@ -10,7 +10,7 @@ from unittest.mock import Mock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT/'src'), str(ROOT/'tests'), str(ROOT/'tools')]
 from weixin_segments import (BREAK, MORE, END, SegmentBuffer, clean_control, split_long,
-                             ReplyProgress, DeliveredReply, generate)
+                             ReplyProgress, DeliveredReply, generate, user_ends_turn)
 
 
 class FakeClient:
@@ -88,6 +88,33 @@ class SegmentTests(unittest.TestCase):
         self.assertEqual(len(client.requests),2)
         self.assertEqual(client.requests[1]['messages'][-2],{'role':'assistant','content':'好啊。'})
         self.assertNotIn('NEVER DISPLAY',result.text)
+
+    def test_user_signoff_suppresses_second_generation_not_first_answer(self):
+        for user in ('我先去吃饭','好，明白了。我去洗澡啦，晚点再说',
+                     '先不聊了，我去看会儿小说','我去拿快递啦，等会聊'):
+            client=FakeClient(['去吧，晚点聊。'+MORE])
+            p=self.progress();log=[]
+            result=generate(client,dict(model='fake',messages=[{'role':'system','content':'角色'},
+                {'role':'user','content':user}]),p,lambda v:v,log.append)
+            self.assertEqual(result.text,'去吧，晚点聊。')
+            self.assertEqual(len(client.requests),1)
+            self.assertEqual(result.status,'complete')
+
+    def test_request_and_quoted_signoff_do_not_suppress_continuation(self):
+        for user in ('我先去吃饭，你继续把证明发我','帮我算一下总价，我去拿快递啦',
+                     '他说“我先去吃饭”','我先去吃饭吗？','他先去吃饭'):
+            self.assertFalse(user_ends_turn([{'role':'user','content':user}]),user)
+        client=FakeClient(['第一步，先列条件。'+MORE],['第二步，代入得到68。'])
+        p=self.progress()
+        result=generate(client,dict(model='fake',messages=[{'role':'system','content':'角色'},
+            {'role':'user','content':'我先去吃饭，你继续把证明发我'}]),p,lambda v:v,lambda v:None)
+        self.assertEqual(len(client.requests),2)
+        self.assertIn('第二步',result.text)
+
+    def test_signoff_checks_only_latest_user_and_ignores_multimodal(self):
+        self.assertFalse(user_ends_turn([{'role':'user','content':'晚安'},
+            {'role':'assistant','content':'晚安'},{'role':'user','content':'又想问个问题'}]))
+        self.assertFalse(user_ends_turn([{'role':'user','content':[{'type':'text','text':'晚安'}]}]))
 
     def test_question_or_long_reply_does_not_request_continuation(self):
         for value in ('哪一家？','哪家啊，这么离谱。','诶，快说快说。','完整解答。'*240):

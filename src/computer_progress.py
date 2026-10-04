@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 from ui_theme import apply,copy_bindings,copy_text,ACCENT,MUTED
+from window_opening import dialog_window
 
 
 class PendingQuestions:
@@ -21,7 +22,7 @@ class PendingQuestions:
         item=self.pending
         if not item:return ''
         q=item['questions'][item['index']]
-        text='有一处想和您确认。\n'+q['question']
+        text='有一处想和你确认。\n'+q['question']
         if q.get('detail'):text+='\n'+q['detail']
         for index,option in enumerate(q.get('options',[]),1):
             text+='\n'+str(index)+'. '+option['label']
@@ -49,7 +50,7 @@ class PendingQuestions:
             # Keep the question pending if writing the answer fails. Never restart a task.
             self.agent.answer_question(item['request_id'],item['answers']+[answer])
             self.pending=None
-            return '好，我按您说的继续。'
+            return '好，我按你说的继续。'
 
     def clear(self,token):
         with self.lock:
@@ -78,9 +79,9 @@ class ComputerProgressMixin:
         if not hasattr(self,'root'):return
         old=getattr(self,'_computer_progress_win',None)
         if old is not None and old.winfo_exists():old.destroy()
-        win=self._computer_progress_win=tk.Toplevel(self.root)
+        win=self._computer_progress_win=dialog_window(self.root)
         self._computer_progress_token=token
-        win.title('静香 · DSH 执行过程');win.minsize(590,400);self._place_dialog(win,830,620)
+        win.title('Shizuka · DSH 执行过程');win.minsize(590,400);self._place_dialog(win,830,620)
         win.columnconfigure(0,weight=1);win.rowconfigure(1,weight=1)
         from ui_theme import page_header
         head=page_header(win,'文件任务');head.grid(row=0,column=0,sticky='ew')
@@ -150,7 +151,7 @@ class ComputerProgressMixin:
                 token.set();questions.clear(token);reply='好，这项任务先停在这里。'
             else:
                 try:reply=questions.submit(text,origin)
-                except Exception:reply='刚才的回答还没有送到，我先等着。您可以再发一次。'
+                except Exception:reply='刚才的回答还没有送到，我先等着。你可以再发一次。'
         self._log_chat('user',text,kind='weixin_file_answer' if origin=='weixin' else 'computer_answer')
         if origin=='weixin':
             self._log_chat('assistant',reply,kind='weixin_file_question')
@@ -163,10 +164,10 @@ class ComputerProgressMixin:
     def _computer_draw_progress(self,state,token):
         if getattr(self,'_computer_cancel',None) is token:
             executing=not state.get('waiting') and not any(r.get('type')=='turn_end' for r in state.get('events',[]))
-            self._computer_state.update(status='等待您回复静香' if state.get('waiting') else self._scene('file_running',seconds=state['elapsed']),directory=state.get('directory',''),executing=executing)
+            self._computer_state.update(status='等待你回复Shizuka' if state.get('waiting') else self._scene('file_running',seconds=state['elapsed']),directory=state.get('directory',''),executing=executing)
         win=getattr(self,'_computer_progress_win',None)
         if win is None or not win.winfo_exists() or self._computer_progress_token is not token:return
-        self._computer_progress_status.set('等待您回复静香' if state.get('waiting') else f"处理中 · {state['elapsed']} 秒")
+        self._computer_progress_status.set('等待你回复Shizuka' if state.get('waiting') else f"处理中 · {state['elapsed']} 秒")
         for row in state.get('events',[]):
             kind=row.get('type')
             if kind=='step':self._computer_progress_append('\n步骤 '+str(row.get('step',''))+'\n','step')
@@ -176,7 +177,7 @@ class ComputerProgressMixin:
             elif kind=='bridge_ready':self._computer_progress_append('DSH 已连接\n')
             elif kind=='bridge_warning':self._computer_progress_append('\n提示：'+row.get('text','')+'\n','error')
             elif kind=='model':self._computer_progress_append('\n'+row.get('text','')+'\n','detail')
-            elif kind=='question':self._computer_progress_append('\n静香正在等您的回答。\n','step')
+            elif kind=='question':self._computer_progress_append('\nShizuka 正在等你的回答。\n','step')
             elif kind=='question_answered':self._computer_progress_append('\n已收到回答，继续处理。\n','step')
             elif kind=='question_cancelled':self._computer_progress_append('\n这次提问已取消。\n','step')
 

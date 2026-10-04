@@ -2,6 +2,7 @@
 import hashlib
 import re
 import time
+from proactive_content import unsuitable
 
 DEFAULTS = dict(enabled=False, start=600, end=1320, daily_limit=2, gap_minutes=180,
                 awaiting=False, last_sent=0, last_user=0, paused_until=0, history=[], attempts=[])
@@ -99,14 +100,14 @@ def candidates(memories,rows,history,now=None):
     options=[]
     for row in memories:
         text=row.get('content','')
-        if active(row,now) and INTEREST.search(text) and not PRIVATE.search(text) and not re.search(r'不喜欢|不想聊|别提|不要提|讨厌',text):
+        if active(row,now) and INTEREST.search(text) and not PRIVATE.search(text) and not unsuitable(text) and not re.search(r'不喜欢|不想聊|别提|不要提|讨厌',text):
             options.append(dict(id='memory:'+row['id'],text=text,at=row.get('created'),kind='偏好'))
     for row in rows[-80:]:
         text=row.get('text','')
         if (row.get('role')=='user' and row.get('kind') in ('chat','user','weixin')
                 and 1800<now-row.get('created',0)<2*86400 and INTEREST.search(text)
                 and not PRIVATE.search(text) and not re.search(r'不喜欢|不想聊|别提|不要提|讨厌',text) and len(text)<250):
-            options.append(dict(id='chat:'+row['id'],text=text,at=row.get('created'),kind='近期分享'))
+            if not unsuitable(text):options.append(dict(id='chat:'+row['id'],text=text,at=row.get('created'),kind='近期分享'))
     result=[]
     for row in options:
         if any(term in row['text'] for term in blocked):continue
@@ -117,6 +118,7 @@ def candidates(memories,rows,history,now=None):
 
 def acceptable(text, history):
     if not isinstance(text,str) or not 2<=len(text.strip())<=220:return False
+    if unsuitable(text):return False
     if re.search(r'怎么不[回理]|(?:^|[，。！？\s])在吗|怎么还不|该.{0,5}(复习|学习|睡觉)|喝[口点]?水|记得.{0,6}(完成|复习)',text):return False
     from difflib import SequenceMatcher
     return all(SequenceMatcher(None,text,r.get('text','')).ratio()<.72 for r in history[-12:])

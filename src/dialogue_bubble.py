@@ -12,7 +12,7 @@ BUBBLE_W=440
 def make_bubble(parent, **unused):
     width=min(BUBBLE_W,max(280,parent.winfo_screenwidth()-40))
     win,canvas,resize=surface(parent,width,230,'',kind='reply')
-    font=tkfont.Font(root=parent,family=FONT[0],size=11)
+    font=tkfont.Font(root=parent,family=FONT[0],size=11,weight='bold')
     line_height=font.metrics('linespace')+7
     box=ArtTranscript(win,plain=True)
     box.place(x=48,y=70,width=width-96,height=32)
@@ -21,7 +21,7 @@ def make_bubble(parent, **unused):
     from tkinter import ttk
     footer=ttk.Frame(win)
     footer.place(x=42,y=150,width=width-108,height=35)
-    hint=ttk.Label(win,text='',foreground=MUTED,font=(FONT[0],8))
+    hint=ttk.Label(win,text='',foreground=MUTED,font=(FONT[0],8,'bold'))
     hint.place(x=48,y=120)
     button(footer,'收起',win.withdraw).pack(side='right')
     button(footer,'复制',lambda:copy_text(box,True)).pack(side='right')

@@ -213,7 +213,7 @@ class TodoReplyMixin:
         if target.get('handled'):return '这次已经记为完成了。'
         if len(specs)!=1:
             target['choosing']=True
-            return '您刚完成的是哪一件？\n'+'\n'.join(f"{i}. {s['title']}" for i,s in enumerate(specs,1))
+            return '你刚完成的是哪一件？\n'+'\n'.join(f"{i}. {s['title']}" for i,s in enumerate(specs,1))
         spec=specs[0];row=next((r for r in self.todos if r['id']==spec['id']),None)
         if row is None:
             target['handled']=True;return '这条待办已经不在列表里了。'
@@ -223,9 +223,9 @@ class TodoReplyMixin:
             return '这条提醒的时间已经变了，请在待办里核对一下要完成哪一次。'
         rule=self._todo_options(row).get('schedule',{}).get('rule')
         try:self._todo_complete_or_restore(row,True)
-        except Exception:return '完成状态这次没有确认保存，您先在待办里核对一下。'
+        except Exception:return '完成状态这次没有确认保存，你先在待办里核对一下。'
         target['handled']=True
-        return (row['text']+'这次完成了，下次再提醒您。') if rule and not rule.get('until_done') else (row['text']+'完成了，我记好了。')
+        return (row['text']+'这次完成了，下次再提醒你。') if rule and not rule.get('until_done') else (row['text']+'完成了，我记好了。')
 
     def _weixin_complete_reply(self,text,cancel):
         target=getattr(self,'_todo_reply_targets',{}).get('weixin')
@@ -240,5 +240,5 @@ class TodoReplyMixin:
                 ready.set()
         self._ui(apply)
         if not ready.wait(8):
-            cancel.set();return '完成状态还没确认，您先在电脑待办里核对一下。'
+            cancel.set();return '完成状态还没确认，你先在电脑待办里核对一下。'
         return result[0]

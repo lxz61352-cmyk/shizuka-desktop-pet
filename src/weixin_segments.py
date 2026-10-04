@@ -8,9 +8,19 @@ REVISION = 'weixin-segments-v1'
 BREAK = '[[WX_BREAK]]'
 MORE = '[[WX_MORE]]'
 END = '[[WX_END]]'
+# 空行分条的门槛：这一段攒够这么多字才算一条独立消息。
+#
+# 调过两次：
+#   · 无门槛（任何空行都拆）——拆成多条的比率从 14% 涨到 76%，用户反馈"每条都回两句以上"；
+#   · 50 字——又太保守，「哦，是搬快递搬哭了。／几个啊，多到这种程度」这种
+#     两段都不短（10 字 + 10 字）却被并成一个气泡，用户反馈"还是没分气泡"。
+#
+# 现在定 6：**两段都不止一两个字就拆**——这正是人发微信的习惯，
+# 只有「嗯。」这种极短的开头才并进后一条。
+SPLIT_MIN_CHARS = 6
 INSTRUCTION = (
     '【微信分条发送】你可以像发微信一样分条，也可以只发一条。'
-    '需要分开两个意思时，在两条之间单独写 [[WX_BREAK]]，最多用两次；'
+    '需要分开两个意思时，在两条之间单独写 [[WX_BREAK]]，最多用两次；直接空一行，程序同样会分开送达。'
     '一条写完就能先送达，不必先加“嗯、懂、收到”占位，也不必固定先回应再提问。'
     '分条只改变发送节奏，不增加本来没必要说的内容；用户告别或暂时离开，就回应告别，不借分条追加叮嘱或开新话题。'
     '讲题要完整，公式、代码块和一个推导步骤内部不分条。'
@@ -65,6 +75,12 @@ class ReplyProgress:
         self.attempts = 0
         self.failed = False
         self.delay = delay
+        self.on_complete = None
+
+    def finish_delivery(self, success):
+        callback, self.on_complete = self.on_complete, None
+        if callback is not None:
+            callback(bool(success) and not self.interrupted())
 
     def __call__(self, value):
         self.status(value)
@@ -103,6 +119,24 @@ def control_matches(text):
             if not any(start <= m.start() < end for start, end in spans)]
 
 
+def blank_breaks(text):
+    """空行也是分条边界——但**要够长才算**。
+
+    实测 167 条微信回复里没有一条写过 [[WX_BREAK]]——模型一直用空行分段，而分条器只认标记，
+    于是"分条"在这条 profile 上从来没生效过，回复整段发出去。用户要求把空行也当分条。
+
+    但**没有门槛的版本会拆过头**：实测拆成多条的比率从 14% 涨到 76%，
+    一条十几字的回复也被拆成两三条送达，体感就成了"每条消息都回好几条"。
+    所以空行只在"这一段已经攒够长"时才算边界（见 `_next_cut` 里的 SPLIT_MIN_CHARS）。
+
+    代码块与行内代码里的空行不算；流式期间未闭合的围栏会一直匹配到缓冲区末尾，
+    所以代码中途不会被切开。
+    """
+    spans = [(m.start(), m.end()) for m in re.finditer(r'```[\s\S]*?(?:```|$)|`[^`\n]*`', text)]
+    return [m for m in re.finditer(r'\n[ \t]*\n[ \t]*', text)
+            if not any(start <= m.start() < end for start, end in spans)]
+
+
 def clean_control(text):
     for match in reversed(control_matches(text)):
         replacement = '\n\n' if match.group() == BREAK else ''
@@ -115,17 +149,32 @@ class SegmentBuffer:
         self.pending = ''
         self.breaks = 0
 
+    def _next_cut(self):
+        """下一个分条位置，返回 (起点, 要吃掉的长度)；没有就返回 None。
+
+        [[WX_BREAK]] 是模型明确要求分条，一律照办；空行要看已经攒了多少字——
+        短回复不拆，免得一条十几字的话被拆成两三条送达。
+        """
+        cuts = []
+        for match in control_matches(self.pending):
+            if match.group() == BREAK:
+                cuts.append((match.start(), match.end() - match.start()))
+        blanks = blank_breaks(self.pending)
+        if blanks and len(re.sub(r'\s', '', self.pending[:blanks[0].start()])) >= SPLIT_MIN_CHARS:
+            match = blanks[0]
+            cuts.append((match.start(), match.end() - match.start()))
+        return min(cuts) if cuts else None
+
     def feed(self, delta):
         self.pending += delta
         ready = []
-        # Treat fenced code as an atomic paragraph, even if it quotes a marker.
         while self.breaks < 2:
-            matches = [m for m in control_matches(self.pending) if m.group() == BREAK]
-            if not matches:
+            cut = self._next_cut()
+            if cut is None:
                 break
-            at = matches[0].start()
+            at, width = cut
             ready.append(self.pending[:at])
-            self.pending = self.pending[at+len(BREAK):]
+            self.pending = self.pending[at+width:]
             self.breaks += 1
         return ready
 
@@ -151,7 +200,28 @@ def waiting_for_user(text):
                           r'[吗么呢][。！!…\s]*$|快说|告诉我|跟我说', text))
 
 
-def generate(client, kwargs, progress, clean, on_sent, acquire=lambda: None):
+def user_ends_turn(messages):
+    """Suppress only an optional second generation after a clear user sign-off.
+
+    Never truncate the first answer. Questions and requests take precedence,
+    even when the same message mentions leaving. Quoted/pasted sign-offs and
+    long material messages are intentionally not classified by this small gate.
+    """
+    content=next((m.get('content') for m in reversed(messages) if m.get('role')=='user'),None)
+    if not isinstance(content,str) or len(content)>160:
+        return False
+    if re.search(r'[?？“”「」"\']|(?:帮我|告诉我|解释|讲一下|继续|发我|算一下|为什么|怎么|多少|几点|能不能|可不可以)',content):
+        return False
+    clauses=[c.strip() for c in re.split(r'[。！!，,、\n]+',content) if c.strip()]
+    if not clauses:
+        return False
+    ending=(r'(?:(?:先)?不聊(?:了|啦)?|(?:等会儿?|待会儿?|回头|晚点)(?:再)?(?:聊|说)|'
+            r'(?:我)?(?:先)?去(?:吃饭|洗澡|睡觉|拿快递|上课|看(?:会儿?|一会儿?)?(?:书|小说))|'
+            r'(?:我)?(?:先)?睡(?:了|啦)?|晚安|拜拜|再见)(?:了|啦|吧|啊|哦|哈|~|～|…)*')
+    return bool(re.fullmatch(ending,clauses[-1]))
+
+
+def generate(client, kwargs, progress, clean, on_sent, acquire=lambda: None, *, retry_empty=None):
     """At most two generations; only confirmed deliveries enter chat memory."""
     messages = [dict(m) for m in kwargs['messages']]
     messages[0] = dict(messages[0], content=messages[0]['content']+'\n\n'+INSTRUCTION)
@@ -180,7 +250,7 @@ def generate(client, kwargs, progress, clean, on_sent, acquire=lambda: None):
         if not emit(tail):
             return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
         # No extra turn after a question, empty output, or an already long answer.
-        if (more and progress.sent and len(progress.sent) < 4 and
+        if (more and progress.sent and not user_ends_turn(messages) and len(progress.sent) < 4 and
                 len(''.join(progress.sent)) < 900 and not waiting_for_user(progress.sent[-1]) and
                 not progress.interrupted()):
             follow = messages + [{'role':'assistant', 'content':'\n\n'.join(progress.sent)},
@@ -203,6 +273,16 @@ def generate(client, kwargs, progress, clean, on_sent, acquire=lambda: None):
                 if not ended and value and len(value) <= 500 and not repeated(value, progress.sent):
                     if not progress.emit(value, on_sent):
                         status = 'interrupted'
+        if not progress.sent and not progress.interrupted() and retry_empty is not None:
+            recovered = retry_empty(client, request)
+            if recovered and not progress.interrupted():
+                recovered_buffer = SegmentBuffer()
+                for value in recovered_buffer.feed(recovered):
+                    if not emit(value):
+                        return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
+                tail, _ = recovered_buffer.finish()
+                if not emit(tail):
+                    return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
         if not progress.sent and not progress.interrupted():
             emit('刚才没有收到完整回复，请再试一次。')
             status = 'empty'

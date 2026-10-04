@@ -7,7 +7,7 @@ import time
 
 
 def main():
-    if "--self-test" in sys.argv:
+    if "--self-test" in sys.argv or "--qt-tools-self-test" in sys.argv or "--qt-forms-self-test" in sys.argv:
         import os
         import tempfile
         with tempfile.TemporaryDirectory(prefix="shizuka-self-test-") as folder:
@@ -26,6 +26,12 @@ def _main():
             root.after(8000,root.destroy);root.mainloop()
             return 0
         import pet
+        if "--qt-forms-self-test" in sys.argv:
+            from qt_forms_smoke import run
+            return run()
+        if "--qt-tools-self-test" in sys.argv:
+            from qt_tools_smoke import run
+            return run(pet)
         if "--self-test" in sys.argv:
             from release_smoke import run
             return run(pet)
@@ -49,16 +55,23 @@ def _main():
             from personal_backup import apply_pending
             apply_pending(pet.DATA_DIR)  # Only after the single-instance lock, before loading app data.
             app = pet.DeskPet()
+            from qt_forms import install
+            install(app)
             if pet.DESKTOP_DIALOGUE_PROFILE:
                 import json, os
                 from desktop_dialogue_profile import metadata
+                from window_art import REVISION as BACKGROUND_REVISION
                 status = dict(metadata(pet.DESKTOP_DIALOGUE_PROFILE), app_version=pet.APP_VERSION,
-                              pid=os.getpid(), executable=sys.executable,
+                              pid=os.getpid(), executable=sys.executable, background_revision=BACKGROUND_REVISION,
                               started_at=datetime.datetime.now().astimezone().isoformat())
                 (Path(pet.DATA_DIR) / 'dialogue-runtime.json').write_text(
                     json.dumps(status, ensure_ascii=False, indent=2), encoding='utf-8')
             if "--computer" in sys.argv:
                 app.root.after(100, app.show_computer_assistant)
+            if "--qt-tools" in sys.argv:
+                def open_tools():
+                    app.show_chat_log();app.show_todos()
+                app.root.after(300,open_tools)
             if "--weixin" in sys.argv or "--weixin-pair" in sys.argv:
                 def open_weixin():
                     app.show_weixin()
@@ -72,7 +85,7 @@ def _main():
     except Exception:
         root = Path(sys.executable).resolve().parent if getattr(sys,"frozen",False) else Path(__file__).resolve().parent.parent
         log = root / "data" / "startup_error.log"
-        testing='--self-test' in sys.argv or '--exit-self-test' in sys.argv
+        testing='--self-test' in sys.argv or '--qt-tools-self-test' in sys.argv or '--qt-forms-self-test' in sys.argv or '--exit-self-test' in sys.argv
         if testing and '--report' in sys.argv:
             log=Path(sys.argv[sys.argv.index('--report')+1]).parent/'self-test-error.log'
         details = traceback.format_exc()
@@ -85,7 +98,7 @@ def _main():
         try:
             import ctypes
             ctypes.windll.user32.MessageBoxW(
-                None, f"桌宠启动失败。\n错误详情已保存到：\n{log}", "静香助手", 0x10)
+                None, f"桌宠启动失败。\n错误详情已保存到：\n{log}", "Shizuka助手", 0x10)
         except Exception:
             pass
         return 1

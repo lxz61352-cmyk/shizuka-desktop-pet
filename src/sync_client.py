@@ -15,7 +15,7 @@ from sync_store import FIELDS, Snapshot
 from sync_transport import make_transport
 
 HTML = r'''<!doctype html><html lang="zh-CN"><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>静香 · 双端同步</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Shizuka · 双端同步</title>
 <style>
 :root{font-family:system-ui,"Microsoft YaHei",sans-serif;color:#302b3d;background:#f7f5fa}*{box-sizing:border-box}[hidden]{display:none!important}
 body{max-width:980px;margin:auto;padding:36px 24px}header{display:flex;align-items:center;justify-content:space-between;gap:20px}
@@ -25,7 +25,7 @@ button{border:1px solid #ded7e8;border-radius:8px;padding:9px 14px;background:wh
 input,textarea{border:1px solid #ded7e8;border-radius:8px;padding:10px;font:inherit;max-width:100%}textarea{width:100%;min-height:78px;resize:vertical}
 .row{padding:16px 0;border-bottom:1px solid #eee9f2}.row:last-child{border:0}.body{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.7}.meta{font-size:12px;color:#857b91;margin:8px 0}
 .buttons{display:flex;gap:8px;margin-top:10px}.small{font-size:12px;padding:5px 10px}#status{font-size:16px;font-weight:600}#detail,#error{white-space:pre-wrap;overflow-wrap:anywhere}#error{color:#9b3d58}label{display:block;font-size:13px;margin:12px 0 6px}#conflicts{font-size:13px}details{margin:15px 0}
-</style><header><div><h1>静香 · 双端同步</h1><p>长期记忆、聊天记录和待办，随设备一起延续。</p></div><button id="sync" class="primary">立即同步</button></header>
+</style><header><div><h1>Shizuka · 双端同步</h1><p>长期记忆、聊天记录和待办，随设备一起延续。</p></div><button id="sync" class="primary">立即同步</button></header>
 <section class="card"><div id="status">正在读取…</div><p id="detail"></p><p id="error"></p><details><summary>冲突记录与设备信息</summary><pre id="conflicts"></pre></details></section>
 <nav><button data-c="memories" class="active">长期记忆</button><button data-c="chats">聊天记录</button><button data-c="todos">待办</button></nav>
 <section class="card"><div id="editor"><label id="input-label">添加记忆</label><textarea id="input" placeholder="输入一条需要长期保存的内容"></textarea><label id="due-label" hidden>提醒时间（可选）</label><input id="due" type="datetime-local" hidden><div class="buttons"><button id="add" class="primary">添加</button></div><p id="chat-hint" hidden>此处可追加历史备注，不会调用 AI 回复；完整 Mac 桌宠界面尚未接入。</p></div><div id="rows"></div></section>
@@ -176,7 +176,11 @@ def serve(client, port=0, open_browser=True, ready_file=None, on_ready=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default=str(Path(__file__).resolve().parent / "pairing.json"))
-    default_data = Path.home() / ("Library/Application Support/ShizukaSync" if sys.platform == "darwin" else "ShizukaSync")
+    base = Path.home() / "Library/Application Support" if sys.platform == "darwin" else Path.home()
+    default_data = base / "ShizukaSync"
+    legacy_data = base / "静香Sync"
+    if not default_data.exists() and legacy_data.exists():
+        default_data = legacy_data  # Existing library stays in place; no data move during startup.
     parser.add_argument("--data", default=str(default_data))
     parser.add_argument("--character", default="shizuka")
     parser.add_argument("--no-browser", action="store_true")

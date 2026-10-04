@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk,filedialog,messagebox
 from tkinter.scrolledtext import ScrolledText
 from ui_theme import page_header,apply,PAGE_X
+from window_opening import dialog_window
 
 
 class ExperienceMixin:
@@ -51,109 +52,15 @@ class ExperienceMixin:
         self.close_popup()
         old=getattr(self,attribute,None)
         if old is not None and old.winfo_exists():old.lift();return None
-        win=tk.Toplevel(self.root);setattr(self,attribute,win)
-        win.title('静香 · '+title);win.minsize(650,470);self._place_dialog(win,width,height)
+        win=dialog_window(self.root);setattr(self,attribute,win)
+        win.title('Shizuka · '+title);win.minsize(650,470);self._place_dialog(win,width,height)
         page_header(win,title).pack(fill='x')
         win.bind('<Escape>',lambda e:win.destroy())
         return win
 
-    def show_settings_center(self):
-        import pet
-        from experience_settings import load,save
-        from window_art import catalog,set_preferences
-        win=self._experience_window('_settings_center','设置中心')
-        if win is None:return
-        prefs=load(pet.DATA_DIR)
-        search=tk.StringVar();ttk.Entry(win,textvariable=search).pack(fill='x',padx=PAGE_X,pady=(0,12))
-        notebook=ttk.Notebook(win);notebook.pack(fill='both',expand=True,padx=PAGE_X,pady=(0,18))
-        groups={};searchable=[]
-        for title in ('聊天与角色','主动搭话','声音与提醒','外观','连接与数据'):
-            frame=ttk.Frame(notebook,padding=16);notebook.add(frame,text=title);groups[title]=frame
-        def toggle(group,label,attr):
-            value=tk.BooleanVar(value=bool(getattr(self,attr,False)))
-            def change():
-                setattr(self,attr,value.get());self._save_settings()
-                mark=getattr(self,'_menu_marks',{}).get(attr)
-                if mark and mark.winfo_exists():mark.configure(text='✓' if value.get() else '')
-            button=ttk.Checkbutton(groups[group],text=label,variable=value,command=change)
-            button.pack(anchor='w',pady=5);searchable.append((group,label,button))
-        toggle('聊天与角色','敏感话题模式（非露骨成人话题）','_sensitive_topics_on')
-        toggle('聊天与角色','不确定的消息联网查证','_web_search_on')
-        for label,command in [('查看话题范围说明',self._show_sensitive_topic_help),('查看和标记对话',self.show_chat_log),
-                              ('反馈记录与导出',self.show_feedback),('查看记忆与有效期',self.show_memory)]:
-            ttk.Button(groups['聊天与角色'],text=label,command=command).pack(anchor='w',pady=6)
-        self._weixin_init()
-        from proactive_chat import state,command,describe,HELP
-        pro=groups['主动搭话'];value=state(self._weixin_store.data)
-        enabled=tk.BooleanVar(value=value['enabled']);start=tk.StringVar(value='%02d:%02d'%divmod(value['start'],60));end=tk.StringVar(value='%02d:%02d'%divmod(value['end'],60))
-        frequency=tk.StringVar(value={1:'少',2:'偶尔',3:'多'}.get(value['daily_limit'],'偶尔'))
-        ttk.Checkbutton(pro,text='允许微信主动搭话（无回复则暂停后续闲聊）',variable=enabled).pack(anchor='w',pady=6)
-        row=ttk.Frame(pro);row.pack(fill='x',pady=8)
-        ttk.Label(row,text='允许时段').pack(side='left');ttk.Entry(row,textvariable=start,width=8).pack(side='left',padx=8)
-        ttk.Label(row,text='至').pack(side='left');ttk.Entry(row,textvariable=end,width=8).pack(side='left',padx=8)
-        ttk.Combobox(row,textvariable=frequency,values=('少','偶尔','多'),state='readonly',width=8).pack(side='left')
-        status=tk.StringVar(value=describe(value));ttk.Label(pro,textvariable=status,wraplength=690).pack(fill='x',pady=8)
-        def set_proactive():
-            data=dict(self._weixin_store.data)
-            current,reply=command('/主动 时间 '+start.get()+'-'+end.get(),data)
-            if '格式' in reply or '有效时刻' in reply:return messagebox.showerror('时间设置',reply,parent=win)
-            data['proactive_chat']=current
-            current,_=command('/主动 频率 '+frequency.get(),data)
-            if enabled.get()!=current['enabled']:
-                data['proactive_chat']=current;current,_=command('/主动 '+('开启' if enabled.get() else '关闭'),data)
-            self._weixin_store.update(proactive_chat=current)
-            channel=getattr(self,'_weixin_channel',None)
-            if channel:channel.proactive_cancel.set()
-            status.set(describe(current))
-        ttk.Button(pro,text='保存微信主动设置',command=set_proactive).pack(anchor='w',pady=6)
-        from proactive_topics import TOPIC_DESCRIPTION
-        ttk.Label(pro,text=TOPIC_DESCRIPTION,wraplength=690,justify='left').pack(fill='x',pady=6)
-        ttk.Label(pro,text=HELP,wraplength=690,justify='left').pack(fill='x',pady=8)
-        desktop=tk.StringVar(value=prefs['desktop_proactive'])
-        row=ttk.Frame(pro);row.pack(fill='x',pady=8);ttk.Label(row,text='桌面主动闲聊').pack(side='left')
-        ttk.Combobox(row,textvariable=desktop,values=('关闭','很少','偶尔','较活跃'),state='readonly',width=10).pack(side='left',padx=8)
-        def save_desktop(*args):
-            prefs['desktop_proactive']=desktop.get();self._experience=save(pet.DATA_DIR,prefs)
-        desktop.trace_add('write',save_desktop)
-        for label,attr in [('语音朗读','_voice_on'),('开机问候','_greeting_on'),('开机待办提醒','_summary_on'),
-                           ('全屏时免打扰','_quiet_fullscreen'),('游戏时免打扰','_quiet_games')]:toggle('声音与提醒',label,attr)
-        missed=tk.BooleanVar(value=prefs.get('startup_missed',False))
-        def save_missed():
-            prefs['startup_missed']=missed.get();self._experience=save(pet.DATA_DIR,prefs)
-        ttk.Checkbutton(groups['声音与提醒'],text='开机在聊天记录的通知页列出错过事项',variable=missed,
-                        command=save_missed).pack(anchor='w',pady=6)
-        ttk.Button(groups['声音与提醒'],text='配置语音',command=self._pick_gsv_dir).pack(anchor='w',pady=10)
-        art=groups['外观'];names=['随机背景']+[r['file'] for r in catalog()]
-        selected=tk.StringVar(value=prefs['background_file'] or '随机背景')
-        ttk.Label(art,text='普通功能窗口背景（聊天装饰框保持独立）').pack(anchor='w',pady=8)
-        ttk.Combobox(art,textvariable=selected,values=names,state='readonly',width=48).pack(fill='x')
-        blur=tk.IntVar(value=prefs['blur']);dark=tk.DoubleVar(value=prefs['darkness'])
-        ttk.Label(art,text='背景模糊').pack(anchor='w',pady=(16,4));ttk.Scale(art,from_=0,to=20,variable=blur).pack(fill='x')
-        ttk.Label(art,text='背景加深').pack(anchor='w',pady=(16,4));ttk.Scale(art,from_=.25,to=.85,variable=dark).pack(fill='x')
-        def save_art():
-            prefs.update(background_file='' if selected.get()=='随机背景' else selected.get(),blur=blur.get(),darkness=dark.get())
-            self._experience=save(pet.DATA_DIR,prefs);set_preferences(self._experience)
-            for window in self.root.winfo_children():
-                backdrop=getattr(window,'_art_backdrop',None)
-                if backdrop:backdrop.reload_preferences()
-        ttk.Button(art,text='应用到已打开的窗口',command=save_art).pack(anchor='w',pady=18)
-        for label,cmd in [('微信连接',self.show_weixin),('模型与接口',self._prompt_api_key),('运行状态与重连',self.show_runtime_status),
-                          ('本地备份与恢复',self.show_backup)]:ttk.Button(groups['连接与数据'],text=label,command=cmd).pack(anchor='w',pady=8)
-        merge=tk.DoubleVar(value=self._weixin_store.data.get('chat_merge_seconds',.8))
-        ttk.Label(groups['聊天与角色'],text='微信连续短消息等待合并（秒，0 为关闭，最长合并 3 秒）').pack(anchor='w',pady=(16,4))
-        ttk.Spinbox(groups['聊天与角色'],from_=0,to=2,increment=.2,textvariable=merge,width=8).pack(anchor='w')
-        def save_merge():
-            try:self._weixin_store.update(chat_merge_seconds=max(0,min(2,merge.get())))
-            except (ValueError,tk.TclError):messagebox.showerror('合并等待','请输入 0–2 秒。',parent=win)
-        ttk.Button(groups['聊天与角色'],text='保存合并等待',command=save_merge).pack(anchor='w',pady=8)
-        keywords={'聊天与角色':'反馈 导出 记忆 敏感 模型 连续 合并','主动搭话':'微信 主动 时间 频率',
-                  '声音与提醒':'语音 提醒 免打扰','外观':'背景 模糊 明暗 图片','连接与数据':'接口 备份 恢复 状态 连接'}
-        def find(*args):
-            text=search.get().strip()
-            if text:
-                match=next((title for title,words in keywords.items() if text in title+words),None)
-                if match:notebook.select(groups[match])
-        search.trace_add('write',find);apply(win)
+    def show_settings_center(self, section=None):
+        from settings_center import show
+        show(self, section)
 
     def show_reply_feedback(self,row):
         from dialogue_feedback import FeedbackStore,TAGS
@@ -192,7 +99,7 @@ class ExperienceMixin:
         def export():
             try:payload=json.loads(preview.get('1.0','end-1c'))
             except ValueError:return messagebox.showerror('导出','预览内容必须是有效 JSON。',parent=win)
-            path=filedialog.asksaveasfilename(parent=win,defaultextension='.json',initialfile='静香-反馈记录.json',filetypes=[('JSON','*.json')])
+            path=filedialog.asksaveasfilename(parent=win,defaultextension='.json',initialfile='Shizuka-反馈记录.json',filetypes=[('JSON','*.json')])
             if path:Path(path).write_text(json.dumps(payload,ensure_ascii=False,indent=2),'utf-8')
         ttk.Button(win,text='导出预览中的内容',command=export).pack(anchor='e',padx=PAGE_X,pady=12);apply(win)
 

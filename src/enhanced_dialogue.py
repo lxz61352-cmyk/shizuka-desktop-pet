@@ -32,7 +32,9 @@ def resolve_enhanced_switch(tone_v1, tone_v2, guard, arch_v2, enhanced):
 
 
 def channel_mode(engine, channel):
-    """Enhanced mode per channel; session-only desktop gray runs keep weixin old."""
+    """Published profiles apply to both channels; legacy gray runs stay scoped."""
+    if getattr(engine, 'DESKTOP_DIALOGUE_PROFILE', ''):
+        return True
     enabled = bool(getattr(engine, "ENHANCED_MODE", False))
     if channel == "weixin" and bool(getattr(engine, "ENHANCED_DESKTOP_ONLY", False)):
         return False
@@ -72,7 +74,11 @@ def compose_messages(persona, text, history, *, capabilities='', context_blocks=
     from copy import deepcopy
     output,_=output_blocks(text,history,natural_chat=natural_chat,actor_names=actor_names,outer_variant=outer_variant)
     from sensitive_topics import policy
-    blocks=[persona,hard_contracts(),capabilities,*context_blocks,policy(sensitive_topics),output,timeline]
+    from conversation_voice import separate, render
+    # Only the character-owned persona can declare this contract. Never parse
+    # markers from quoted memories, tool data, or other untrusted runtime text.
+    persona,voice=separate(persona)
+    blocks=[persona,hard_contracts(),capabilities,*context_blocks,policy(sensitive_topics),output,timeline,render(voice)]
     return [{'role':'system','content':'\n\n'.join(block for block in blocks if block)}]+deepcopy(history)+[{'role':'user','content':text}]
 
 

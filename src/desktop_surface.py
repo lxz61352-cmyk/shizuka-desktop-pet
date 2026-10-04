@@ -13,6 +13,7 @@ SKIN_DIR=Path(__file__).resolve().parents[1]/'assets/ui/ornamental-v2'
 def skin(kind):
     with Image.open(SKIN_DIR/f'{kind}.png') as source:return source.convert('RGBA')
 
+@lru_cache(maxsize=12)
 def skin_bitmap(kind,width,height):
     """Nine-slice the original: ornaments and speech tail keep their shape."""
     source=skin(kind);sw,sh=source.size;scale=width/sw
@@ -38,26 +39,32 @@ def surface(parent,width,height,title,kind='composer'):
     except tk.TclError:window.configure(bg=SURFACE)
     canvas=tk.Canvas(window,bg=KEY,highlightthickness=0,bd=0)
     canvas._art_decoration=True;canvas.pack(fill='both',expand=True)
-    decorations={};pending=None;painting=False
+    decorations={};pending=None;painting=False;painted_size=None
     def repaint():
-        nonlocal pending,painting
+        nonlocal pending,painting,painted_size
         pending=None
         if not window.winfo_exists():return
         painting=True
         try:
             from backdrop_widgets import paint_children
             paint_children(window,window._surface_image,decorations)
+            painted_size=(window.winfo_width(),window.winfo_height())
         finally:painting=False
     def schedule(event=None):
         nonlocal pending
         if painting or getattr(getattr(event,'widget',None),'_art_decoration',False):return
-        if pending:window.after_cancel(pending)
+        if event is not None and event.widget is window and event.type==tk.EventType.Configure:
+            if painted_size==(event.width,event.height):return
+        if pending:return
         pending=window.after(35,repaint)
     def dispose(event):
         nonlocal pending
-        if event.widget is window and pending:
-            window.after_cancel(pending);pending=None
+        if event.widget is window:
+            if pending:window.after_cancel(pending);pending=None
+            photo=getattr(window,'_surface_photo',None)
+            if photo is not None:photo.__del__();window._surface_photo=None
     def resize(new_height):
+        if getattr(window,'_frame_size',None)==(width,new_height):return
         window._frame_offset=(0,0);window._frame_size=(width,new_height)
         window.geometry(f'{width}x{new_height}')
         rgba=skin_bitmap(kind,width,new_height)

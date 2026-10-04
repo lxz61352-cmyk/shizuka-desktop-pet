@@ -4,26 +4,27 @@
 
 > 给 AI / 开发者看的**自包含**交接文档 + 开发约定：程序是什么、怎么跑、怎么改、每个功能怎么实现的、还有什么没解决。
 > 相对路径都以解压目录为根。上一版本文档对应 V0.6.0，架构已在 V0.7.6 全部模块化，本文按 0.8.0 重写。
+> **当前版本：0.9.0** —— 版本号只在 `src/app_identity.py` 的 `APP_VERSION` 一处；`version.json` 由发版工具生成。文档与代码冲突时以代码为准。
 
 ---
 
 ## 零、速览与开发约定
 
-- **入口与模块**：入口 `src/run_pet.py`，主体 Tkinter/Pillow；功能分在 `computer_*`、`weixin_*`、`todo_*`、`conversation_*`、`memory_maintenance`、`research_watch`、`sync_*` 等模块。`app_identity.py` 管名称/版本，`characters/` 管角色卡与渲染配置。
+- **入口与模块**：入口 `src/run_pet.py`；桌宠及特殊浮层保留 Tkinter/Pillow，普通工具窗口通过 `qt_forms` 与独立 `qt-windows/ShizukaWindows.exe` 交给 Qt Quick 渲染。聊天记录与待办使用专用 Qt 模型；业务逻辑与数据仍由主程序管理。功能分在 `computer_*`、`weixin_*`、`todo_*`、`conversation_*` 等模块。`app_identity.py` 管名称/版本，`characters/` 管角色卡与渲染配置。
 - **运行 / 构建 / 测试**：建议 Windows x64 Python（依赖见 `src/requirements-win-py314.lock`）：建 `.venv`、装依赖、`python src/run_pet.py`。独立构建另需 PyInstaller，`python tools/build_windows.py`；测试 `python tools/run_tests.py`；EXE 离线验收 `Shizuka.exe --self-test --report <绝对JSON路径>`（自动用临时数据目录）。
 - **文件执行**：走 DSH headless profile + 本次 overlay，`src/shizuka-dsh-bridge.mjs` 监听公开文本与工具事件并接入原生 ask_user_question；**没有换成另一个文件执行器，也不改 DSH 全局 profile**。思考等级由 `agentDefaultModel` 继承，本包不锁定最高等级；不记录、不展示内部 reasoning-delta。保留工具失败、取消和不确定状态，**不能仅凭进程退出就捏造任务成功**。
 - **上下文与记忆**：对话上下文最多 100 条 / 48000 字符，完整 JSONL 归档不裁剪。`source` 说明与自动摘要**不是**实际对话；摘要/事实审阅只收「带用户原话来源的稳定事实」，不能把助手主动推测变成用户事实。
 - **待办**：核心 `text/due/on_boot/done` 走 sync journal，`due` 是下一次实际提醒时间；`todo-details.json` 存备注/分类/周期/提醒渠道与投递状态。跨端适配要区分「应共享的备注/周期」与「端侧送达状态」，**不能把旁表跨端覆盖**。用途只有生活、研究。
 - **同步**：签名 journal + 独立设备身份 + 幂等事件 + 冲突记录；默认每 10800 秒轻量检查，走文件队列。`sync_client.py` 可单独跑资料库界面。本包不含任何能连到既有设备的配对资料。
 - **研究进展**：方向由用户在窗口里输入（回车确认，`research-profile.json` 的 `topics`/`queries`），靠 Crossref 公共元数据筛选；论文原文与来源只作数据、不能当执行指令；保留原刊名；无摘要时只能据题名评论，不能编造实验结果。中文方向会自动配一条英文检索词（`query_for` 映射），因为 Crossref 对英文摘要覆盖好得多（实测中文查询「偏微分方程数值解」50 篇命中里 0 篇有摘要，英文 35 篇里 19 篇有）。
-- **动作系统**：支持原始层、可选 `expression_frames`/`body_frames`/`activity_frames` 和 `question_effect`；没有新活动图时走既有静香姿态，别把缺失差分说成真实 3D / Cubism；普通图与活动全身图不能随意叠加眼嘴。
+- **动作系统**：支持原始层、可选 `expression_frames`/`body_frames`/`activity_frames` 和 `question_effect`；没有新活动图时走既有Shizuka姿态，别把缺失差分说成真实 3D / Cubism；普通图与活动全身图不能随意叠加眼嘴。
 - **本包性质**：由当前功能源码单独构建，**不继承任何个人运行资料**。发布时重新核验全部源码、资源、EXE 内代码、依赖缓存与压缩包，勿拷贝本机 `data`、凭据、聊天或调试会话。
 
 ---
 
 ## 一、这是什么
 
-一个 Windows 桌面宠物（Tk + Pillow）：角色是《World Dai Star》的静香，待在桌面上，支持聊天（任意 OpenAI 兼容接口，默认 DeepSeek）、记忆、待办提醒、剪贴板反应、天气/新闻、开机问候、角色包、鼠标互动、背景音乐、可选语音朗读、使用时长统计、文件助手、微信远程、文献筛选、双端记忆同步和自动更新。
+一个 Windows 桌面宠物（Tk + Pillow）：角色是《World Dai Star》的Shizuka，待在桌面上，支持聊天（任意 OpenAI 兼容接口，默认 DeepSeek）、记忆、待办提醒、剪贴板反应、天气/新闻、开机问候、角色包、鼠标互动、背景音乐、可选语音朗读、使用时长统计、文件助手、微信远程、文献筛选、双端记忆同步和自动更新。
 
 - 语言/运行：Python 3.13 + Tkinter + Pillow + pystray + openai；用 PyInstaller 打成 `Shizuka.exe`（onedir，旁边 `_internal/`）。
 - 无控制台窗口（`--windowed`），崩溃写 `data/startup_error.log`。
@@ -80,12 +81,12 @@
 | `src/weixin_channel.py`、`weixin_ui.py` | 微信绑定、收发、识图、远程指令 |
 | `src/research_watch.py`、`assistant_features.py` | 文献筛选（关注方向输入、检索、阅读、聊天汇报）与「更多设置」二级菜单 |
 | `src/paper_reader.py` | 读复制来的论文链接：DOI→Crossref、arXiv→摘要页、普通网页→citation_* 元数据与正文摘录；读不到只回理由 |
-| `src/quiet_mode.py` | 免打扰判定：前台全屏窗口 / 常见游戏进程 → 静香不主动说话（探测失败一律当作可以说话） |
+| `src/quiet_mode.py` | 免打扰判定：前台全屏窗口 / 常见游戏进程 → Shizuka不主动说话（探测失败一律当作可以说话） |
 | `src/sync_*.py` | 双端记忆/聊天/待办同步（签名 journal、设备身份、冲突记录） |
 | `src/character_packs.py`、`character_persona.py` | 角色包校验与路径限制、人设卡读取 |
 | `src/layered_renderer.py`、`local_mesh.py`、`pet_motion.py`、`pet_triggers.py`、`pet_ground.py`、`pet_surfaces.py` | 局部网格变形、弹簧/单摆、动作触发、重力与窗口承接 |
 | `src/ui_theme.py`、`dialogue_bubble.py`、`conversation_ui.py` | 统一控件主题、可滚动气泡、聊天输入/记录 |
-| `tools/preview_character.py` | 与正式程序一致的鼠标互动离线预览 |
+| `src/preview_character.py` | 与正式程序一致的鼠标互动离线预览（入口是根目录 `预览动作.bat`） |
 
 ---
 
@@ -107,7 +108,7 @@
 - **口癖兜底**：`clean_reply_style()` 用正则去掉回复开头的语气词起手和紧随的第一句句尾语气词；接在流式显示、`_play_reply`、`say()`、剪贴板点评等所有出口。函数幂等，喂回模型的历史也是清理后的。
 - `[历史消息时间：…]` 这类上下文元信息在 `clean_text` 里被正则剥离，提示词也禁止复述，否则模型会念出来。
 - 人设改动**实时读取**，改完下一条即生效。
-- **称呼**：`load_persona()` 把 `dialogue_style.ADDRESS_STYLE` 拼在**角色卡之后**——静香只说「你/您」，不喊「主人」，也不自称女仆；用户的角色卡是从别处拿来的女仆设定时，这条规则压在卡上面（`tests/test_research_chat.py::AddressTests` 守住）。`dialogue_grounding.GROUNDING_RULES` 里原来那句「自然需要时称主人」已删掉，提醒/待办/文献提醒这些**预制文案**里也不再有「主人」。
+- **称呼**：`load_persona()` 把 `dialogue_style.ADDRESS_STYLE` 拼在**角色卡之后**——Shizuka只说「你/您」，不喊「主人」，也不自称女仆；用户的角色卡是从别处拿来的女仆设定时，这条规则压在卡上面（`tests/test_research_chat.py::AddressTests` 守住）。`dialogue_grounding.GROUNDING_RULES` 里原来那句「自然需要时称主人」已删掉，提醒/待办/文献提醒这些**预制文案**里也不再有「主人」。
 
 ### 3. 记忆
 
@@ -171,7 +172,7 @@
 
 - **电脑助手**：`/电脑 <任务>` 或明确文件指令 → 本机 DSH（headless profile + 本次 overlay，`src/shizuka-dsh-bridge.mjs`）。进度窗只读，需要确认的问题回到聊天里问。配置在 `data/computer-assistant.json`（工作文件夹、Node 路径、dsh bin.js、操作范围、任务模型）。**任务没跑成时会写 `data/computer-tasks/<id>/failure.log`**（任务内容、使用模型、最近 40 条事件、stderr 末尾），并在 `data/error.log` 留一行索引——用户常不在电脑前，事后看日志即可。
 - **微信**：`weixin_channel` 负责协议与收发，`weixin_ui` 负责扫码/设置；支持对话、识图、`/图片`、`/电脑` 等远程指令，待办提醒也可走微信。绑定状态存 `data/weixin-state.json`。图片按天编号存到工作区 `微信图片/`，指代用「图N」（支持中文数字）；**没指定图片时带最近 2 张（10 分钟内），本条消息自带的图片全带上（最多 3 张）**；聊天分支会把图转 data URL 直接附给模型（按路径缓存 10 分钟），所以「讲下图3」「那第二问呢」都能看图回答。序号按天重置、索引只留最近 50 条，`resolve()` 会跨天回退到「最近一次用过这个序号」的图——**这时 `ImageIndex.note_for()` 会在给模型的提示里写明「不是今天收到的，下面是 9月16日 的图」**，免得模型默默照着另一张图回答。去重记录 `seen` 按**时间**保留（`SEEN_TTL_SECONDS=30 天`，另有 `SEEN_MAX=10000` 硬上限），不再只按 2000 条 FIFO 淘汰。
-- **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `queries`（检索词，最多 6 条，`fetch_candidates` 只用前 6）检索 Crossref，`topics`（用户原话）给模型判断相关性；模型按摘要判断相关性，缺摘要时只依据题名评论，不编造结论。窗口里：输入框回车/「添加并检索」→ 立刻 `_research_check(force=True)`；标签点 × 取消关注（`_flow_layout` 用 place 按算好的坐标排，一行放不下自动换行——grid 的列宽是整块共用的，第二行更宽的标签会把第一行顶出窗口；`pack(in_=…)` 只算几何不真画，别用）；「从最近对话猜方向」读最近 40 条消息让模型给候选（只提议，点了才加）；点结果标题看公开摘要与 DOI、点「让静香讲讲这篇」按摘要讲一遍（无摘要时明说只能凭题名推测）。`query_for` 记录「中文方向 → 英文检索词」的映射；去掉「区/县」式的过度翻译没有意义，但**不要**把 `queries` 当成用户可见的方向列表——界面显示的是 `topics`。
+- **研究进展**：`research_watch` 按 `data/research-profile.json` 的 `queries`（检索词，最多 6 条，`fetch_candidates` 只用前 6）检索 Crossref，`topics`（用户原话）给模型判断相关性；模型按摘要判断相关性，缺摘要时只依据题名评论，不编造结论。窗口里：输入框回车/「添加并检索」→ 立刻 `_research_check(force=True)`；标签点 × 取消关注（`_flow_layout` 用 place 按算好的坐标排，一行放不下自动换行——grid 的列宽是整块共用的，第二行更宽的标签会把第一行顶出窗口；`pack(in_=…)` 只算几何不真画，别用）；「从最近对话猜方向」读最近 40 条消息让模型给候选（只提议，点了才加）；点结果标题看公开摘要与 DOI、点「让Shizuka讲讲这篇」按摘要讲一遍（无摘要时明说只能凭题名推测）。`query_for` 记录「中文方向 → 英文检索词」的映射；去掉「区/县」式的过度翻译没有意义，但**不要**把 `queries` 当成用户可见的方向列表——界面显示的是 `topics`。
   - **聊天里问进展**：`intent_routing.research_question()` 本地先认「最新进展 / 最近有什么新论文 / 有没有新文献」（≤30 字、不带「这篇/刚才」这类指代、不是「怎么查…」的方法问题），命中直接给 `action=research`；没命中的靠 `router_prompt` 的 research 意图，所以闸门正则里要有「进展」。`_route_intent` 的 research 分支现在调 `_report_research()`：先 `say()` 汇报手上的结果（题名用《》包起来，朗读时会各占一轮气泡），再 `_research_check(force=True, notify="chat")` 补查一轮，有新发现的照常播报（`notify="chat"` 时不受「主动提醒」开关限制，因为是用户主动问的）。
 - **复制论文网页 → 讲解**：`paper_reader.read_paper()` 统一返回 `{title,journal,date,authors,abstract,text,source,readable,reason}`。DOI 走 Crossref（无摘要或摘要太短才去抓页面），arXiv 的 abs/pdf 链接统一换成摘要页（**arXiv API 对本机请求返回 406，别指望它**；PDF 链接先换摘要页、真正的 `.pdf` 不下载），普通网页抽 `citation_*` 元数据 + 正文；`clean_body()` 丢掉导航短行（arXiv 摘要页的「正文」几乎全是导航）。读不到时只给理由（`pdf/no-network/not-found/blocked/not-paper/paywall/title-only`），由 `failure_line()` 说人话，**绝不猜内容**。剪贴板路由在 `pet._clip_route()`：图片文件 / 图片直链 / `paper` / 普通网页 / 图片路径 / 普通文本（纯 DOI 号也算 `paper`，限 200 字以内），`_read_clip_paper()` 抓完开「文献窗口」并把讲解同时念出来。
 - **同步**：`sync_runtime/sync_client/sync_store/sync_transport/sync_rustdesk/...` 用签名 journal、独立设备身份、幂等事件；默认每 3 小时（`memory_interval_seconds`，60~604800 秒）轻量检查，另有手动同步。`SyncStore` 现在有**压实**：`compact()` 把当前状态写成快照表、并把已压实的事件搬进 `events_archive` 冷表，本地读只回放「快照 + 基线之后的热事件」；`bundle()`/`conflicts()` 仍读**完整历史**（热表 ∪ 归档表），所以信封格式没变、对端不缺历史、冲突检测也不退化。`SyncBridge` 每 200 次提交检查一次（`maybe_compact()`，阈值 `COMPACT_AFTER_EVENTS=5000`），失败只记在 `status()['compact_error']`、不影响保存。实测 2 万条记录 `rows()` 从 221ms 降到 48ms。
@@ -286,7 +287,7 @@
 - **双端共享禁用（第三批）**：`sync_runtime.SYNC_ENABLED = False` 一个开关同时停掉菜单、后台传输与排期（`get_runtime()` 直接返回 None，待办/记忆/聊天记录退回本地 JSON）；菜单显示「双端共享记忆（开发中）」「立即同步记忆（开发中）」，点了只回一句 `SYNC_WIP_REPLY`。离线验收新增一项（9 → 10）。
 - **回复长度策略（第四批）**：`PLAIN_STYLE` 第一句改成「篇幅跟问题需要的信息量匹配」——一个词/是不是/能不能这类简单问题一两句答完、不许顺带讲背景用法延伸；复杂问题或明确要求「详细讲讲」才展开；讲题、代码、技术推导不受限；拿不准先按短的答。实测同一问题 198 → 81 字，复杂比较题仍有 464 字。另加手机端提示（`weixin_ui`）。
 - **公式排版（第四批）**：`PLAIN_STYLE` 要求式子独立成行、长段落空行分段、符号用 Unicode（∂ ∫ √ ² …）、下标全篇统一、禁用 LaTeX 记号（`\frac` `$…$`）、排版不许堆公式。实测最长段落 233 → 100 字符；合成测试里旧版曾整段吐 LaTeX（15 处）→ 0 处；**注意**：真实日志里 LaTeX 残留本来就只有 1 处（还是文件任务报错里的 JS 模板），所以这条主要是防御性的。
-- **研究进展启用（第五批）**：`RESEARCH_ENABLED = True`，菜单去掉「开发中」，补上关注方向输入界面（回车确认）、标签删除、`query_for` 中文→英文检索词映射、从最近对话猜方向、点结果看摘要并让静香讲、检查间隔可调（1–168 小时）。离线验收的第 7 项从「功能保持关闭」改成「关键词输入/落盘/文案」的实证检查。新增 `tests/test_research_keywords.py`、`tests/test_dialogue_style.py` 扩到 13 个用例，单测总数 175 → 216。
+- **研究进展启用（第五批）**：`RESEARCH_ENABLED = True`，菜单去掉「开发中」，补上关注方向输入界面（回车确认）、标签删除、`query_for` 中文→英文检索词映射、从最近对话猜方向、点结果看摘要并让Shizuka讲、检查间隔可调（1–168 小时）。离线验收的第 7 项从「功能保持关闭」改成「关键词输入/落盘/文案」的实证检查。新增 `tests/test_research_keywords.py`、`tests/test_dialogue_style.py` 扩到 13 个用例，单测总数 175 → 216。
 
 ### 2026-09-16 — V0.8.1
 
@@ -387,3 +388,8 @@
   一条不剩就当没搜到，让 `format_failure` 教她直说没查到——宁可说不知道，也别把新闻列表首页当资料。
 - **缓存**：时事/版本/数字/日期类 TTL 45 分钟（`cache_ttl_for`），其余 6 小时。
 - **语音**：合成前过 `speakable()`，只念中文和英文（日文假名会让合成卡住并拖坏后面整段语音）。
+
+
+## 名称约定
+
+对外产品名、界面标签、文档正文、导出文件名和发布包名统一使用 `Shizuka`。HTTP 请求头与协议标识使用 ASCII。角色卡、提示词、原作台词和真实对话中的“静香”保留，模型仍可自称“静香”。既有数据、凭据、历史资料路径须兼容读取，不做全仓库字符串替换。

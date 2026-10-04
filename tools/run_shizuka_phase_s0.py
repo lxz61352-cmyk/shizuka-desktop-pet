@@ -131,13 +131,13 @@ def _build_capture_class(pet):
         def _weather_followup_fact(self, text, my_conv):
             return ""
 
-        def _get_memory_block(self, text, minimal=False):
+        def _get_memory_block(self, text, minimal=False, *, channel=None):
             return self._memory_block
 
         def _todo_note_context(self, text, cancel=None):
             return ""
 
-        def _web_evidence(self, text, my_conv):
+        def _web_evidence(self, text, my_conv, *, explicit_only=False):
             return ""
 
         def _capability_context(self):

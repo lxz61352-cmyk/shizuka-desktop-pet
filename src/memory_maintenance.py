@@ -4,6 +4,7 @@ import hashlib,json,re,threading,time
 import conversation_memory as cm
 from sync_bridge import atomic_json
 from memory_contract import REVIEW_INSTRUCTION, ORGANIZE_INSTRUCTION
+from memory_review_policy import claim_issue, accepted_facts, known_for_batch, reviewed_ids
 
 INTERVAL=600
 BATCH_SIZE=20
@@ -39,10 +40,12 @@ def fact_guard(fact,quote):
     q=quote or ""
     if not f:
         return "empty"
-    if any(w in q for w in HEDGE_WORDS) and any(w in f for w in ABSOLUTE_WORDS):
+    if any(w in q for w in HEDGE_WORDS) and any(w in f and w not in q for w in ABSOLUTE_WORDS):
         return "scope_upgraded"      # 「最近喜欢蓝色」不能说成「长期偏好蓝色」
     if not _numbers(f)<=_numbers(q):
         return "number_added"        # 「还有90天」不能说成「100天」
+    issue=claim_issue(f,q)
+    if issue:return issue
     sim=_semantic_sim(f,q)
     if sim is not None:
         if sim<FACT_SIM_MIN:
@@ -63,7 +66,7 @@ def pending_rows(rows,processed,size=BATCH_SIZE,skip=None):
 def grounded_facts(payload,batch):
     """把模型筛出的记忆落成条目。
     quote 必须是该条用户消息里的**连续原话**（防止模型编造事实），
-    content 优先用模型改写的 fact；fact 缺失或**语义超出原话**（见 fact_guard）就退回原话。
+    fact 缺失或超出原话时拒绝此次候选，原话仍在聊天归档里；不把失败改写的长段原文塞进长期记忆。
     replaces 是模型认为被这条新事实推翻的旧记忆 id，交给 MemoryStore 去标 superseded。"""
     sources={row['id']:row for row in batch if row.get('role')=='user'}
     result=[]
@@ -72,18 +75,15 @@ def grounded_facts(payload,batch):
         source=sources.get(item.get('source_id'));quote=item.get('quote')
         if (source and isinstance(quote,str) and 2<=len(quote.strip())<=1200
                 and quote in source['text'] and item.get('stable') is True):
-            content=quote.strip();guard=None
             fact=item.get('fact')
-            if isinstance(fact,str):
-                fact=' '.join(fact.split())
-                if 4<=len(fact)<=160:
-                    guard=fact_guard(fact,quote)
-                    if guard is None:
-                        content=fact
-            replaces=[ident for ident in (item.get('replaces') or [])
+            if not isinstance(fact,str):continue
+            content=' '.join(fact.split())
+            if not 4<=len(content)<=100 or fact_guard(content,quote):continue
+            replacement=item.get('replaces') or []
+            replaces=[ident for ident in (replacement if isinstance(replacement,list) else [])
                       if isinstance(ident,str) and ident][:6]
             result.append({'content':content,'source_id':source['id'],'quote':quote,
-                           'source_time':source.get('created',0),'guard':guard,'replaces':replaces})
+                           'source_time':source.get('created',0),'guard':None,'replaces':replaces})
     return result
 def organized_index(payload,items):
     allowed={row['id'] for row in items};result=[]
@@ -165,8 +165,7 @@ class MemoryFeaturesMixin:
             client=engine._disable_thinking(engine.get_client().with_options(timeout=35,max_retries=0))
             if batch:
                 memory=engine.get_memory()
-                known=[{'id':row['id'],'content':row['content'][:80]}
-                       for row in memory.snapshot() if row.get('status','active')!='superseded'][:40]
+                known=known_for_batch(memory.snapshot(),batch)
                 prompt=(REVIEW_INSTRUCTION
                         +('现有记忆（可被 replaces 引用，别重复报）：'+json.dumps(known,ensure_ascii=False)+'\n' if known else '')
                         +json.dumps(batch,ensure_ascii=False))
@@ -175,8 +174,8 @@ class MemoryFeaturesMixin:
                 payload=json.loads(response.choices[0].message.content)
                 if not isinstance(payload,dict) or not isinstance(payload.get('memories'),list):raise ValueError('Invalid memory review')
                 memory=engine.get_memory()
-                for fact in grounded_facts(payload,batch):
-                    memory.add(fact['content'],replaces=fact.get('replaces'))
+                for fact in accepted_facts(grounded_facts(payload,batch),memory.snapshot(),[r['id'] for r in known]):
+                    if not memory.add(fact['content'],replaces=fact.get('replaces')):continue
                     record=next((row for row in memory.snapshot() if row['content']==fact['content']),None)
                     if record:
                         state.setdefault('sources',{})[record['id']]=fact
@@ -184,7 +183,7 @@ class MemoryFeaturesMixin:
                             saved=next((r for r in memory.items if r['id']==record['id']),None)
                             if saved:saved.update(source_quote=fact['quote'],source_time=fact['source_time'],source_id=fact['source_id'])
                 memory.save()
-                state['processed']=list(dict.fromkeys(state.get('processed',[])+[row['id'] for row in batch]))[-800:]
+                state['processed']=reviewed_ids(state.get('processed',[]),batch)
                 state.setdefault('failures',{}).pop(self._batch_key([row['id'] for row in batch]),None)
                 state['checked_at']=time.time();state['error']=''
                 atomic_json(self._memory_review_path,state)

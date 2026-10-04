@@ -6,16 +6,18 @@ import json
 import re
 import conversation_memory as cm
 
-REVISION = 'current-context-v1'
+REVISION = 'current-context-v2'
 SESSION_GAP = 45 * 60
 MESSAGE_LIMIT = 48
 CHARACTER_BUDGET = 18000
 _COMMON = set(cm.tokens('用户说的这个那个什么怎么可以不能没有已经还是现在今天一下一些一个事情问题感觉知道可能因为所以我们你们他们还有就是这样时候方面需要进行'))
 _BACKREF = re.compile(r'刚才|上次|之前|昨天|接着|继续|你发的|你说的|那篇|那道|还记得')
 _FEEDBACK = re.compile(r'(?:别|不要|不用|不想|希望|喜欢).{0,20}(?:催|督促|说教|分析我|分析我的|说话|回复|称呼|语气)|(?:说话|回复|称呼|语气).{0,16}(?:别|不要|不用|希望|喜欢)|别老拿.{0,20}套我')
+_FILLERS = re.compile(r'我觉得|你觉得|我感觉|你感觉|我想说|你说的|还可以|挺好的|还不错')
 
 
 def terms(text):
+    text=_FILLERS.sub(' ',text)
     text=re.sub(r'用户|我在哪个|我在哪|哪个|还记得|你知道|请问', '', text)
     return cm.tokens(text) - _COMMON
 
@@ -29,7 +31,7 @@ def relevance(query, content):
     # A complete two-character subject is useful; one accidental bigram in a
     # long sentence is not (and Chinese fragments alone are not topic labels).
     compact = re.sub(r'\W', '', query)
-    short_exact = (2 <= len(compact) <= 8 and compact in content) or len(q)==1
+    short_exact = (2 <= len(compact) <= 8 and compact in content) or (len(q)==1 and len(compact)<=8)
     if not short_exact and (len(hit) < 2 or len(hit)/len(q) < .25):
         return 0.0
     return len(hit)/len(q) + len(hit)/max(1,len(d))
@@ -105,5 +107,5 @@ def feedback_context(rows, included_ids=()):
 def memory_block(items, excerpts):
     if not items and not excerpts:return ''
     from memory_contract import CONTEXT_INSTRUCTION
-    facts=[{k:r[k] for k in ('id','content','source_time','created') if k in r} for r in items]
+    facts=[{k:r[k] for k in ('id','content','source_quote','source_time','created') if k in r} for r in items]
     return CONTEXT_INSTRUCTION+'\n'+json.dumps({'相关用户记忆':facts,'相关历史原话':excerpts},ensure_ascii=False,separators=(',',':'))

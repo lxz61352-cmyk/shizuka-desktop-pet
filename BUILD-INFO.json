@@ -1,16 +1,11 @@
 {
-  "version": "0.8.17",
-  "built_at": "2026-09-29T20:10:43.686021+08:00",
-  "kind": "desktop",
-  "offline_gui_checks": 32,
-  "model_requests_during_build": 0,
-  "dialogue_profile": "s31r-o1b",
+  "version": "0.9.0",
+  "built_at": "2026-10-05T01:39:47.247621+08:00",
+  "kind": "public",
   "production_settings_included": false,
   "credentials_included": false,
-  "audit": {
-    "files_checked": 3248,
-    "private_paths_excluded": true,
-    "key_literal_scan": "passed",
-    "scope": "strict input allowlist + paths + sk-style plaintext literals; not universal PII detection"
-  }
+  "model_requests_during_build": 0,
+  "dialogue_profile": "daily-examples-v1",
+  "qt_version": "6.11.2",
+  "source_archive_mismatches": []
 }

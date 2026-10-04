@@ -135,7 +135,7 @@ class EmptyReplyRetryTests(unittest.TestCase):
     def test_weixin_uses_the_same_cap_and_retries(self):
         source = (ROOT / "src" / "weixin_ui.py").read_text(encoding="utf-8")
         self.assertIn("max_tokens=engine.CHAT_MAX_TOKENS", source)
-        self.assertIn("engine.CHAT_RETRY_MAX_TOKENS", source)
+        self.assertIn("retry_body(engine, client, messages", source)
 
 
 class LeadRegexTests(unittest.TestCase):

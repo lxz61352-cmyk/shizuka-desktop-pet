@@ -23,7 +23,7 @@ DEFAULT_CONFIG = {'api_base': 'https://api.deepseek.com',
 MAX_INPUT = 8000
 MAX_CONTEXT = 48000
 CHARACTERS = {
-    'shizuka': {'name': '静香', 'label': 'S2.7 原口吻', 'revision': 's27', 'aliases': ('静香',)},
+    'shizuka': {'name': 'Shizuka', 'label': 'S2.7 原口吻', 'revision': 's27', 'aliases': ('静香',)},
     'kokona': {'name': '心菜', 'label': 'K1 心菜', 'revision': 'k1', 'aliases': ('心菜', '凤心菜', '鳳ここな', 'ここな')},
 }
 

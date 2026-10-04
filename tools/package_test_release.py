@@ -185,7 +185,8 @@ def main():
     parser.add_argument('--output', type=Path, default=ROOT / '发布包')
     parser.add_argument('--build-root', type=Path, default=ROOT / 'build' / ('release-' + datetime.now().strftime('%Y%m%d-%H%M%S')))
     parser.add_argument('--reports', type=Path, required=True)
-    parser.add_argument('--desktop-profile', choices=('s31r-o1b',))
+    from desktop_dialogue_profile import PROFILES
+    parser.add_argument('--desktop-profile', choices=PROFILES)
     args = parser.parse_args()
     args.reports.mkdir(parents=True, exist_ok=True)
     for kind in (('chat', 'desktop') if args.kind == 'both' else (args.kind,)):
