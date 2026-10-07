@@ -45,6 +45,7 @@ class Controller(QObject):
         super().__init__();self.app=app;self.emit=emit;self.packet.connect(self.receive)
         self.history=Rows();self.todos=Rows();self.context=Rows()
         self.all_history=[];self.notices=[];self.all_todos=[]
+        self.history_more=False;self.history_total=0
         self.history_query='';self.history_mode='对话';self.todo_category='生活';self.todo_query=''
         self.visible={'history':False,'todos':False,'editor':False,'context':False}
         self.style=dict(background='',backgrounds=[],blur=8,darkness=.64)
@@ -62,6 +63,13 @@ class Controller(QObject):
     def contextVisible(self):return self.visible['context']
     @Property(int,notify=stateChanged)
     def historyCount(self):return len(self.history.rows)
+    @Property(bool,notify=stateChanged)
+    def historyHasMore(self):return self.history_more and self.history_mode!='通知'
+    @Property(int,notify=stateChanged)
+    def historyTotal(self):
+        if self.history_mode=='通知':return self.historyCount
+        extra=sum(1 for r in self.notices if self.history_query.strip().casefold() in r.get('text','').casefold()) if self.history_mode=='全部记录' else 0
+        return self.history_total+extra
     @Property(str,notify=stateChanged)
     def historyMode(self):return self.history_mode
     @Property(int,notify=stateChanged)
@@ -116,7 +124,12 @@ class Controller(QObject):
         return self.sequence
     @Slot(str,str)
     def filterHistory(self,query,mode):
+        changed=query!=self.history_query
         self.history_query=query;self.history_mode=mode;self._history()
+        if changed:self.request('history_filter',dict(query=query))
+    @Slot()
+    def loadOlderHistory(self):
+        self.request('history_more',dict(query=self.history_query))
     def _history(self):
         rows=self.notices if self.history_mode=='通知' else self.all_history
         if self.history_mode=='全部记录':rows=sorted(self.all_history+self.notices,key=lambda r:r.get('created',0))
@@ -184,6 +197,8 @@ class Controller(QObject):
             self.emit(dict(type='opened',window=window))
         elif kind=='close':self.close(message['window'])
         elif kind=='history':
+            if message.get('query',self.history_query)!=self.history_query:return
+            self.history_more=message.get('has_more',False);self.history_total=message.get('total',0)
             offset=message.get('offset',0);self.all_history=self.all_history[:offset]+message['rows'];self.notices=message.get('notices',[]);self._history()
         elif kind=='todos':self.all_todos=message['rows'];self._todos()
         elif kind=='editor':

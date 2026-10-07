@@ -142,7 +142,7 @@ class _DesktopCapture(pet.DeskPet):
     def _capability_context(self):
         return self._capability_marker
 
-    def _post_memory(self, text, reply):
+    def _post_memory(self, text, reply, my_conv=None):
         return None
 
     def _scene(self, key, **kwargs):

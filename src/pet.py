@@ -49,6 +49,7 @@ from character_packs import discover_packs, selected_pack
 import quiet_mode
 from character_persona import character_name, dialogue_option, load_character_persona
 from layered_renderer import LayeredRenderer
+from layered_window import set_image as set_layered_image
 from pet_motion import MotionController
 from pet_triggers import ActionTriggers
 from pet_ground import GroundMotion, floor_position
@@ -65,64 +66,8 @@ SWAY_DIZZY_DEG = 60.0     # 摆动角度超过这个度数就触发
 # 多线程安全：文件写入串行化
 _FILE_LOCK = threading.Lock()
 
-# 判断文本里是否真的含"明确钟点/时长"。只有命中才允许把待办判为"时间明确"，
-# 避免模型把"早点/晚点"这类模糊词自行脑补成一个具体时间（如 8 点）。
-_EXPLICIT_TIME_RE = re.compile(
-    r"\d{1,2}\s*[:：]\s*\d{1,2}"                          # 8:30
-    r"|\d{1,2}\s*[点時时]\s*半"                            # 8点半
-    r"|\d{1,2}\s*[点時时]"                                 # 8点 / 8时
-    r"|[零一二三四五六七八九十两]+\s*[点時时]"                # 八点 / 两点
-    r"|[点时]\s*半"                                        # 点半
-    r"|\d+\s*个?\s*(秒|分钟|小时|钟头|天|日|周|星期)"          # 20秒 / 30分钟 / 2小时 / 3天 / 2周
-    r"|[零一二三四五六七八九十两]+\s*个?\s*(秒|分钟|小时|钟头|天|日)"  # 两小时 / 三天
-    r"|半\s*个?\s*(小时|钟头)"                              # 半小时
-    r"|\d+\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|s|m|h)"  # 20s / 2h / 30min
-)
-
-# 相对时长：用于本地直接算出绝对时间（不依赖模型）
-# 负向后顾 (?<![月年]) 避免把日期“3月5日/2025年3天”里的数字当成相对时长
-_REL_TIME_RE = re.compile(
-    r"(?<![月年])(\d+)\s*个?\s*(秒钟?|分钟?|小时|钟头|天|日|周|星期)"       # 中文：20秒 / 2小时 / 3天 / 1周
-    r"|(?<![月年])(\d+)\s*(seconds?|secs?|minutes?|mins?|hours?|hrs?|s|m|h)"  # 英文：20s / 2h / 30min
-)
-
-
-def has_explicit_time(text):
-    return bool(_EXPLICIT_TIME_RE.search(text or ""))
-
-
-def parse_relative_due(text, now=None):
-    """本地把相对时长（“20秒后”“2小时后”“3天后”“20s”）解析成绝对时间戳；没有则 None。"""
-    text = text or ""
-    m = _REL_TIME_RE.search(text)
-    if not m:
-        return None
-    if text[m.end():m.end() + 1] == "前":   # “3天前”是过去，不作为将来提醒
-        return None
-    now = time.time() if now is None else now
-    if m.group(1):                       # 中文
-        n = int(m.group(1))
-        unit = m.group(2)
-        if "秒" in unit:
-            mult = 1
-        elif "分" in unit:
-            mult = 60
-        elif ("小时" in unit) or ("钟头" in unit):
-            mult = 3600
-        elif ("周" in unit) or ("星期" in unit):
-            mult = 604800
-        else:                            # 天 / 日
-            mult = 86400
-    else:                                # 英文
-        n = int(m.group(3))
-        unit = m.group(4).lower()
-        if unit.startswith("s"):
-            mult = 1
-        elif unit.startswith("m"):
-            mult = 60
-        else:
-            mult = 3600
-    return now + n * mult
+# Compatibility exports; implementation lives with the todo modules.
+from todo_time import has_explicit_time, parse_relative_due
 
 
 class SingleInstanceError(Exception):
@@ -2771,7 +2716,8 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._pm_todo = premultiply_image(self._icon_todo) if self._icon_todo is not None else None
         self.gear, self.gear_label = self._create_icon_button(self._icon_gear, "⚙", self.show_menu)
         self.chatbtn, self.chatbtn_label = self._create_icon_button(self._icon_chat, "💬", self.show_chat_log)
-        self.todobtn, self.todobtn_label = self._create_icon_button(self._icon_todo, "☑", self.show_todos)
+        self.todobtn, self.todobtn_label = self._create_icon_button(
+            self._icon_todo, "☑", self.show_todos, fill_hitbox=True)
         self._icon_pomo = self._load_icon(POMODORO_ICON_PATH)
         self._pm_pomo = premultiply_image(self._icon_pomo) if self._icon_pomo is not None else None
         self.pomobtn, self.pomobtn_label = self._create_icon_button(self._icon_pomo, "🍅", self.show_pomodoro)
@@ -3266,24 +3212,30 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
 
     def _ui(self, fn):
         """把要在主线程执行的函数排进队列（线程安全，可在任意线程调用）。"""
+        if getattr(self,'_quitting',False):return
         try:
             self._ui_q.put(fn)
         except Exception:
             pass
 
     def _poll_ui(self):
-        """主线程轮询执行 _ui 队列里的任务。"""
-        while True:
+        """分批派发 UI 任务，给动画和输入事件留出执行机会。"""
+        deadline = time.monotonic() + 0.005
+        for _ in range(64):
+            if getattr(self,'_quitting',False):return
             try:
                 fn = self._ui_q.get_nowait()
-            except Exception:
+            except queue.Empty:
                 break
             try:
                 fn()
             except Exception:
                 _err_log("poll_ui")
+            # 回调不可中断；在每个回调结束后检查本轮耗时。
+            if time.monotonic() >= deadline:
+                break
         try:
-            self.root.after(25, self._poll_ui)
+            self.root.after(1 if not self._ui_q.empty() else 25, self._poll_ui)
         except Exception:
             pass
 
@@ -3294,27 +3246,53 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         except Exception:
             return None
 
-    def _create_icon_button(self, src, fallback, cmd):
+    def _create_icon_button(self, src, fallback, cmd, fill_hitbox=False):
         win = tk.Toplevel(self.root)
+        win.withdraw()
         win.overrideredirect(True)
         win.attributes("-topmost", True)
-        self.set_window_transparent(win)
+        # 色键透明像素会穿透点击；待办用逐像素透明补齐整个按钮矩形。
+        full_hitbox = fill_hitbox and src is not None
+        bg = "#f7f7fb" if full_hitbox else TRANS_COLOR
+        if full_hitbox:
+            win.configure(bg=bg)
+        else:
+            self.set_window_transparent(win)
         if src is not None:
             img = ImageTk.PhotoImage(src.resize((GEAR_SIZE, GEAR_SIZE), Image.LANCZOS))
-            lbl = tk.Label(win, image=img, bg=TRANS_COLOR, cursor="hand2")
+            lbl = tk.Label(win, image=img, bg=bg, cursor="hand2")
             lbl._ph = img
         else:
             lbl = tk.Label(win, text=fallback, bg=TRANS_COLOR, fg="#1e90ff",
                            font=("Segoe UI Symbol", 16), cursor="hand2")
         lbl.pack()
+        lbl._hitbox_src = src if full_hitbox else None
+        if full_hitbox:
+            lbl.configure(bd=0, highlightthickness=0)
+            self._set_icon_hitbox(lbl, GEAR_SIZE)
         # 只绑 label：label 铺满窗口，事件还会冒泡到 toplevel，
         # 若窗口也绑一次会导致 cmd 触发两次（窗口先闪一下再被销毁重建）
         lbl.bind("<Button-1>", cmd)
         win.withdraw()
         return win, lbl
 
+    def _set_icon_hitbox(self, lbl, size):
+        """保留图标外观，用最低非零 alpha 让透明空隙也接收点击。"""
+        image = lbl._hitbox_src.convert("RGBa").resize(
+            (size, size), Image.Resampling.LANCZOS).convert("RGBA")
+        image.putalpha(image.getchannel("A").point(lambda a: max(1, a)))
+        photo = ImageTk.PhotoImage(image)
+        lbl.configure(image=photo)
+        lbl._ph = photo
+        win = lbl.master
+        win.update_idletasks()
+        if not set_layered_image(win, image):
+            # 分层绘制失败时用浅色底保住完整点击区，避免恢复成透明孔洞。
+            win.attributes("-transparentcolor", "")
+            lbl.configure(bg="#f7f7fb")
+
     def _resize_buttons(self):
-        """按角色缩放比例调整三个图标大小（有上下限，避免过小/过大）。"""
+        """按角色缩放比例调整图标大小和点击区（有上下限）。"""
         try:
             scale = self.pet.winfo_height() / 280
             size = int(GEAR_SIZE * scale)
@@ -3327,6 +3305,9 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                             (getattr(self, "_pm_todo", None), self.todobtn_label),
                             (getattr(self, "_pm_pomo", None), self.pomobtn_label)):
                 if pm is None or lbl is None:
+                    continue
+                if getattr(lbl, "_hitbox_src", None) is not None:
+                    self._set_icon_hitbox(lbl, size)
                     continue
                 img = ImageTk.PhotoImage(render_display(pm, size))
                 lbl.configure(image=img)
@@ -4751,6 +4732,8 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             return ""
 
     def _ask_model(self, text, my_conv=None):
+        cancelled=lambda:getattr(self,'_quitting',False) or (my_conv is not None and my_conv!=self._conv_id)
+        if cancelled():return
         # 普通聊天回复也要按提示音设置响一声（say() 那条路径本来就会响，这里单独补上）
         if self._should_sound(False):
             self._ui(self.play_sound)
@@ -4807,8 +4790,8 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             system+='\n'+conversation_memory.CONTINUATION_HINT
         lang_hint=self._voice_lang_hint()
         if lang_hint:system+='\n'+lang_hint
-        notes=self._todo_note_context(text,cancel=lambda:my_conv is not None and my_conv!=self._conv_id)
-        if my_conv is not None and my_conv!=self._conv_id:return
+        notes=self._todo_note_context(text,cancel=cancelled)
+        if cancelled():return
         system+='\n本轮只有应用明确回传保存成功时，才能说已增加待办备注；否则不声称已经写入。'
         if notes:system+='\n'+notes
         block=self._get_memory_block(text, minimal=bool(planned_signals.get("topic_shift")), channel='desktop')
@@ -4983,7 +4966,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             import pet as engine
             from reply_turn import prepare_profile, ReplyCleaner
             import provider_limiter, provider_profile
-            interrupted = lambda: my_conv is not None and my_conv != self._conv_id
+            interrupted = cancelled
             voice_format=(lang_hint+'\n正文写完后，另起一行输出 '+VOICE_JA_MARK+
                           '，紧接着写同一段内容的日语口语版（只用于朗读）。') if lang_hint else ''
             try:
@@ -5048,7 +5031,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             except provider_profile.ProfileError:
                 _err_log("enhanced_profile")
                 return
-            cancel = (lambda: my_conv is not None and my_conv != self._conv_id)
+            cancel = cancelled
             try:
                 provider_limiter.acquire(profile, cancel)
             except provider_limiter.ProviderWaitCancelled:
@@ -5066,7 +5049,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                     temperature=.7,max_tokens=CHAT_MAX_TOKENS,stream=True)
             with stream_cm as stream:
                 for chunk in stream:
-                    if my_conv is not None and my_conv!=self._conv_id:return
+                    if cancelled():return
                     if chunk.choices:acc+=chunk.choices[0].delta.content or ""
                     if voice and not ja:
                         # 有语音：边生成边按句送合成，文字跟着朗读逐句出（语音文字对齐）
@@ -5145,7 +5128,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         except Exception:
             generation_ok = False
             reply=self._scene("connection_failed")
-        if my_conv is not None and my_conv!=self._conv_id:return
+        if cancelled():return
         if not acc.strip() and not ja:
             # reasoning token 吃满上限时会只剩空正文：非流式重试一次，拿到就补显示/补朗读
             if reply_cleaner is not None:
@@ -5184,7 +5167,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._last_reply_status='回复完成' if acc.strip() else '回复失败，可重试'
         self._failed_chat=None if acc.strip() else {'text':text,'attachments':atts}
         from dialogue_feedback import post_with_trace,trace_for
-        threading.Thread(target=post_with_trace,args=(self,text,reply,trace_for(self,'chat')),daemon=True).start()
+        threading.Thread(target=post_with_trace,args=(self,text,reply,trace_for(self,'chat'),my_conv),daemon=True).start()
         # 7C-9 长对话实测证明，第二次模型请求会把第一段的推测扩大成新的
         # 身体状态和行动建议，而且该路径尚无完整事实审查、微信也未对齐。
         # 保留纯函数与显式方法供离线测试；生产主链暂不自动追加第二段。
@@ -5196,7 +5179,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         朗读冻结的日语对应句（不用 _translate_for_voice，避免模型请求）；翻译缺失时
         保持中文气泡并跳过日语朗读。
         """
-        if my_conv is not None and my_conv != self._conv_id:
+        if getattr(self,'_quitting',False) or my_conv is not None and my_conv != self._conv_id:
             return reply
         from tone_local_guard import japanese_for
         voice = self._voice_on
@@ -5222,7 +5205,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 [self._conv_state.last_emotion] if self._conv_state.last_emotion else [])
         except Exception:
             pass
-        threading.Thread(target=self._post_memory, args=(user_text, reply), daemon=True).start()
+        threading.Thread(target=self._post_memory, args=(user_text, reply, my_conv), daemon=True).start()
         return reply
 
     def _maybe_second_segment(self, messages, first_reply, my_conv, policy, understanding):
@@ -5371,15 +5354,22 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         except Exception:
             pass
 
-    def _post_memory(self, user_text, reply):
+    def _post_memory(self, user_text, reply, my_conv=None):
         # Persist the completed conversation before any fallible network summarization.
         self._log_conversation(user_text,reply)
         self._log_chat("assistant",reply)
+        current=lambda:not getattr(self,'_quitting',False) and (my_conv is None or my_conv==self._conv_id)
+        if not current():return
+        # State belongs to the UI thread; recheck the turn when this callback runs.
+        def observe():
+            if current():
+                self._conv_state.observe_reply(reply)
+                self._mood.observe_reply(reply)
+        self._ui(observe)
         try:
             self._refresh_memories(reply)
-            self._conv_state.observe_reply(reply)
-            self._mood.observe_reply(reply)
             get_memory().save()
+            if not current():return
             self._maybe_review_memory()
         except Exception:
             _err_log("auto_memory")
@@ -5480,6 +5470,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
     def _tts_enqueue(self, text, gap_ms=None):
         """把一句/一段文本（或 None 结束标记）排进语音队列；gap_ms 指定这段之后的停顿。"""
         with _TTS_LOCK:
+            if getattr(self,'_quitting',False):return
             if getattr(self, "_tts_q", None) is None:
                 self._tts_q = queue.Queue()
                 self._synth_q = queue.Queue(maxsize=3)   # 已合成待播放，最多领先 3 段
@@ -5640,12 +5631,13 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._voice_type_id = None
         self._voice_type_done = True
 
-    def _wait_voice_type_done(self, n):
+    def _wait_voice_type_done(self, n, conv=None):
         """等当前句子打完（后台线程用），最多等 字数/速度 + 5 秒。"""
         cps = getattr(self, "_voice_type_cps", None) or SPEED_CPS.get(self._speed, STREAM_CPS)
         deadline = time.time() + max(1.0, n / max(0.01, cps)) + 5.0
         while time.time() < deadline:
-            if self._voice_type_done:
+            if (self._voice_type_done or getattr(self,'_quitting',False)
+                    or conv is not None and conv!=self._conv_id):
                 return
             time.sleep(0.05)
 
@@ -5683,17 +5675,21 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
     def _tts_producer(self):
         """后台生产者：持续把 _tts_q 的文字合成成音频塞进 _synth_q（有界，最多领先几段）。
         这样消费者播放当前段时，下一段通常已合成好，段间几乎无空隙。"""
+        from background_tasks import put_until_cancelled
         slot = 0
-        while True:
+        while not getattr(self,'_quitting',False):
             try:
-                item = self._tts_q.get()
+                item = self._tts_q.get(timeout=.2)
+            except queue.Empty:
+                continue
             except Exception:
                 return
             try:
                 if item is None:
                     continue  # Legacy unscoped end markers cannot close a new reply.
                 if len(item)==2 and item[0]=='end':
-                    if item[1]==self._conv_id:self._synth_q.put(item)
+                    put_until_cancelled(self._synth_q,item,
+                        lambda:getattr(self,'_quitting',False) or item[1]!=self._conv_id)
                     continue
                 vals = list(item)
                 if len(vals) >= 4:
@@ -5701,7 +5697,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 else:
                     text, conv, gap = (vals + [None])[:3]    # 兼容旧的 2/3 元组
                     tts = text
-                if conv != self._conv_id:
+                if conv != self._conv_id or getattr(self,'_quitting',False):
                     continue   # 旧对话，丢弃
                 # 只在一段话开头显示"加载中"省略号；后续段已提前合成，不再闪省略号
                 if not getattr(self, "_voice_active", False):
@@ -5710,27 +5706,30 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 out = os.path.join(DATA_DIR, "_tts_p%d.wav" % (slot % 8))
                 ok, path, dur = self._tts_synth(tts, out_path=out)
                 slot += 1
-                if conv==self._conv_id:self._synth_q.put(("seg", text, conv, ok, path, dur, gap))
+                put_until_cancelled(self._synth_q,("seg", text, conv, ok, path, dur, gap),
+                    lambda:getattr(self,'_quitting',False) or conv!=self._conv_id)
             except Exception:
                 # 单条出错不能让生产者退出，否则之后永远没声音
                 _err_log("tts_producer")
 
     def _tts_loop(self):
         """后台消费者：按顺序播放 _synth_q 里已合成好的段。"""
-        while True:
+        while not getattr(self,'_quitting',False):
             try:
-                kind = self._synth_q.get()
+                kind = self._synth_q.get(timeout=.2)
+            except queue.Empty:
+                continue
             except Exception:
                 return
             if kind[0] == "end":
-                if len(kind)>1 and kind[1]==self._conv_id:
+                if len(kind)>1 and kind[1]==self._conv_id and not getattr(self,'_quitting',False):
                     self._voice_active = False
                     self._voice_ui(kind[1],self._voice_bubble_finish)
                 continue
             try:
                 parts = list(kind) + [None] * (7 - len(kind))
                 _, text, conv, ok, path, dur, gap = parts[:7]
-                if conv != self._conv_id:
+                if conv != self._conv_id or getattr(self,'_quitting',False):
                     continue   # 旧对话，丢弃
                 # 文字按朗读速度逐字打出（有语音时对齐音频时长），同时播放语音
                 self._voice_ui(conv,lambda t=text, d=dur: self._voice_type_start(t, d))
@@ -5749,7 +5748,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                             pass
                         finally:self._voice_fallback_active=False
                 if cancelled():continue
-                self._wait_voice_type_done(len(text))
+                self._wait_voice_type_done(len(text),conv)
                 # 段末留一点停顿：默认句末停顿，标题前那一段用更短的
                 deadline=time.monotonic()+(gap if gap is not None else TTS_SENTENCE_GAP_MS)/1000
                 while not cancelled() and time.monotonic()<deadline:time.sleep(.02)
@@ -6979,12 +6978,16 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 canvas.create_text(field_x1 + 12, y, text=label(item), anchor='w',
                                    fill="#b08a4a", tags=('mem', 'memmeta:%d' % index))
             else:
-                stamp = time.strftime("%Y-%m-%d %H:%M",
+                stamp = time.strftime("%m-%d %H:%M",
                                       time.localtime(item.get("created", time.time())))
                 canvas.create_text(field_x1 + 12, y, text=stamp, anchor='w', fill="#7fd6a8",
                                    tags=('mem', 'memmeta:%d' % index))
             canvas.create_text(width - 26, y, text='删除', anchor='e', fill="#d98a8a",
                                tags=('mem', 'memdel:%d' % index))
+            canvas.create_text(width - 64, y, text='编辑', anchor='e', fill='#7fd6a8',
+                               tags=('mem', 'memdetails:%d' % index))
+            canvas.tag_bind('memdetails:%d' % index, '<Button-1>',
+                            lambda e, mid=item['id']: self.show_memory_details(mid))
             canvas.tag_bind('memfield:%d' % index, '<Double-Button-1>',
                             lambda e, i=index: self._mem_edit_row(i))
             canvas.tag_bind('memtext:%d' % index, '<Double-Button-1>',
@@ -7851,10 +7854,10 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         self._settings.update(data)
         with _FILE_LOCK:
             try:
-                with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
-                    json.dump(data, f, ensure_ascii=False, indent=2)
+                from sync_bridge import atomic_json
+                atomic_json(SETTINGS_FILE, data)
             except Exception:
-                pass
+                _err_log("save_settings")
 
     def _poll_menu_outside(self, win):
         if self.popup is not win:
@@ -8270,9 +8273,9 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         with _FILE_LOCK:
             try:
                 from sync_bridge import atomic_json
-                atomic_json(CHATLOG_FILE, snapshot)
+                atomic_json(CHATLOG_FILE, snapshot, compact=True)
             except Exception:
-                pass
+                _err_log("save_chatlog")
 
     # ================= 通用加载气泡 =================
 
@@ -8322,17 +8325,18 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
             except Exception:
                 pass
 
-    def say(self, text, is_reminder=False, source=None, activity=None, valid_if=None):
+    def say(self, text, is_reminder=False, source=None, activity=None, valid_if=None, sound_callback=None):
         """让桌宠用气泡说一句话（走分段打字效果）。
         is_reminder=True 时，气泡显示期间禁止打开对话框。
         source 非空表示这不是用户聊天触发（如「粘贴板」「截图」），会记一条来源说明。
         提示音只由待办提醒或文件完成事件触发。"""
         if getattr(self,'_quitting',False) or valid_if is not None and not valid_if():return False
+        if source in ('主动搭话','前台程序') and not self._casual_proactive_allowed():return False
         speech_text = getattr(text, "speech_text", None)
         from dialogue_grounding import PASSIVE_SOURCES
         if source in PASSIVE_SOURCES and not self._claim_passive(text,source):return False
         try:
-            if source in ('待办提醒','待办操作','文件任务','摸头回应'):
+            if source in ('待办提醒','喝水提醒','待办操作','文件任务','摸头回应'):
                 from dialogue_style import LiteralReply
                 text=LiteralReply(text)
             text = clean_reply_style(text)
@@ -8340,7 +8344,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 self._log_chat("source", "内容来自" + source, kind="source")
                 if source in ('研究进展','番茄钟','更新','开机待办提醒'):
                     self._record_notice(text,source)
-            self._log_chat("assistant", text, kind="computer_question" if source=='文件询问' else "proactive" if source else "chat")
+            self._log_chat("assistant", text, kind="habit_reminder" if source=='喝水提醒' else "computer_question" if source=='文件询问' else "proactive" if source else "chat")
             if is_reminder:
                 self._reminder_showing = True
                 # 抱闹钟的差分：文字气泡那条路由 _play_reply 挂窗口，语音那条路在这里挂
@@ -8348,7 +8352,7 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
                 self._reminder_art_until = time.monotonic() + REMINDER_ART_SEC
                 self._reminder_art_pending = True
             if self._should_sound(is_reminder):
-                self._ui(self.play_sound)
+                self._ui(sound_callback or self.play_sound)
             def play():
                 if valid_if is not None and not valid_if():
                     if is_reminder:self._reminder_showing=False
@@ -9839,6 +9843,8 @@ class DeskPet(AttachmentMixin, WorkflowMixin, ExperienceMixin, PomodoroMixin, Sp
         if getattr(self, "_quitting", False):
             return
         self._quitting = True
+        self._conv_id+=1   # Invalidate in-flight model and speech work before cleanup.
+        self._stop_voice_playback()
         self._pomo_checkpoint()
         self._weixin_stop()
         self._cancel_computer_task()

@@ -7,7 +7,7 @@
 
 ## 使用说明（由gpt代写）
 
-这是一个《World Dai Star》Shizuka 的 Windows 桌宠，当前版本为 **v0.9.0**。可以放在桌面上聊天、记待办，也可以通过微信从手机上找她。
+这是一个《World Dai Star》Shizuka 的 Windows 桌宠，当前版本为 **v0.9.1**。可以放在桌面上聊天、记待办，也可以通过微信从手机上找她。
 
 [下载完整包](https://github.com/lxz61352-cmyk/shizuka-desktop-pet/releases/latest) · [更新公告](更新公告.md) · [反馈问题](https://github.com/lxz61352-cmyk/shizuka-desktop-pet/issues)
 

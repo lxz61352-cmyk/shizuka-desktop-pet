@@ -11,6 +11,8 @@ DATA_FILES=['src/enhanced_hard_contract_v2.txt']
 parser=argparse.ArgumentParser();parser.add_argument('--output',type=Path,default=root/'build')
 parser.add_argument('--no-deploy',action='store_true',help='Build and validate the bundle without replacing the installed runtime')
 args=parser.parse_args();out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
+from verify_confirmed_features import verify_source,verify_bundle
+verify_source()
 command=[sys.executable,'-m','PyInstaller','--noconfirm','--windowed','--onedir','--name','Shizuka',
  '--icon',str(root/'assets/pet_icon.ico'),'--paths',str(root/'src'),'--hidden-import','pystray._win32',
  # 下面这些是在函数内部懒加载的，PyInstaller 的静态分析会漏掉——
@@ -29,6 +31,8 @@ command+=['--distpath',str(out/'dist'),'--workpath',str(out/'work'),'--specpath'
 with (out/'pyinstaller.log').open('w',encoding='utf-8') as log:
     subprocess.run(command,cwd=root,stdout=log,stderr=subprocess.STDOUT,check=True)
 bundle=out/'dist/Shizuka'
+import json
+(out/'source-archive-audit.json').write_text(json.dumps(verify_bundle(bundle/'Shizuka.exe'),indent=2),'utf-8')
 for item in DATA_FILES:
     if not (bundle/'_internal'/Path(item).name).is_file():
         raise SystemExit('Packaged data file missing from build: '+item)

@@ -36,7 +36,7 @@
 | 路径 | 说明 |
 | --- | --- |
 | `Shizuka.exe` + `_internal/` | 打包好的可运行程序（PyInstaller onedir）。**`_internal/base_library.zip` 是运行必需文件**，`.gitignore` 里特意用 `!_internal/*.zip` 放行 |
-| `src/` | 完整 Python 源码（约 60 个模块） |
+| `src/` | 完整 Python 源码（职责见 `文档/工程维护导航.md`） |
 | `characters/` | 角色包（`shizuka-side-motion` 微动版、`shizuka-classic` 单图版），人设卡是同目录 `persona.json`（SillyTavern V2） |
 | `assets/` | 图片/音频（`i_wanna.mp3`、`reminder.wav`、`voice_ref1.wav`、图标、`bubble/`） |
 | `voice_model/` | 「喜多郁代」音色模型（`.ckpt` + `.pth`，约 328MB，走 Git LFS）+ `说明.md` |
@@ -73,6 +73,7 @@
 | `src/dialogue_*.py` | 聊天、上下文拼接、口吻清理、被动发言闸门（`dialogue_grounding`）、显式记忆 |
 | `src/conversation_memory.py` | 统一近期上下文与长期事实提炼 |
 | `src/memory_maintenance.py` | 记忆审阅/整理（带来源） |
+| `src/todo_time.py` | 明确时间识别与相对提醒时间解析；主程序保留兼容导出 |
 | `src/todo_*.py` | 待办：模型整理（`todo_model`）、提醒策略（`todo_schedule`）、周期（`todo_recurrence`）、备注、语音、编辑窗、回复 |
 | `src/intent_routing.py` | 本地快速通道 + 交给模型的意图路由提示词 |
 | `src/weather.py` / `src/news.py` / `src/weather_features.py` | 定位+天气（双源）、新闻、天气/新闻问答 |
@@ -339,7 +340,9 @@
 
 ---
 
-## 七、未解决 / 待验证
+## 七、历史未解决 / 待验证记录
+
+> 本节保留早期排查依据，接口待发版、窗口透明方式等状态可能已过时。现行入口见 `当前开发入口.md`；行为以源码与对应构建证据为准。
 
 - **研究进展已重新打开**：0.8.0 曾整体禁用（`RESEARCH_ENABLED=False`），现已改成 `True`，并补上了缺的那一环——**关注方向的输入界面**（原先窗口里只显示「关注方向：」后面一片空白，用户根本没法配方向）。现在流程是：输入框回车确认 → 写 `topics`（用户原话）+ `queries`（检索词）+ `query_for`（两者映射）→ 立刻检索一次。检索仍是 Crossref 按 45 天窗口筛新论文；**复制的论文网页会抓题名/摘要/正文摘录**（`paper_reader`），但**PDF 正文不解析**（`.pdf` 链接只换成摘要页，纯 PDF 直链直接说读不了）；`check_hours` 默认 6 小时、`enabled` 默认关闭（要用户勾「主动提醒」才自动查，在聊天里主动问不受这个开关限制）。
 - **角色包可切换（但界面里没有选择器）**：`character_packs.selected_pack()` 会读 `settings.json` 的 `character_pack`，**指定的包存在就用它**，不存在才回退到 `shizuka-side-motion`。内置两个包的 `character_id` 都是 `shizuka`，共用同一个数据目录，换包不会换记忆/聊天/待办。要在界面里做切换器，只要写这个设置项并重启即可（`shizuka-classic` 是 `static` 渲染器，`_do_wheel_apply`/`_animate_pet` 都有 `_animator is None` 的分支）。

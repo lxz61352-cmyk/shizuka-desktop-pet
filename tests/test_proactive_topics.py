@@ -143,6 +143,7 @@ class GenerationTests(unittest.TestCase):
     def run_generation(self,topic,text,verdict=True,history=None):
         from test_weixin_prompt_offline import _WeixinCapture,pet
         app=_WeixinCapture([]);app._last_user_dialogue_at=time.monotonic()-7200
+        app._quiet_now=lambda:False
         app._chat_lock=threading.RLock();app._chat_log=[]
         client=Mock();client.with_options.return_value=client
         completion=lambda value:NS(choices=[NS(message=NS(content=json.dumps(value,ensure_ascii=False)))])

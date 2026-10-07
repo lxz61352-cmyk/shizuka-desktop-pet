@@ -7,7 +7,16 @@ CATEGORIES=('生活','研究')
 
 def command(text):
     match=re.match(r'^\s*/(?:待办|todo(?=\s|[:：]|$))\s*[:：]?\s*(.*)$',text,re.I|re.S)
-    return match.group(1).strip() if match else None
+    if match:return match.group(1).strip()
+    # Explicit scheduling requests must use the saving path, never a chat promise.
+    value=text.strip()
+    lead=r'(?:请(?:你)?|麻烦(?:你)?|帮我|你)?\s*(?:在)?\s*'
+    request=r'(?:再来|再|来|记得)?\s*(?:提醒我|叫我)\s*(?:一下)?\s*\S'
+    if (re.match(r'^'+lead+request,value)
+            or re.match(r'^'+lead+r'(?:'+_TIME+r'[\s，,]*)+'+request,value)):
+        if not re.search(r'(?:是什么意思|怎么(?:用|设置)|如何设置)[？?。！!]*$',value):
+            return value
+    return None
 
 def category(text):
     return '研究' if re.search(r'研究|论文|文献|实验|讲座|学术|报告会',text,re.I) else '生活'
@@ -27,7 +36,9 @@ def parse_time(text,now=None):
     text=(text or '').strip()
     if not text:return None,False,''
     if re.search(r'(下次|下一次).*(启动|开机|开电脑)|下次开电脑',text):return None,True,''
-    relative=list(re.finditer(r'([0-9]+(?:\.[0-9]+)?|半|[一二两三四五六七八九十]+)\s*(?:个)?(小时|分钟|天)\s*(?:以)?后',text))
+    duration=r'([0-9]+(?:\.[0-9]+)?|半|[一二两三四五六七八九十]+)\s*(?:个)?(小时|分钟|天)'
+    relative=list(re.finditer(duration+r'\s*(?:以|之)?后',text))
+    relative+=list(re.finditer(r'(?:再)?(?:过|等)\s*'+duration+r'(?!\s*(?:以|之)?[后前])',text))
     if len(relative)>1:return None,False,text
     if relative:
         rel=relative[0]
@@ -115,7 +126,7 @@ def organized_items(payload,source,now=None):
 
 def local_title_notes(text):
     """Conservative fallback: retain the complete source separately, extract only clear spans."""
-    title=text.strip();notes=[]
+    title=strip_schedule_words(text);notes=[]
     event=re.search(r'[A-Za-z][A-Za-z0-9 .+/-]{0,40}(?:讲座|报告|会议|课程)',text)
     location=re.search(r'(?:前往|去|在|地点[：:])\s*([^，,。；;]{2,40}?)(?:听|参加|开展|开会|举行|出席|$)',text)
     if event:title=event[0].strip()
@@ -136,17 +147,20 @@ def local_title_notes(text):
 
 
 _AMOUNT=r'(?:\d+(?:\.\d+)?|半|[一二两三四五六七八九十]+)'
-_RELATIVE=_AMOUNT+r'\s*(?:个)?(?:小时|分钟|天)\s*(?:以)?后'
+_RELATIVE=r'(?:'+_AMOUNT+r'\s*(?:个)?(?:小时|分钟|天)\s*(?:以|之)?后|(?:再)?(?:过|等)\s*'+_AMOUNT+r'\s*(?:个)?(?:小时|分钟|天)(?:(?:以|之)?后)?)'
 _DATE=r'(?:(?:\d{4}[年/-])?\d{1,2}[月/-]\d{1,2}[日号]?|大后天|后天|明天|今天|(?:下周|本周|这周|周|星期)[一二三四五六日天])'
 _PERIOD=r'(?:每(?:个)?工作日|每(?:隔)?(?:'+_AMOUNT+r')?(?:个)?(?:天|日|周[一二三四五六日天]?|月(?:\d+|[一二三四五六七八九十]+)[日号]?))'
 _CLOCK=r'(?:(?:凌晨|早上|上午|下午|晚上|中午|傍晚)\s*)?(?:\d{1,2}[:：]\d{2}|[0-9一二两三四五六七八九十]+点(?:半|[0-9一二三四五六七八九十]+分?)?)'
 _TIME=r'(?:'+_RELATIVE+'|'+_DATE+'|'+_PERIOD+'|'+_CLOCK+r'|有空(?:的)?时(?:候)?|有空再|抽空|下次开电脑|下次开机)'
-_INSTRUCTION=r'(?:请(?:你)?|麻烦(?:你)?|帮我|替我|我要|我想|记得|提醒我|叫我|记一下|记下|要)'
+_INSTRUCTION=r'(?:请(?:你)?|麻烦(?:你)?|帮我|替我|我要|我想|记得|(?:再来|再|来)?(?:提醒我|叫我)(?:一下)?|记一下|记下|要)'
 
 
 def strip_schedule_words(text):
     """Only remove boundary instructions/time spans, never time-like text in a task."""
     value=text.strip()
+    request=r'(?=(?:'+_TIME+r'[\s，,]*)*(?:再来|再|来|记得)?(?:提醒我|叫我))'
+    value=re.sub(r'^(?:请(?:你)?|麻烦(?:你)?|帮我|你)\s*(?:在)?\s*'+request,'',value)
+    value=re.sub(r'^在\s*'+request,'',value)
     previous=None
     while previous!=value:
         previous=value

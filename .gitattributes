@@ -19,3 +19,16 @@ voice_model/*.pth filter=lfs diff=lfs merge=lfs -text
 /BUILD-INFO.json -text
 /MANIFEST.json -text
 /VERIFICATION.json -text
+
+# Preserve the exact public release bytes recorded in MANIFEST.json.
+/src/** -text
+/characters/** -text
+/assets/** -text
+/文档/** -text
+/README.md -text
+/AI-DEVELOPMENT.md -text
+/更新公告.md -text
+/version.json -text
+/desktop-dialogue.json -text
+/verify_package.py -text
+/*.bat -text

@@ -11,13 +11,16 @@ import time
 from sync_store import SyncStore, Snapshot, FIELDS, IDENTIFIER, canonical, stable_rows
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, *, compact=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, name = tempfile.mkstemp(prefix=".sync-write-", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
-            json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            if compact:
+                json.dump(value,stream,ensure_ascii=False,separators=(',',':'),allow_nan=False)
+            else:
+                json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(name, path)
@@ -118,7 +121,7 @@ class SyncBridge:
         for collection, path in self.paths.items():
             rows = self._sorted(collection, self.store.rows(collection))
             view = list(rows) if collection == "chats" else {"items": list(rows)}
-            atomic_json(path, view)
+            atomic_json(path, view, compact=collection=='chats')
 
     def read(self, collection):
         with self.exclusive():
@@ -129,7 +132,7 @@ class SyncBridge:
         with self.exclusive():
             rows = self.store.commit_snapshot(collection, desired, observed, delete_missing=collection != "chats")
             rows = self._sorted(collection, rows)
-            atomic_json(self.paths[collection], list(rows) if collection == "chats" else {"items": list(rows)})
+            atomic_json(self.paths[collection], list(rows) if collection == "chats" else {"items": list(rows)}, compact=collection=='chats')
             snapshot = Snapshot(rows if collection == "chats" else rows, rows.clock)
         self._maybe_compact()
         return snapshot

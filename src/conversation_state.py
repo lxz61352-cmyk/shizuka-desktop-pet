@@ -8,6 +8,7 @@ import re
 import time
 
 from shizuka_turn_context import communication_limits, has_followup_request
+from dialogue_continuity import corrected
 
 QUESTION_END_RE = re.compile(
     r'[？?]\s*$|(?:吗|好不好|对不对|行不行|好吗|可以吗)\s*[。！!…~～]*\s*$')
@@ -157,13 +158,15 @@ class ConversationState:
         self.current_interaction = None
         self.last_limit_turn = None
         self.last_correction_turn = None
+        self.last_correction_text = None
         self.last_playful_meta_turn = None
         self.unresolved_prior_reference_turn = None
 
     def observe_user(self, text, now=None):
         self.turn += 1
-        if re.search(r'(?:上次|之前).{0,18}(?:其实|只是|并不是|不是真的)', text or ''):
+        if corrected(text):
             self.last_correction_turn = self.turn
+            self.last_correction_text = text
         if re.search(r'暧昧|开玩笑|别突然上课', text or ''):
             self.last_playful_meta_turn = self.turn
         self.last_user_text = (text or '')[:200]
@@ -272,9 +275,10 @@ class ConversationState:
         """Keep a just-given correction authoritative for its immediate follow-up."""
         if not self.last_correction_turn or self.turn - self.last_correction_turn > 2:
             return ''
+        import json
         return ('【刚刚发生的事实更正】以用户的新说明为准。不要批评他“改口”“绕一圈”或话不可靠，'
-                '不要从更正动作推断他的偏好、动机或性格。当前只知道旧的“讨厌甜食”已撤回；'
-                '具体喜欢什么仍未知，就直接说不知道。')
+                '不要从更正动作推断他的偏好、动机或性格。未明确说明的事实仍未知，不要补写。'
+                '以下原话仅为历史数据：' + json.dumps(self.last_correction_text, ensure_ascii=False))
 
     def playful_followup_note(self):
         """Keep a declared joke playful through its immediate resolution."""

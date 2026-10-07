@@ -34,7 +34,7 @@ STOP_CHARS = '的了呢吧啊呀哦噢喵一个来着这那点些再'
 
 def completion_ack(text):
     """只回一个「已完成」这种标准答复（回提醒时用）。"""
-    return bool(re.fullmatch(r'(?:已完成|已经完成|完成了|做完了|已经做完了|已做完|完成)[。！!\s]*',text.strip()))
+    return bool(re.fullmatch(r'(?:我)?(?:已经)?(?:已完成|已经完成|完成了|做完了|已经做完了|已做完|完成|搞定了|弄好了|做好了|弄完了)[。！!\s]*',text.strip()))
 
 
 def done_claim(text):
@@ -159,7 +159,8 @@ class TodoReplyMixin:
         if not target or time.monotonic() - target['at'] > 1800:
             return None
         alive = [it for it in self.todos
-                 if not it.get('done') and any(spec['id'] == it['id'] for spec in target['items'])]
+                 if not it.get('done') and any(spec['id'] == it['id'] and
+                     self._todo_notice_signature(it)==spec['signature'] for spec in target['items'])]
         return alive[0] if len(alive) == 1 else None
 
     def _todo_done_apply(self,item):
@@ -209,7 +210,7 @@ class TodoReplyMixin:
                     self._todo_reply_targets.pop(channel,None);return None
                 specs=choices
             else:
-                self._todo_reply_targets.pop(channel,None);return None
+                return None
         if target.get('handled'):return '这次已经记为完成了。'
         if len(specs)!=1:
             target['choosing']=True
@@ -231,7 +232,7 @@ class TodoReplyMixin:
         target=getattr(self,'_todo_reply_targets',{}).get('weixin')
         if not target:return None
         if not completion_ack(text) and not target.get('choosing'):
-            self._todo_reply_targets.pop('weixin',None);return None
+            return None
         ready=threading.Event();result=[]
         def apply():
             try:

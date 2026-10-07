@@ -126,6 +126,16 @@ def show(app, section=None):
         if channel:channel.proactive_cancel.set()
         status.set(describe(current))
     action('主动搭话','保存微信主动设置',set_proactive)
+    def pause_weixin(paused):
+        from proactive_controls import tomorrow
+        current=state(app._weixin_store.data)
+        current['paused_until']=tomorrow() if paused else 0
+        app._weixin_store.update(proactive_chat=current)
+        channel=getattr(app,'_weixin_channel',None)
+        if channel:channel.proactive_cancel.set()
+        status.set(describe(current))
+    action('主动搭话','今天暂停微信闲聊',lambda:pause_weixin(True))
+    action('主动搭话','恢复微信闲聊',lambda:pause_weixin(False))
     heading('主动搭话','桌面闲聊')
     desktop=tk.StringVar(win,value=prefs['desktop_proactive'])
     row=ttk.Frame(pro); row.pack(fill='x',pady=6)
@@ -134,6 +144,8 @@ def show(app, section=None):
     def save_desktop(*args):
         prefs['desktop_proactive']=desktop.get(); app._experience=save(pet.DATA_DIR,prefs)
     desktop.trace_add('write',save_desktop)
+    from habit_settings import desktop_controls
+    desktop_controls(app,win,pro,prefs,controls)
     idle=tk.StringVar(win,value=str(app._idle_minutes)); idle_status=tk.StringVar(win)
     row=ttk.Frame(pro); row.pack(fill='x',pady=6)
     ttk.Label(row,text='空闲提醒间隔（分钟）').pack(side='left')
@@ -155,6 +167,9 @@ def show(app, section=None):
     choice('声音与提醒','提示音',[('all','全部消息'),('todo-files','待办提醒和文件完成'),('todo','仅待办提醒'),('none','关闭')],
            '_sound_mode',app._set_sound)
     action('声音与提醒','测试提示音',app.play_sound)
+    heading('声音与提醒','提醒喝水')
+    from habit_settings import water_controls
+    water_controls(app,win,groups['声音与提醒'],prefs,controls)
     volume=tk.StringVar(win,value=str(round(app._music_volume/10))); volume_status=tk.StringVar(win)
     row=ttk.Frame(groups['声音与提醒']); row.pack(fill='x',pady=6)
     ttk.Label(row,text='背景音乐音量').pack(side='left')
@@ -259,7 +274,7 @@ def show(app, section=None):
     for label,cmd in [('微信连接',app.show_weixin),('模型与接口',app._prompt_api_key),('运行状态与重连',app.show_runtime_status),
                       ('本地备份与恢复',app.show_backup)]:action('连接与数据',label,cmd)
     keywords={'常规':'剪贴板 翻译 启动 使用时长','聊天与角色':'反馈 导出 记忆 敏感 模型 连续 合并 显示速度',
-              '主动搭话':'微信 主动 时间 频率 间隔','声音与提醒':'语音 提醒 音量 朗读 语言 释放',
+              '主动搭话':'微信 主动 时间 频率 间隔 暂停 时段','声音与提醒':'语音 提醒 喝水 时间 音频 音量 朗读 语言 释放',
               '免打扰':'全屏 游戏 折叠 名单 程序','外观':'背景 模糊 明暗 图片 动画 小动作',
               '连接与数据':'接口 备份 恢复 状态 连接'}
     def find(*args):

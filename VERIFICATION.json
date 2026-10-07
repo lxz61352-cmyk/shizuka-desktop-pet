@@ -1,15 +1,43 @@
 {
-  "version": "0.9.0",
-  "unit_tests": 926,
-  "public_test_modules": 73,
-  "frozen_gui_checks": 96,
-  "frozen_suites": {
-    "main-legacy": 41,
-    "main-forms": 31,
-    "main-qt": 6,
-    "qt-forms": 9,
-    "qt-tools": 9
+  "version": "0.9.1",
+  "targeted_tests": 449,
+  "targeted_test_failures": 0,
+  "targeted_test_errors": 0,
+  "frozen_gui_checks": 44,
+  "qt_forms_checks": 33,
+  "qt_tools_checks": 6,
+  "source_archive_modules_verified": 157,
+  "full_test_audit": {
+    "passed": false,
+    "failed_modules": [
+      "test_desktop_b_trial.py",
+      "test_dialogue_architecture_v2.py",
+      "test_enhanced_candidate.py",
+      "test_enhanced_dialogue.py",
+      "test_interaction_frame.py",
+      "test_outer_dialogue_trial.py",
+      "test_persona_s2.py",
+      "test_quality_review_harness.py",
+      "test_review_alignment.py",
+      "test_shizuka_s21_card.py",
+      "test_surface_glass.py",
+      "test_tone_local_guard.py",
+      "test_tone_priority_dryrun.py",
+      "test_tone_priority_v2.py",
+      "test_tone_regression_phase0.py",
+      "test_ui_optimization.py"
+    ],
+    "resolved_and_rechecked": [
+      "test_ui_optimization.py",
+      "test_surface_glass.py"
+    ],
+    "scope": "All modules, includes historical frozen trials and legacy UI fixtures"
   },
-  "private_data_audit": "passed",
-  "scope": "Public offline functional regression and own-window rendering; historical private research fixtures are not included."
+  "confirmed_feature_guard": "passed",
+  "private_data_audit": {
+    "files_checked": 6156,
+    "private_paths_excluded": true,
+    "key_literal_scan": "passed",
+    "scope": "strict input allowlist + paths + sk-style plaintext literals; not universal PII detection"
+  }
 }

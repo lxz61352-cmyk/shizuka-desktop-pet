@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 import re
 import threading
+import queue
 
 REVISION = 'weixin-segments-v1'
 BREAK = '[[WX_BREAK]]'
@@ -110,6 +111,65 @@ class ReplyProgress:
             on_sent(piece)
             self.checkpoint('\n\n'.join(self.sent))
         return True
+
+
+def interruptible_chunks(create, interrupted):
+    """Stop waiting for network chunks when superseded, including stream open.
+
+    The daemon owns only the stream and queue; abandoned results never touch
+    chat state or delivery. Keep a bounded queue and close its stream on exit.
+    """
+    output = queue.Queue(maxsize=8)
+    abandoned = threading.Event()
+
+    def put(kind, value):
+        while not abandoned.is_set():
+            try:
+                output.put((kind, value), timeout=.05)
+                return
+            except queue.Full:
+                pass
+
+    def read():
+        try:
+            if abandoned.is_set() or interrupted():
+                return
+            with create() as stream:
+                for chunk in stream:
+                    if abandoned.is_set() or interrupted():
+                        break
+                    consumed = threading.Event()
+                    put('chunk', (chunk, consumed))
+                    while not abandoned.is_set() and not consumed.wait(.05):
+                        pass
+        except Exception as exc:
+            put('error', exc)
+        finally:
+            put('end', None)
+
+    if interrupted():
+        return
+    worker = threading.Thread(target=read, daemon=True, name='weixin-reply-stream')
+    worker.start()
+    try:
+        while not interrupted():
+            try:
+                kind, value = output.get(timeout=.05)
+            except queue.Empty:
+                continue
+            if interrupted():
+                return
+            if kind == 'error':
+                raise value
+            if kind == 'end':
+                return
+            chunk, consumed = value
+            try:
+                yield chunk
+            finally:
+                consumed.set()
+    finally:
+        abandoned.set()
 
 
 def control_matches(text):
@@ -238,14 +298,17 @@ def generate(client, kwargs, progress, clean, on_sent, acquire=lambda: None, *, 
         if progress.interrupted():
             return DeliveredReply('', 'interrupted')
         acquire()
-        with client.chat.completions.create(**request) as stream:
-            for chunk in stream:
-                if progress.interrupted():
-                    return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
-                for choice in chunk.choices or ():
-                    for value in buffer.feed(choice.delta.content or ''):
-                        if not emit(value):
-                            return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
+        if progress.interrupted():
+            return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
+        for chunk in interruptible_chunks(lambda: client.chat.completions.create(**request), progress.interrupted):
+            if progress.interrupted():
+                return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
+            for choice in chunk.choices or ():
+                for value in buffer.feed(choice.delta.content or ''):
+                    if not emit(value):
+                        return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
+        if progress.interrupted():
+            return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
         tail, more = buffer.finish()
         if not emit(tail):
             return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
@@ -262,11 +325,12 @@ def generate(client, kwargs, progress, clean, on_sent, acquire=lambda: None, *, 
                 follow_request = dict(request, messages=follow, max_tokens=1200)
                 if request.get('_shizuka_profile'):
                     follow_request['_shizuka_profile'] = dict(request['_shizuka_profile'], max_value=1200)
-                with client.chat.completions.create(**follow_request) as stream:
-                    for chunk in stream:
-                        if progress.interrupted():
-                            return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
-                        extra.extend(c.delta.content or '' for c in chunk.choices or ())
+                for chunk in interruptible_chunks(lambda: client.chat.completions.create(**follow_request), progress.interrupted):
+                    if progress.interrupted():
+                        return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
+                    extra.extend(c.delta.content or '' for c in chunk.choices or ())
+                if progress.interrupted():
+                    return DeliveredReply('\n\n'.join(progress.sent), 'interrupted')
                 raw = ''.join(extra)
                 value = clean(clean_control(raw)).strip()
                 ended = any(m.group() == END for m in control_matches(raw))
@@ -288,7 +352,7 @@ def generate(client, kwargs, progress, clean, on_sent, acquire=lambda: None, *, 
             status = 'empty'
     except Exception:
         # Do not resend a whole answer after partial delivery or a send timeout.
-        status = 'delivery_failed' if progress.failed else 'generation_failed'
+        status = 'interrupted' if progress.interrupted() else ('delivery_failed' if progress.failed else 'generation_failed')
         if not progress.sent and not progress.failed and not progress.interrupted():
             try:
                 emit('刚才没有收到完整回复，请再试一次。')

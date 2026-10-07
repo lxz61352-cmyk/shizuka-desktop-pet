@@ -89,6 +89,24 @@ def run(app,pet):
               '_greeting_on','_summary_on','_usage_on','_animation_on','_ambient_actions_on','_land_on_windows',
               '_sensitive_topics_on','autostart','quiet_name','blur')
     assert all(name in controls for name in expected)
+    from experience_settings import load
+    assert not load(pet.DATA_DIR)['water_enabled']
+    controls['water_times'].delete(0,'end');controls['water_times'].insert(0,'9:00，14:30')
+    controls['water_save'].invoke()
+    assert load(pet.DATA_DIR)['water_times']=='09:00, 14:30'
+    controls['water_enabled'].invoke()
+    assert app._experience['water_enabled'] and load(pet.DATA_DIR)['water_enabled']
+    controls['water_times'].delete(0,'end');controls['water_times'].insert(0,'25:00')
+    controls['water_save'].invoke()
+    assert load(pet.DATA_DIR)['water_times']=='09:00, 14:30'
+    controls['water_enabled'].invoke()
+    controls['desktop_start'].delete(0,'end');controls['desktop_start'].insert(0,'22:00')
+    controls['desktop_end'].delete(0,'end');controls['desktop_end'].insert(0,'06:00')
+    controls['desktop_hours_save'].invoke()
+    assert app._experience['desktop_start']==1320 and app._experience['desktop_end']==360
+    controls['desktop_pause'].invoke();assert not app._casual_proactive_allowed()
+    controls['desktop_resume'].invoke();assert load(pet.DATA_DIR)['desktop_paused_until']==0
+    checks.append('Water controls persist valid times and enable state, reject invalid times; desktop quiet hours and pause controls persist')
     # Existing options must still update runtime state and the same settings file.
     before=app._animation_on
     controls['_animation_on'].invoke();app.root.update()
@@ -129,7 +147,19 @@ def run(app,pet):
 
     mem=pet.get_memory();mem.add('用户今天在复习');mem.save()
     app.show_memory();app.root.update();app.show_memory_details(mem.items[0]['id']);app.root.update()
-    app._memory_details.destroy();app._close_memory_window()
+    win=app._memory_details
+    editor=next(w for w in win.winfo_children() if w.winfo_class()=='Text')
+    original=mem.items[0]['content']
+    editor.delete('1.0','end');editor.insert('1.0','用户手动修正的虚构记忆\n第二行内容')
+    save=next(w for w in win.winfo_children() if w.winfo_class()=='TButton' and w.cget('text')=='保存')
+    save.invoke();app.root.update()
+    assert mem.items[0]['content']=='用户手动修正的虚构记忆\n第二行内容'
+    assert mem.items[0]['edited_by']=='user'
+    app.undo_memory_change();app.root.update()
+    assert mem.items[0]['content']==original and 'edited_by' not in mem.items[0]
+    assert app._mem_edits[mem.items[0]['id']].get()==original
+    checks.append('Single memory multiline editor saves content and evidence; undo restores both')
+    app._close_memory_window()
     app.show_backup();app.root.update();app._backup_window.destroy()
     app.show_runtime_status();app.root.update();app._runtime_window.destroy()
     checks.append('Memory applicability/source, backup/restore and runtime-status panels open')

@@ -104,6 +104,21 @@ def run():
                         for label in ('聊天与角色','主动搭话','声音与提醒','免打扰','外观','连接与数据','常规'):
                             node=next(n for n in current.last['nodes'] if n.get('text')==label and n['kind']=='radio')
                             current.action(dict(action='invoke',widget=node['id']))
+                            if label=='声音与提醒':
+                                controls=current.window._settings_controls
+                                current.action(dict(action='edit',widget=str(controls['water_times']),value='09:15, 15:30'))
+                                current.action(dict(action='invoke',widget=str(controls['water_save'])))
+                                current.action(dict(action='invoke',widget=str(controls['water_enabled'])))
+                                assert app._experience['water_enabled'] and app._experience['water_times']=='09:15, 15:30'
+                                current.action(dict(action='invoke',widget=str(controls['water_enabled'])))
+                                checks.append('Qt water reminder controls edit times and toggle persisted enable state')
+                            if label=='主动搭话':
+                                controls=current.window._settings_controls
+                                current.action(dict(action='invoke',widget=str(controls['desktop_pause'])))
+                                assert not app._casual_proactive_allowed()
+                                current.action(dict(action='invoke',widget=str(controls['desktop_resume'])))
+                                assert app._experience['desktop_paused_until']==0
+                                checks.append('Qt desktop proactive controls pause and resume without changing reminder settings')
                         current.destroy()
                     elif name in ('computer','wechat'):
                         current.action(dict(action='close'))

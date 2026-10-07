@@ -36,9 +36,10 @@ def trace_for(app,kind):
     return getattr(local,'weixin' if kind.startswith('weixin') else 'desktop',None) if local else None
 
 
-def post_with_trace(app,text,reply,trace):
+def post_with_trace(app,text,reply,trace,my_conv=None):
     if trace and hasattr(app,'_request_traces'):app._request_traces.desktop=trace
-    app._post_memory(text,reply)
+    if my_conv is None:app._post_memory(text,reply)
+    else:app._post_memory(text,reply,my_conv)
 
 
 class FeedbackStore:

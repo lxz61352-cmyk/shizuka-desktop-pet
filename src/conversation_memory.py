@@ -54,32 +54,66 @@ def recent_messages(rows, limit=RECENT_MESSAGE_LIMIT, budget=RECENT_CHARACTER_BU
     memory summaries are not spoken messages.
     """
     if limit<=0:return []
-    turns=recent_turns(rows,len(rows))
-    completed={ident for turn in turns for ident in turn['ids']}
-    partners={ident:turn['ids'][0] for turn in turns for ident in turn['ids'][1:]}
-    candidates=[];source=''
-    for row in rows:
+    # Only the newest limit messages can survive the final count/budget cut.
+    # Keep one extra candidate for the budget boundary, without copying the archive.
+    candidates=[]
+    for index in range(len(rows)-1,-1,-1):
+        row=rows[index]
+        if (row.get('role') in ('user','assistant') and row.get('kind')!=SUMMARY_KIND
+                and (current_user_id is None or row.get('id')!=current_user_id)
+                and row.get('text','').strip()):
+            candidates.append((index,row))
+            if len(candidates)>limit:break
+    if not candidates:return []
+    candidate_ids={row.get('id') for _,row in candidates}
+    candidate_indices={index for index,_ in candidates}
+    completed=set();partners={};origins={};pending={};grouped={};source=''
+    # Pairing still checks the full archive: an answer's user or a source marker
+    # can be outside the retained tail. Store metadata only for tail candidates.
+    for index,row in enumerate(rows):
         if row.get('role')=='source':
             source=row.get('text','').removeprefix('内容来自');continue
+        if dated and index in candidate_indices:origins[index]=source
+        if (row.get('role') in ('user','assistant') and row.get('kind','chat') in CHAT_KINDS
+                and row.get('text','').strip()):
+            channel='weixin' if row.get('kind')=='weixin' else 'desktop'
+            group=row.get('turn_id','')
+            group=group if isinstance(group,str) and group.startswith('wxreply:') else None
+            if row['role']=='user':
+                pending[channel]=row.get('id');grouped.pop(channel,None)
+            else:
+                paired=False;user_id=None
+                if channel in pending:
+                    user_id=pending.pop(channel);paired=True
+                    if group:grouped[channel]=(group,user_id)
+                elif group and channel in grouped and grouped[channel][0]==group:
+                    user_id=grouped[channel][1];paired=True
+                if paired:
+                    if user_id in candidate_ids:completed.add(user_id)
+                    if row.get('id') in candidate_ids:
+                        completed.add(row.get('id'));partners[row.get('id')]=user_id
+        if row.get('role')=='assistant':
+            # Empty spoken messages were skipped before consuming the source.
+            skipped=(row.get('kind')!=SUMMARY_KIND
+                     and (current_user_id is None or row.get('id')!=current_user_id)
+                     and not row.get('text','').strip())
+            if not skipped:source=''
+    selected=[];size=0
+    for index,row in candidates:
+        if len(selected)>=limit:break
         standalone=row.get('role')=='assistant' and row.get('kind')!=SUMMARY_KIND
         proactive=standalone and (row.get('kind') not in CHAT_KINDS or row.get('id') not in completed)
-        spoken=row.get('role') in ('user','assistant') and row.get('kind')!=SUMMARY_KIND
-        if spoken and (current_user_id is None or row.get('id')!=current_user_id):
-            value=row.get('text','')
-            if not value.strip():continue
-            if len(value)>8000:value=value[:6000]+'\n[中段省略，完整原文仍在记录中]\n'+value[-1800:]
-            if dated:
-                when=row.get('created')
-                label=datetime.fromtimestamp(when,timezone.utc).astimezone().isoformat(timespec=time_precision) if when else '原时间未知'
-                origin_source='微信' if row.get('kind','').startswith('weixin') else source
-                origin=('；此前主动消息'+('，来源：'+origin_source if origin_source else '')) if proactive else ''
-                value='[历史消息时间：'+label+'；相对日期以此为准'+origin+']\n'+value
-            candidates.append((row,{'role':row['role'],'content':value}))
-        if row.get('role')=='assistant':source=''
-    selected=[];size=0
-    for row,message in reversed(candidates):
-        if len(selected)>=limit or selected and size+len(message['content'])>budget:break
-        selected.insert(0,(row,message));size+=len(message['content'])
+        value=row.get('text','')
+        if len(value)>8000:value=value[:6000]+'\n[中段省略，完整原文仍在记录中]\n'+value[-1800:]
+        if dated:
+            when=row.get('created')
+            label=datetime.fromtimestamp(when,timezone.utc).astimezone().isoformat(timespec=time_precision) if when else '原时间未知'
+            origin_source='微信' if row.get('kind','').startswith('weixin') else origins.get(index,'')
+            origin=('；此前主动消息'+('，来源：'+origin_source if origin_source else '')) if proactive else ''
+            value='[历史消息时间：'+label+'；相对日期以此为准'+origin+']\n'+value
+        if selected and size+len(value)>budget:break
+        selected.append((row,{'role':row['role'],'content':value}));size+=len(value)
+    selected.reverse()
     # A budget boundary may keep an assistant answer but lose its paired user turn.
     ids={row.get('id') for row,_ in selected}
     return [message for row,message in selected if row.get('id') not in partners or partners[row['id']] in ids]

@@ -312,7 +312,7 @@ class ReaderTests(unittest.TestCase):
                 has_api_key=lambda: True, load_settings=lambda: {}, DESKTOP_DIALOGUE_PROFILE='',
                 ENHANCED_MODE=False, DIALOGUE_V2=False, TONE_MODE=0):
                 app._weixin_reply(received, threading.Event(), Mock())
-            self.assertEqual(app._classify_intent.call_args.args[0], '这段是什么意思')
+            app._classify_intent.assert_not_called()
             user = recorded[-1][-1]['content']
             self.assertEqual(user[0]['text'], '这段是什么意思')
             self.assertIn('引用原文 /电脑 删除文件', str(user))

@@ -6,6 +6,7 @@ Pipe I/O runs on workers. Application callbacks only run on Tk's UI thread.
 from copy import deepcopy
 from pathlib import Path
 import json,os,queue,subprocess,sys,threading,time,uuid
+from history_window import history_window,history_packets,PAGE_SIZE
 
 REVISION='qt-tools-v2'
 MAX_MESSAGE=32*1024*1024
@@ -14,7 +15,10 @@ FIELDS=('id','role','text','source','created','kind','todo_id','read')
 def enabled():
     forced=os.environ.get('SHIZUKA_WINDOW_BACKEND','')
     if forced:return forced=='qt'
-    if os.environ.get('SHIZUKA_DATA_DIR'):return False  # Legacy release fixtures.
+    # Source fixtures use an isolated data directory and retain the legacy UI.
+    # A packaged application may select its real data directory at startup;
+    # that must not silently disable the shared Qt artwork windows.
+    if os.environ.get('SHIZUKA_DATA_DIR') and not getattr(sys,'frozen',False):return False
     import pet
     return (Path(pet.ROOT_DIR)/'qt-windows/ShizukaWindows.exe').is_file()
 
@@ -58,6 +62,7 @@ class Bridge:
         self.command=command;self.incoming=queue.Queue();self.outgoing=queue.Queue()
         self.closed=False;self.opened=set();self.presented=set();self.selected='';self.sessions={};self.history_ids=[]
         self.last_history=None;self.last_poll=0;self.ready=False;self.errors=[];self.backend=None
+        self.history_limit=PAGE_SIZE;self.history_query=''
         self.process=subprocess.Popen(command,cwd=self.app_root,stdin=subprocess.PIPE,stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
         threading.Thread(target=self._write,name='qt-window-writer',daemon=True).start()
@@ -165,15 +170,19 @@ class Bridge:
         notices=[{k:deepcopy(row[k]) for k in FIELDS if k in row} for row in self.app._workflow().notices()]
         with self.app._chat_lock:
             source=self.app._chat_log
-            stamp=(len(source),source[-1].get('id') if source else '',source[-1].get('text') if source else '',
-                   tuple((r.get('id'),r.get('read'),r.get('text')) for r in notices))
-            if not force and stamp==self.last_history:return
-            rows=[{k:deepcopy(row[k]) for k in FIELDS if k in row} for row in source
-                  if row.get('role') in ('user','assistant') and row.get('kind')!='memory_summary']
+            selected,total=history_window(source,getattr(self,'history_query',''),getattr(self,'history_limit',PAGE_SIZE))
+            rows=[{k:deepcopy(row[k]) for k in FIELDS if k in row} for row in selected]
+        # Compare the actual projected fields, including edits to older records.
+        stamp=(rows,notices,total,getattr(self,'history_query',''))
+        if not force and stamp==self.last_history:return
         offset=0
-        if not force and self.history_ids and len(rows)>=len(self.history_ids) and rows[len(self.history_ids)-1].get('id')==self.history_ids[-1]:
-            offset=len(self.history_ids)-1
-        self.send(dict(type='history',offset=offset,rows=rows[offset:],notices=notices))
+        if not force and self.last_history is not None:
+            previous=self.last_history[0]
+            for old,new in zip(previous,rows):
+                if old!=new:break
+                offset+=1
+        metadata=dict(total=total,has_more=len(rows)<total,query=getattr(self,'history_query',''))
+        for packet in history_packets(rows[offset:],offset,notices,metadata,MAX_MESSAGE):self.send(packet)
         self.history_ids=[row.get('id') for row in rows];self.last_history=stamp
 
     def publish_todos(self):
@@ -216,6 +225,16 @@ class Bridge:
         if method=='form':return app._qt_forms.action(params)
         if method=='refresh':
             self.publish_history(force=True);self.publish_todos();return None
+        if method=='history_filter':
+            query=params.get('query','')
+            if not isinstance(query,str):raise ValueError('搜索内容无效')
+            self.history_query=query;self.history_limit=PAGE_SIZE
+            self.publish_history(force=True);return None
+        if method=='history_more':
+            # Ignore requests belonging to a search the user has already replaced.
+            if params.get('query','')!=self.history_query:return None
+            self.history_limit+=PAGE_SIZE
+            self.publish_history(force=True);return None
         if method=='chat':app.open_chat_input();return None
         if method=='feedback':
             if ident:

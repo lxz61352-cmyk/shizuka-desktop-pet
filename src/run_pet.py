@@ -12,6 +12,10 @@ def main():
         import tempfile
         with tempfile.TemporaryDirectory(prefix="shizuka-self-test-") as folder:
             os.environ["SHIZUKA_DATA_DIR"] = folder
+            if "--self-test" in sys.argv:
+                # Native-widget acceptance has its own backend; an isolated
+                # data directory no longer selects it for packaged programs.
+                os.environ["SHIZUKA_WINDOW_BACKEND"] = "tk"
             return _main()
     return _main()
 

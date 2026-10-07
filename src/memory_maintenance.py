@@ -255,7 +255,9 @@ class MemoryFeaturesMixin:
             # budget, not everything in the unbounded current episode.
             visible={item['content'] for item in clean}
             feedback=feedback_context(rows,[r.get('id') for r in selected if r.get('text') in visible or r.get('id')==current])
-            extras=[v for v in (cm.render_time_metadata(origins),feedback) if v]
+            from dialogue_continuity import continuity_context
+            continuity=continuity_context(rows,current_text or '',channel,current)
+            extras=[v for v in (cm.render_time_metadata(origins),feedback,continuity) if v]
             return clean, timeline + ('\n'+'\n'.join(extras) if extras else '')
         return clean,cm.render_time_metadata(time_lines)
 

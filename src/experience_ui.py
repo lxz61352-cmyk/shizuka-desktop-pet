@@ -6,25 +6,22 @@ from tkinter import ttk,filedialog,messagebox
 from tkinter.scrolledtext import ScrolledText
 from ui_theme import page_header,apply,PAGE_X
 from window_opening import dialog_window
+from habit_reminders import HabitRemindersMixin
 
 
-class ExperienceMixin:
+class ExperienceMixin(HabitRemindersMixin):
     def _casual_proactive_allowed(self):
-        mode=getattr(self,'_experience',{}).get('desktop_proactive','偶尔')
-        if mode=='关闭' or getattr(self,'_pomo_phase',None)=='focus':return False
-        gap={'很少':6*3600,'偶尔':3*3600,'较活跃':2*3600}.get(mode,3*3600)
+        from proactive_controls import desktop_eligible
+        if getattr(self,'_pomo_phase',None)=='focus':return False
         with self._chat_lock:rows=list(self._chat_log[-120:])
-        last=next((r for r in reversed(rows) if r.get('role')=='assistant' and r.get('kind') in ('proactive','weixin_proactive')),None)
-        if not last:return True
-        if time.time()-last.get('created',0)<gap:return False
-        return any(r.get('role')=='user' and r.get('kind') in ('chat','user','weixin')
-                   and r.get('created',0)>last.get('created',0) for r in rows)
+        return desktop_eligible(getattr(self,'_experience',{}),rows)[0]
 
     def _experience_boot(self):
         import pet
         from experience_settings import load
         from window_art import set_preferences
         self._experience=load(pet.DATA_DIR);set_preferences(self._experience)
+        self._water_boot()
         path=Path(pet.DATA_DIR)/'chat-draft.json'
         if path.exists():
             try:self._chat_text=json.loads(path.read_text('utf-8-sig')).get('text','')
@@ -168,32 +165,50 @@ class ExperienceMixin:
         from memory_lifecycle import label,expiry
         memory=pet.get_memory();row=next((r for r in memory.snapshot() if r['id']==mid),None)
         if not row:return
-        win=self._experience_window('_memory_details','记忆来源与有效期',740,560)
+        win=self._experience_window('_memory_details','编辑记忆与有效期',740,560)
         if win is None:return
-        ttk.Label(win,text=row.get('content',''),wraplength=670).pack(fill='x',padx=PAGE_X,pady=12)
+        ttk.Label(win,text='记忆内容（修改后点击保存）').pack(anchor='w',padx=PAGE_X,pady=(10,4))
+        editor=tk.Text(win,height=5,wrap='word',undo=True)
+        editor.pack(fill='both',expand=True,padx=PAGE_X,pady=(0,8))
+        editor.insert('1.0',row.get('content',''))
         source_path=Path(pet.CHARACTER_DATA_DIR)/'memory-review.json'
         if not row.get('source_quote') and source_path.exists():
             source=json.loads(source_path.read_text('utf-8-sig')).get('sources',{}).get(mid,{})
             row=dict(row,source_quote=source.get('quote'),source_time=source.get('source_time'))
         expires=expiry(row)
-        detail='当前状态：'+label(row)+'\n来源原话：'+str(row.get('source_quote') or row.get('quote') or '此条未保留来源原话')+'\n来源时间：'+time.strftime('%Y-%m-%d %H:%M',time.localtime(row.get('source_time') or row.get('created',0)))
+        source=str(row.get('source_quote') or row.get('quote') or '此条未保留来源原话')
+        if len(source)>500:source=source[:500]+'…'
+        detail='当前状态：'+label(row)+'\n来源'+('（手动编辑）' if row.get('edited_by')=='user' else '原话')+'：'+source+'\n来源时间：'+time.strftime('%Y-%m-%d %H:%M',time.localtime(row.get('source_time') or row.get('created',0)))
         if expires:detail+='\n有效至：'+time.strftime('%Y-%m-%d %H:%M',time.localtime(expires))
         ttk.Label(win,text=detail,wraplength=670,justify='left').pack(fill='x',padx=PAGE_X,pady=12)
         choice=tk.StringVar(value='保持原样')
         ttk.Combobox(win,textvariable=choice,values=('保持原样','长期有效','今天有效','7天有效','事情已结束'),state='readonly').pack(anchor='w',padx=PAGE_X,pady=12)
         def save():
             from copy import deepcopy
+            from memory_lifecycle import edit_content
+            value=editor.get('1.0','end-1c')
             with memory._lock:
-                self._remember_memory_undo(memory.items)
-                current=next(r for r in memory.items if r['id']==mid)
+                current=next((r for r in memory.items if r['id']==mid),None)
+                if current is None:
+                    messagebox.showwarning('无法保存','这条记忆已被删除，请刷新列表。',parent=win);return
+                prior=deepcopy(memory.items)
+                try:edit_content(current,value,row.get('content',''))
+                except ValueError as error:
+                    messagebox.showwarning('无法保存',str(error),parent=win);return
+                self._remember_memory_undo(prior)
                 if choice.get()=='长期有效':current.update(expires_at=0,status='active')
                 elif choice.get()=='今天有效':
                     stamp=list(time.localtime());stamp[2]+=1;stamp[3:6]=[0,0,0]
                     current.update(expires_at=time.mktime(tuple(stamp)),status='active')
                 elif choice.get()=='7天有效':current.update(expires_at=time.time()+7*86400,status='active')
                 elif choice.get()=='事情已结束':current['status']='completed'
-                memory.save()
+                try:memory.save()
+                except Exception:
+                    memory.items=prior
+                    messagebox.showerror('无法保存','记忆未能保存，请稍后重试。',parent=win);return
                 self._finish_memory_undo(memory.items)
+                variable=getattr(self,'_mem_edits',{}).get(mid)
+                if variable is not None:variable.set(current['content'])
             self._build_memory_rows();win.destroy()
         ttk.Button(win,text='保存',command=save).pack(anchor='e',padx=PAGE_X,pady=12);apply(win)
 
@@ -214,5 +229,8 @@ class ExperienceMixin:
             from memory_lifecycle import undo_edit
             memory.items,conflicts=undo_edit(memory.items,*previous)
             memory.save();self._memory_undo=None
+            for row in memory.items:
+                variable=getattr(self,'_mem_edits',{}).get(row['id'])
+                if variable is not None:variable.set(row.get('content',''))
         self._build_memory_rows()
         if conflicts:messagebox.showinfo('撤销修改','部分记忆已有新的修改，已保留这些新内容。',parent=self._mem_win)

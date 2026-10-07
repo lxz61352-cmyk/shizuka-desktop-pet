@@ -14,7 +14,7 @@ from ui_theme import page_header, PAGE_X
 from computer_agent import load_config
 from computer_ui import computer_command
 from weixin_channel import BASE_URL, ILinkClient, ProtectedStore, WeixinChannel, session_from_login, trusted_base, IMAGE_BLOCK_MARK
-from weixin_materials import InboundText, file_parts, reference_parts
+from weixin_materials import InboundText, file_parts, reference_parts, reference_context
 from window_opening import dialog_window
 
 IMAGE_BLOCK_LINE_RE = re.compile(r"^-\s*图\d+（[^）]*）=\s*(.+)$", re.M)
@@ -127,8 +127,9 @@ class WeixinMixin:
             self._weixin_store.update(enabled=False)
 
     def _weixin_proactive_allowed(self):
-        return (not getattr(self,'_quiet_active',False) and getattr(self,'_pomo_phase',None)!='focus'
-                and not getattr(self,'_computer_state',{}).get('busy')
+        computer=getattr(self,'_computer_state',{})
+        return (not getattr(self,'_quiet_active',False) and not self._quiet_now() and getattr(self,'_pomo_phase',None)!='focus'
+                and not (computer.get('busy') or computer.get('executing'))
                 and time.monotonic()-getattr(self,'_last_user_dialogue_at',0)>1800)
 
     def _weixin_proactive_generate(self,value,cancel):
@@ -186,23 +187,24 @@ class WeixinMixin:
         text = weixin_visible_text(received)
         files = getattr(received, 'files', [])
         quotes = getattr(received, 'quotes', [])
+        referencing = bool(quotes)
         self._last_user_dialogue_at=time.monotonic()
         if cancel.is_set():
             return "任务已取消。"
-        quick=self._weixin_quick_todo(text,cancel)
+        quick=None if referencing else self._weixin_quick_todo(text,cancel)
         if quick is not None:
             self._log_chat('user',text,kind='weixin_todo');self._log_chat('assistant',quick,kind='weixin_todo');return quick
-        completion=self._weixin_complete_reply(text,cancel)
+        completion=None if referencing else self._weixin_complete_reply(text,cancel)
         if completion is not None:
             self._log_chat('user',text,kind='weixin_todo');self._log_chat('assistant',completion,kind='weixin_todo')
             return completion
         # 微信里说「我完成了 / 已经检查了」：同样要认出来标完成，别只当闲聊
-        done=self._weixin_todo_done(text,cancel)
+        done=None if referencing else self._weixin_todo_done(text,cancel)
         if done is not None:
             self._log_chat('user',text,kind='weixin_todo');self._log_chat('assistant',done,kind='weixin_todo')
             return done
         from todo_model import command as todo_command
-        todo_text=todo_command(text)
+        todo_text=None if referencing else todo_command(text)
         if todo_text is not None:
             self._log_chat('user',text,kind='weixin_todo')
             reply=self._weixin_todo_command(todo_text,cancel)
@@ -213,7 +215,7 @@ class WeixinMixin:
         visible = text
         task = computer_command(text)
         intent = None
-        if task is None and engine.has_api_key():
+        if not referencing and task is None and engine.has_api_key():
             # 用去掉提示块的原话判意图：带上路径会让路由器把「讲下图3」也当成文件任务。
             # 只有明确要读写文件才交给 DSH，普通看图/讲题走聊天，并把图直接附给模型。
             intent = self._classify_intent(visible)
@@ -268,6 +270,8 @@ class WeixinMixin:
             if result['status']=='completed' and self._should_sound(event='file_complete'):self._ui(self.play_sound)
             self._log_chat("assistant", reply[:1500], kind="weixin_file")
             return reply
+        from weixin_segments import ReplyProgress, interruptible_chunks
+        interrupted = progress.interrupted if isinstance(progress, ReplyProgress) else cancel.is_set
         if not engine.has_api_key():
             return "请先在电脑桌宠中设置聊天 API Key。已有 dsh 配置时，仍可使用 /电脑 文件任务。"
         option = getattr(engine, "character_option", lambda key, default: default)
@@ -297,8 +301,8 @@ class WeixinMixin:
         capability = "" if enhanced else self._capability_context_for(visible)
         if capability:
             system+='\n'+capability
-        notes=self._todo_note_context(visible,channel='weixin',cancel=cancel.is_set)
-        if cancel.is_set():return '本轮回复已停止。'
+        notes='' if referencing else self._todo_note_context(visible,channel='weixin',cancel=interrupted)
+        if interrupted():return '本轮回复已停止。'
         system+='\n只有应用明确回传保存成功时才能说已增加待办备注。'
         if notes:system+='\n'+notes
         channel_hint = ("\n当前通过手机微信文字交流。" if getattr(engine, 'DESKTOP_DIALOGUE_PROFILE', '') else
@@ -336,7 +340,7 @@ class WeixinMixin:
         if tone_v2 and care_repair and bool(getattr(engine, "TONE_V2_LOCAL_GUARD", False)):
             # Phase 3：窄场景本地受控回复——在创建/调用 client 之前返回。
             # 取消竞态：判定前已取消则按正常取消语义返回，不返回固定回复、不记录 assistant。
-            if cancel.is_set():
+            if interrupted():
                 return "本轮回复已停止。"
             from tone_local_guard import local_reply_for
             guard_history, _ = self._recent_messages(current_text=visible, channel='weixin')
@@ -345,7 +349,7 @@ class WeixinMixin:
             local = local_reply_for(posture, signals.get("posture_evidence") or (),
                                     guard_has_assistant)
             if local:
-                if not cancel.is_set():
+                if not interrupted():
                     self._log_chat("assistant", local, kind="weixin")
                     def remember():
                         try:
@@ -396,6 +400,9 @@ class WeixinMixin:
                 from dialogue_architecture_v2 import output_contract
                 system += "\n\n" + output_contract()
         history, time_block = self._recent_messages(current_text=visible, channel='weixin')
+        quote_context = reference_context(quotes)
+        if quote_context:
+            time_block = '\n'.join(part for part in (time_block, quote_context) if part)
         if enhanced:
             from enhanced_dialogue import diagnostics as enhanced_diagnostics
             from enhanced_dialogue import log_diagnostics, output_blocks
@@ -455,7 +462,7 @@ class WeixinMixin:
         parts.extend(reference_parts(quotes))
         if files:
             try:
-                parts.extend(file_parts(files, visible, cancel.is_set, budget=max(0, 6-len(image_paths))))
+                parts.extend(file_parts(files, visible, interrupted, budget=max(0, 6-len(image_paths))))
             except InterruptedError:
                 return '本轮回复已停止。'
             except ValueError as exc:
@@ -533,27 +540,28 @@ class WeixinMixin:
             except provider_profile.ProfileError:
                 return "配置有误，本轮没有发出请求。"
             try:
-                provider_limiter.acquire(profile, cancel.is_set)
+                provider_limiter.acquire(profile, interrupted)
             except provider_limiter.ProviderWaitCancelled:
                 return "本轮回复已停止。"
             from reply_turn import body_kwargs
-            stream_cm = client.chat.completions.create(**body_kwargs(engine, messages, profile))
+            request_kwargs = body_kwargs(engine, messages, profile)
         else:
-            stream_cm = client.chat.completions.create(model=engine.api_model(), messages=messages,
+            request_kwargs = dict(model=engine.api_model(), messages=messages,
                     temperature=.7, max_tokens=engine.CHAT_MAX_TOKENS, stream=True)
-        with stream_cm as stream:
-            for chunk in stream:
-                if cancel.is_set():
-                    return "本轮回复已停止。"
-                if chunk.choices:
-                    output.append(chunk.choices[0].delta.content or "")
+        for chunk in interruptible_chunks(lambda: client.chat.completions.create(**request_kwargs), interrupted):
+            if interrupted():
+                return "本轮回复已停止。"
+            if chunk.choices:
+                output.append(chunk.choices[0].delta.content or "")
+        if interrupted():
+            return '本轮回复已停止。'
         reply = engine.clean_reply_style("".join(output)).strip()
-        if not reply and not cancel.is_set():
+        if not reply and not interrupted():
             # reasoning token 吃满上限时会只剩空正文：非流式重试一次
             try:
                 from reply_turn import retry_body
                 reply = engine.clean_reply_style(retry_body(engine, client, messages,
-                    profile if enhanced else None, interrupted=cancel.is_set)).strip()
+                    profile if enhanced else None, interrupted=interrupted)).strip()
             except Exception:
                 reply = ""
         generated_ok = bool(reply)
@@ -567,7 +575,7 @@ class WeixinMixin:
                 reply = reply_cleaner.clean(reply)
             except InterruptedError:
                 return '本轮回复已停止。'
-        if not cancel.is_set():
+        if not interrupted():
             self._log_chat("assistant", reply, kind="weixin")
             self._weixin_remember_reply(reply)
             if affect_transaction is not None and isinstance(progress, ReplyProgress) and generated_ok:

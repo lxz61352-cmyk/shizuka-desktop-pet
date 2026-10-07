@@ -17,6 +17,13 @@ from todo_quick import TodoQuickMixin
 REMINDER_GRACE = 600   # 秒。准点提醒（lead=0）的 due 等于事件开始时间，事件一开始 event_expired 就成立；
                        # 到点后留一点宽限，保证这一次提醒还能发出去（只发一次），不至于永远发不出来。
 
+
+def reminder_expired(item,options,now=None):
+    now=time.time() if now is None else now
+    due=options.get('snooze_until') or item.get('due')
+    return (event_expired(item,options,now) and not options.get('snooze_until')
+            and not (due is not None and 0<=now-due<=REMINDER_GRACE))
+
 class TodoFeaturesMixin(TodoQuickMixin,TodoReplyMixin,TodoRecurrenceMixin,TodoVoiceMixin,TodoNotesMixin,TodoUIMixin):
     def _todo_init(self):
         if hasattr(self,'_todo_details'):return
@@ -195,9 +202,8 @@ class TodoFeaturesMixin(TodoQuickMixin,TodoReplyMixin,TodoRecurrenceMixin,TodoVo
             if item.get('done'):continue
             self._todo_prepare_occurrence(item,now)
             options=self._todo_options(item)
-            first_due=self._todo_effective_due(item)
             # 事件类待办开始时间已过就不再提醒；但准点提醒（due 就是开始时间）到点后留宽限，别被直接跳过。
-            if event_expired(item,options,now) and not options.get('snooze_until') and not (first_due is not None and 0<=now-first_due<=REMINDER_GRACE):
+            if reminder_expired(item,options,now):
                 continue
             self._todo_prepare_phrase(item,now)
             signature=self._todo_notice_signature(item)
@@ -224,7 +230,7 @@ class TodoFeaturesMixin(TodoQuickMixin,TodoReplyMixin,TodoRecurrenceMixin,TodoVo
             status,error='sent',''
             try:
                 current=next((it for it in self.todos if it['id']==item['id'] and not it.get('done')),None)
-                if current is None or self._todo_notice_signature(current)!=signature or (event_expired(current,self._todo_options(current)) and not self._todo_options(current).get('snooze_until')):
+                if current is None or self._todo_notice_signature(current)!=signature or reminder_expired(current,self._todo_options(current)):
                     status,error='cancelled','事项已删除、完成或更改时间，本次未发送'
                     return
                 text=self._todo_reminder_text(item)[:1500]

@@ -356,14 +356,18 @@ class ILinkClient:
     def updates(self, cursor):
         return self.call("getupdates", {"get_updates_buf": cursor}, timeout=40)
 
-    def send(self, peer, context, text, client_id, quote_svr_id=None):
+    def send(self, peer, context, text, client_id, quote_svr_id=None, quote_text=None):
         if not peer or not context:
             raise ValueError("缺少微信对话信息，无法回复")
         item = {"type": 1, "text_item": {"text": text}}
         if quote_svr_id:
-            # 发送侧的引用字段名没有文档可依，按入站 item 的形状镜像过来试。
-            # 猜错由 WeixinChannel._send 退回不带引用的普通发送，不会影响正常回复。
+            # 类型定义包含 ref_msg.svr_id，但发送后是否渲染引用框仍需微信实测。
+            # 服务端拒绝时由 WeixinChannel._send 退回普通发送。
             item["ref_msg"] = {"svr_id": str(quote_svr_id)}
+            if quote_text:
+                original = str(quote_text)[:20000]
+                item['ref_msg'].update(title=original[:200], message_item={
+                    'type': 1, 'text_item': {'text': original}})
         return self.call("sendmessage", {"msg": {"from_user_id": "", "to_user_id": peer,
             "client_id": client_id, "message_type": 2, "message_state": 2,
             "context_token": context, "item_list": [item]}})
@@ -538,6 +542,7 @@ class WeixinChannel:
         self.stopped = threading.Event()
         self.task_cancel = threading.Event()
         self.send_lock = threading.Lock()
+        self.quote_log_lock = threading.Lock()
         self.jobs = queue.Queue(maxsize=8)
         self.task_lock = threading.RLock()
         self.active = False
@@ -641,7 +646,17 @@ class WeixinChannel:
             with self.send_lock:
                 # 分条时只在第一条带引用，和人在微信里的做法一致。
                 self._send(message["context"], text[index:index+1500], client_id,
-                           quote_svr_id=quoted if index == 0 else None)
+                           quote_svr_id=quoted if index == 0 else None,
+                           quote_text=message.get('reply_text') if index == 0 else None)
+
+    def _send_reply_part(self, message, text, index, interrupted):
+        client_id = 'deskpet-' + message['key'][:40] + '-part-' + str(index)
+        with self.send_lock:
+            if interrupted():
+                raise InterruptedError()
+            self._send(message['context'], text, client_id,
+                       quote_svr_id=self._quote_target(message) if index == 0 else None,
+                       quote_text=message.get('reply_text') if index == 0 else None)
 
     def _quote_target(self, message):
         """她这条回复要不要引用用户的消息，引用哪一条。
@@ -661,10 +676,12 @@ class WeixinChannel:
             pass
         return None
 
-    def _send(self, context, text, client_id, quote_svr_id=None):
+    def _send(self, context, text, client_id, quote_svr_id=None, quote_text=None):
         try:
             result = self.client.send(self.session['owner'], context, text, client_id,
-                                      quote_svr_id=quote_svr_id)
+                                      quote_svr_id=quote_svr_id, quote_text=quote_text)
+            if quote_svr_id:
+                self._note_quote_send_outcome(quote_svr_id, 'accepted', bool(quote_text))
         except Exception:
             if not quote_svr_id:
                 raise
@@ -681,14 +698,19 @@ class WeixinChannel:
         return result
 
     def _note_quote_send_failure(self, quote_svr_id):
-        """发送侧引用被服务端拒绝时留痕，便于判断这个字段名猜得对不对。"""
+        self._note_quote_send_outcome(quote_svr_id, 'rejected', False)
+
+    def _note_quote_send_outcome(self, quote_svr_id, outcome, has_content):
+        """记录接口是否接受引用；accepted 不代表客户端已渲染引用框。"""
         try:
             path = Path(self.store.path.parent) / 'weixin-quote-send.jsonl'
-            with self.send_lock, path.open('a', encoding='utf-8') as handle:
-                handle.write(json.dumps({'at': time.time(), 'svr_id': str(quote_svr_id)[:60]},
-                                        ensure_ascii=False) + '\n')
-            kept = path.read_text('utf-8').splitlines()[-20:]
-            path.write_text('\n'.join(kept) + '\n', 'utf-8')
+            with self.quote_log_lock:
+                with path.open('a', encoding='utf-8') as handle:
+                    handle.write(json.dumps({'at': time.time(), 'svr_id': str(quote_svr_id)[:60],
+                                             'outcome': outcome, 'has_content': has_content},
+                                            ensure_ascii=False) + '\n')
+                kept = path.read_text('utf-8').splitlines()[-20:]
+                path.write_text('\n'.join(kept) + '\n', 'utf-8')
         except Exception:
             pass
 
@@ -870,6 +892,12 @@ class WeixinChannel:
                 row = dict(row, text=selected)
             if any(not Path(r['path']).is_file() for r in row.get('images', []) + row.get('files', [])):
                 raise ValueError('引用里的附件已移动或删除，请重新发送；我不会替换成最近的其他附件。')
+            # Copy cached material: reference metadata belongs to this selection.
+            sources = [ref] + ([ref['message_item']] if isinstance(ref.get('message_item'), dict) else [])
+            identities = [str(source[field]) for source in sources for field in QUOTE_ID_FIELDS
+                          if isinstance(source.get(field), (str, int)) and str(source[field])]
+            row = dict(row, reference_ids=list(dict.fromkeys(identities)),
+                       partial=bool(ref.get('partial_text')))
             rows.append(row)
         return rows
 
@@ -1123,7 +1151,7 @@ class WeixinChannel:
         if not self.store.claim(key):
             return
         message = {"key": key, "context": context, "text": text, "images": [], 'files': [],
-                   'quotes': [], 'reply_to': str(raw.get("message_id") or raw.get("msg_id")
+                   'quotes': [], 'reply_text': text, 'reply_to': str(raw.get("message_id") or raw.get("msg_id")
                                                  or raw.get("client_id") or identity)}
         self.typing.begin(key, context)
         try:
@@ -1394,7 +1422,9 @@ class WeixinChannel:
     def _collect_burst(self,message,token):
         """Coalesce only adjacent plain chat; never reorder commands or attachments."""
         def plain(row):
-            return (not getattr(row['text'], 'files', []) and not getattr(row['text'], 'quotes', [])
+            from todo_model import command
+            return (command(row['text']) is None
+                    and not getattr(row['text'], 'files', []) and not getattr(row['text'], 'quotes', [])
                     and not getattr(row['text'], 'images', []) and not row.get('images') and not row['text'].startswith(('/', '／'))
                     and IMAGE_BLOCK_MARK not in row['text'] and len(row['text'])<2000)
         try:delay=max(0,min(2,float(self.store.data.get('chat_merge_seconds',.8))))
@@ -1436,11 +1466,7 @@ class WeixinChannel:
                     token = self.task_cancel
                     self.active = True
                     def send_part(text, index, interrupted):
-                        client_id = 'deskpet-' + message['key'][:40] + '-part-' + str(index)
-                        with self.send_lock:
-                            if interrupted():
-                                raise InterruptedError()
-                            self._send(message['context'], text, client_id)
+                        self._send_reply_part(message, text, index, interrupted)
                     progress = ReplyProgress(self.status, send_part, token, self.stopped,
                         checkpoint=lambda text: self.store.update(last_result=text))
                     self.active_progress = progress

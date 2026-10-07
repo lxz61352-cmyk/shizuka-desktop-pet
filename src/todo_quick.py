@@ -15,12 +15,12 @@ def snooze_time(text,now):
         target=datetime.fromtimestamp(now).replace(hour=20,minute=0,second=0,microsecond=0).timestamp()
         if target<=now:raise ValueError('今晚20:00已经过了，请说明新的时间，例如“30分钟后再提醒我”。')
         return target
-    match=re.fullmatch(r'(?:/稍后\s*)?(\d+|十|半|二十|三十|一|两)(分钟|小时)(?:后)?(?:再(?:提醒|叫)(?:我)?)?',text)
+    match=re.fullmatch(r'(?P<prefix>/稍后\s*|(?:再)?晚|推迟|延后)?(?P<amount>\d+|十|半|二十|三十|一|两)(?P<unit>分钟|小时)(?:后)?(?:再(?:提醒|叫)(?:我)?)?',text)
     if not match:return None
-    if not text.startswith('/稍后') and not re.search(r'再(?:提醒|叫)',text):return None
-    amount={'十':10,'半':.5,'二十':20,'三十':30,'一':1,'两':2}.get(match[1])
-    if amount is None:amount=int(match[1])
-    seconds=amount*(60 if match[2]=='分钟' else 3600)
+    if not match['prefix'] and not re.search(r'再(?:提醒|叫)',text):return None
+    amount={'十':10,'半':.5,'二十':20,'三十':30,'一':1,'两':2}.get(match['amount'])
+    if amount is None:amount=int(match['amount'])
+    seconds=amount*(60 if match['unit']=='分钟' else 3600)
     if not 60<=seconds<=86400:raise ValueError('稍后提醒支持1分钟到24小时；其他日期请编辑待办时间。')
     return now+seconds
 
@@ -39,6 +39,10 @@ class TodoQuickMixin:
         try:self._save_todo_details()
         except Exception:options.clear();options.update(prior);raise
         self._todo_cancel_notices(tid);self._refresh_todo_view()
+        for target in getattr(self,'_todo_reply_targets',{}).values():
+            for spec in target['items']:
+                if spec['id']==tid and (not signature or spec['signature']==signature):
+                    spec['signature']=self._todo_notice_signature(row)
         return row['text']+'，改在 '+time.strftime('%m-%d %H:%M',time.localtime(until))+' 再提醒。'+('循环时间不变。' if options.get('schedule',{}).get('rule') else '')
 
     def show_todo_quick(self,tid=None):

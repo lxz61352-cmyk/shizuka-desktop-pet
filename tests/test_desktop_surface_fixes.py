@@ -60,6 +60,9 @@ for name,func in pet_methods('show_usage','_close_usage_window','_build_usage_ro
 
 class LayoutTests(unittest.TestCase):
     def setUp(self):
+        # Physical clicks during a layout test must not dismiss its fixture.
+        keys=patch.object(ctypes.windll.user32,'GetAsyncKeyState',return_value=0)
+        keys.start();self.addCleanup(keys.stop)
         self.root=tk.Tk();self.root.withdraw();self.errors=[]
         self.root.report_callback_exception=lambda *e:self.errors.append(e)
         install(self.root);self.app=Harness(self.root)
@@ -156,7 +159,7 @@ class VoiceTests(unittest.TestCase):
         scope=pet_methods('_tts_loop');scope['_err_log']=lambda *a:None
         class Items:
             def __init__(self):self.items=iter([('end',3),('end',4)])
-            def get(self):return next(self.items)
+            def get(self,timeout=None):return next(self.items)
         seen=[];obj=SimpleNamespace(_conv_id=4,_synth_q=Items(),_voice_active=True,_voice_bubble_finish=lambda:None,
                                   _voice_ui=lambda conv,callback:seen.append(conv))
         scope['_tts_loop'](obj);self.assertEqual(seen,[4])

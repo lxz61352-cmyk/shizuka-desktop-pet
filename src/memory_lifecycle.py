@@ -2,6 +2,20 @@
 import time,re
 
 
+def edit_content(row, content, expected, now=None):
+    """Apply an explicit user edit without losing the original evidence."""
+    content=content.strip()
+    if not content:raise ValueError('记忆内容不能为空；不需要的记忆请使用删除。')
+    if len(content)>20000:raise ValueError('记忆内容请不超过20000字。')
+    if row.get('content','')!=expected:raise ValueError('这条记忆已被更新，请重新打开后编辑。')
+    if content==expected:return False
+    stamp=time.time() if now is None else now
+    row.setdefault('original_source_quote',row.get('source_quote') or row.get('quote') or expected)
+    row.setdefault('original_source_time',row.get('source_time') or row.get('created'))
+    row.update(content=content,source_quote=content,source_time=stamp,edited_at=stamp,edited_by='user')
+    return True
+
+
 def expiry(row):
     if isinstance(row.get('expires_at'),(int,float)):return row['expires_at']
     text=row.get('content','');at=row.get('source_time') or row.get('created')
@@ -39,7 +53,8 @@ def scope_note(rows,now=None):
 def undo_edit(current,before,after):
     from copy import deepcopy
     result=deepcopy(current);old={r['id']:r for r in before};new={r['id']:r for r in after};conflicts=0
-    fields=('content','pinned','status','expires_at')
+    fields=('content','pinned','status','expires_at','source_quote','source_time',
+            'original_source_quote','original_source_time','edited_at','edited_by')
     for ident,prior in old.items():
         latest=next((r for r in result if r['id']==ident),None)
         changed=new.get(ident)

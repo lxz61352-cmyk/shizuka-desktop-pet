@@ -26,6 +26,9 @@ def run(pet):
             for expression in ('neutral','lifted','falling'):
                 assert app._animator.frame(420,pose=Pose(expression=expression),color_key=True).size[1]>0
             checks.append('Original character packs, rendering and local expressions')
+            assert app.todobtn_label._hitbox_src is not None
+            assert app.todobtn_label._ph.width()==app._btn_size
+            checks.append('Confirmed todo native hitbox fix is present in the packaged runtime')
             app.show_todos();app.root.update();app._todo_new();app.root.update()
             checks.append('Todo list and date/time editor open')
             # 聊天里说「我完成了」要能标完成（本地判断，不调模型）

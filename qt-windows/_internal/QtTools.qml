@@ -33,8 +33,9 @@ QtObject {
             QtMessageList {id:historyList;objectName:"historyList";Layout.fillWidth:true;Layout.fillHeight:true;model:historyModel}
             RowLayout {
                 Layout.fillWidth:true
-                Text {text:controller.historyCount+" 条记录 · 前后文按钮展开同渠道内容";color:"#cad6e6";font.bold:true;Layout.fillWidth:true;elide:Text.ElideRight}
-                QtGlassButton {text:"复制全部";onClicked:controller.copyHistory()}
+                Text {text:"已显示 "+controller.historyCount+" / "+controller.historyTotal+" 条记录";color:"#cad6e6";font.bold:true;Layout.fillWidth:true;elide:Text.ElideRight}
+                QtGlassButton {text:"加载更早记录";visible:controller.historyHasMore;onClicked:{historyList.following=false;controller.loadOlderHistory()}}
+                QtGlassButton {text:"复制当前记录";onClicked:controller.copyHistory()}
             }
             Text {text:controller.statusText;color:"#cad6e6";visible:text!=="";Layout.fillWidth:true;wrapMode:Text.Wrap}
         }

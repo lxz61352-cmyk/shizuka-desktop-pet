@@ -11,6 +11,10 @@ class WorkflowMixin:
             from workflow_store import WorkflowStore
             import pet
             self._workflow_store=WorkflowStore(pet.DATA_DIR)
+            if self._workflow_store.load_error:
+                message=('通知或专注记录包含异常内容，已跳过异常记录并备份原文件。' if self._workflow_store.recovery_path
+                         else '通知和专注记录读取异常，暂时只保留在内存，原文件未被覆盖。')
+                self._workflow_store.notice(message+' 详情见 error.log。','系统')
         return self._workflow_store
 
     def _record_notice(self,text,source,**kwargs):
